@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -8,96 +9,67 @@
   <title>mokori</title>
   <style>
     * { box-sizing: border-box; }
-
     body {
       margin: 0;
       min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: grid;
+      place-items: center;
       padding: 24px;
       background: #faf9f6;
       color: #34342f;
-      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue",
-        "Hiragino Kaku Gothic ProN", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
     }
-
     .panel {
       width: 100%;
       max-width: 390px;
-      padding: 34px 26px;
-      background: #fff;
+      padding: 32px 25px;
+      background: white;
       border: 1px solid #eeece5;
       border-radius: 24px;
-      box-shadow: 0 12px 40px #35321c08;
     }
-
-    .goat {
-      text-align: center;
-      font-size: 38px;
-      margin-bottom: 10px;
-    }
-
+    .goat { text-align: center; font-size: 38px; }
     h1 {
-      margin: 0;
+      margin: 8px 0;
       text-align: center;
       font-size: 29px;
       font-weight: 500;
       letter-spacing: 2px;
     }
-
     .subtitle {
       text-align: center;
       color: #99968d;
       font-size: 13px;
-      margin: 10px 0 28px;
+      margin: 10px 0 25px;
     }
-
     .tabs {
       display: flex;
       gap: 8px;
       padding: 5px;
       background: #f6f5f0;
       border-radius: 12px;
-      margin-bottom: 23px;
     }
-
     .tabs button {
       flex: 1;
+      padding: 11px 5px;
       border: 0;
       border-radius: 9px;
-      padding: 11px 5px;
-      color: #88867e;
       background: transparent;
+      color: #88867e;
       cursor: pointer;
-      font-size: 14px;
     }
-
-    .tabs button.active {
-      background: white;
-      color: #34342f;
-      box-shadow: 0 1px 5px #0000000b;
-    }
-
+    .tabs button.active { background: white; color: #34342f; }
     label {
       display: block;
+      margin: 18px 0 8px;
       font-size: 13px;
-      margin: 17px 0 8px;
-      color: #55534c;
     }
-
     input {
       width: 100%;
-      border: 1px solid #e7e5dd;
-      background: #fff;
-      border-radius: 11px;
       padding: 14px;
+      border: 1px solid #e7e5dd;
+      border-radius: 11px;
       font-size: 15px;
-      outline: none;
     }
-
-    input:focus { border-color: #aaa58f; }
-
     .submit {
       width: 100%;
       margin-top: 24px;
@@ -109,21 +81,16 @@
       font-size: 15px;
       cursor: pointer;
     }
-
     .submit:disabled { opacity: .55; }
-
     #message {
       min-height: 20px;
-      margin: 15px 0 0;
-      text-align: center;
       font-size: 13px;
       line-height: 1.6;
-      color: #8a6658;
       overflow-wrap: anywhere;
+      color: #806254;
     }
-
     .foot {
-      margin-top: 22px;
+      margin-top: 20px;
       text-align: center;
       font-size: 11px;
       color: #b0ada4;
@@ -132,7 +99,7 @@
 </head>
 <body>
   <main class="panel">
-    <div class="goat" aria-hidden="true">🐐</div>
+    <div class="goat">🐐</div>
     <h1>mokori</h1>
     <p class="subtitle">いつものみんなと、いつもの場所で。</p>
 
@@ -143,56 +110,55 @@
 
     <form id="authForm">
       <label for="username">ユーザー名</label>
-      <input
-        id="username"
-        name="username"
-        type="text"
-        placeholder="ユーザー名"
-        minlength="2"
-        maxlength="20"
-        autocomplete="username"
-        required
-      >
+      <input id="username" name="username"
+        minlength="2" maxlength="20" autocomplete="username"
+        placeholder="ユーザー名" required>
 
       <label for="password">パスワード</label>
-      <input
-        id="password"
-        name="password"
-        type="password"
-        placeholder="8文字以上"
-        minlength="8"
-        maxlength="128"
-        autocomplete="current-password"
-        required
-      >
+      <input id="password" name="password" type="password"
+        minlength="8" maxlength="128" autocomplete="current-password"
+        placeholder="8文字以上" required>
 
-      <button class="submit" id="submitButton" type="submit">
-        ログイン
-      </button>
+      <button class="submit" id="submitButton" type="submit">ログイン</button>
       <p id="message" role="status" aria-live="polite"></p>
     </form>
-
     <div class="foot">mokori · みんなの居場所</div>
   </main>
 
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+
   <script>
+    // ↓ この設定部分を、自分のFirebaseの設定に置き換える
+    　　　const firebaseConfig = {
+  apiKey: "AIzaSyAXv7r2M0q22JLa0s4XcpPomf-KW19CPPE",
+  authDomain: "mokori-by-riona-iwakami.firebaseapp.com",
+  projectId: "mokori-by-riona-iwakami",
+  storageBucket: "mokori-by-riona-iwakami.firebasestorage.app",
+  messagingSenderId: "78875890394",
+  appId: "1:78875890394:web:ee631706d895893ec10be3"
+  };    
+    // ↑ 設定はここまで
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+
     const form = document.getElementById("authForm");
     const loginTab = document.getElementById("loginTab");
     const registerTab = document.getElementById("registerTab");
     const submitButton = document.getElementById("submitButton");
     const message = document.getElementById("message");
-    const password = document.getElementById("password");
+    const passwordInput = document.getElementById("password");
 
     let mode = "login";
 
     function setMode(nextMode) {
       mode = nextMode;
       const registering = mode === "register";
-
       loginTab.classList.toggle("active", !registering);
       registerTab.classList.toggle("active", registering);
       submitButton.textContent = registering ? "アカウントを作成" : "ログイン";
-      password.autocomplete = registering ? "new-password" : "current-password";
+      passwordInput.autocomplete = registering ? "new-password" : "current-password";
       message.textContent = "";
     }
 
@@ -201,13 +167,9 @@
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-
-      const username = document.getElementById("username").value.trim();
-      const passwordValue = password.value;
-
-      message.textContent = "";
       submitButton.disabled = true;
       submitButton.textContent = "処理中…";
+      message.textContent = "";
 
       try {
         const response = await fetch(
@@ -216,8 +178,8 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              username,
-              password: passwordValue
+              username: document.getElementById("username").value.trim(),
+              password: passwordInput.value
             })
           }
         );
@@ -228,17 +190,17 @@
           throw new Error(result.error || "処理に失敗しました。");
         }
 
-        // Firebaseの接続設定が完成したら、ここで
-        // カスタムトークンを使ったログイン処理を追加します。
-        message.textContent =
-          "サーバーから応答がありました。Firebaseのログイン接続は次の手順で設定します。";
+        await auth.signInWithCustomToken(result.token);
 
-        console.log("Authentication response received.");
+        message.textContent = "ログインできたよ！ 次はチャット画面を作ろう。";
       } catch (error) {
+        console.error(error);
         message.textContent =
           error.message === "Failed to fetch"
-            ? "サーバーがまだ起動していないか、接続できません。"
-            : error.message;
+            ? "サーバーに接続できません。少し待って再度試してね。"
+            : error.code === "auth/invalid-custom-token"
+            ? "認証設定を確認する必要があります。"
+            : error.message || "エラーが発生しました。";
       } finally {
         submitButton.disabled = false;
         submitButton.textContent =
