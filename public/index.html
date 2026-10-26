@@ -1,0 +1,250 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f6">
+  <title>mokori</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: #faf9f6;
+      color: #34342f;
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+        "Hiragino Kaku Gothic ProN", sans-serif;
+    }
+
+    .panel {
+      width: 100%;
+      max-width: 390px;
+      padding: 34px 26px;
+      background: #fff;
+      border: 1px solid #eeece5;
+      border-radius: 24px;
+      box-shadow: 0 12px 40px #35321c08;
+    }
+
+    .goat {
+      text-align: center;
+      font-size: 38px;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      margin: 0;
+      text-align: center;
+      font-size: 29px;
+      font-weight: 500;
+      letter-spacing: 2px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #99968d;
+      font-size: 13px;
+      margin: 10px 0 28px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      padding: 5px;
+      background: #f6f5f0;
+      border-radius: 12px;
+      margin-bottom: 23px;
+    }
+
+    .tabs button {
+      flex: 1;
+      border: 0;
+      border-radius: 9px;
+      padding: 11px 5px;
+      color: #88867e;
+      background: transparent;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .tabs button.active {
+      background: white;
+      color: #34342f;
+      box-shadow: 0 1px 5px #0000000b;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      margin: 17px 0 8px;
+      color: #55534c;
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid #e7e5dd;
+      background: #fff;
+      border-radius: 11px;
+      padding: 14px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    input:focus { border-color: #aaa58f; }
+
+    .submit {
+      width: 100%;
+      margin-top: 24px;
+      padding: 15px;
+      border: 0;
+      border-radius: 12px;
+      background: #424239;
+      color: white;
+      font-size: 15px;
+      cursor: pointer;
+    }
+
+    .submit:disabled { opacity: .55; }
+
+    #message {
+      min-height: 20px;
+      margin: 15px 0 0;
+      text-align: center;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #8a6658;
+      overflow-wrap: anywhere;
+    }
+
+    .foot {
+      margin-top: 22px;
+      text-align: center;
+      font-size: 11px;
+      color: #b0ada4;
+    }
+  </style>
+</head>
+<body>
+  <main class="panel">
+    <div class="goat" aria-hidden="true">🐐</div>
+    <h1>mokori</h1>
+    <p class="subtitle">いつものみんなと、いつもの場所で。</p>
+
+    <div class="tabs">
+      <button id="loginTab" class="active" type="button">ログイン</button>
+      <button id="registerTab" type="button">新規登録</button>
+    </div>
+
+    <form id="authForm">
+      <label for="username">ユーザー名</label>
+      <input
+        id="username"
+        name="username"
+        type="text"
+        placeholder="ユーザー名"
+        minlength="2"
+        maxlength="20"
+        autocomplete="username"
+        required
+      >
+
+      <label for="password">パスワード</label>
+      <input
+        id="password"
+        name="password"
+        type="password"
+        placeholder="8文字以上"
+        minlength="8"
+        maxlength="128"
+        autocomplete="current-password"
+        required
+      >
+
+      <button class="submit" id="submitButton" type="submit">
+        ログイン
+      </button>
+      <p id="message" role="status" aria-live="polite"></p>
+    </form>
+
+    <div class="foot">mokori · みんなの居場所</div>
+  </main>
+
+  <script>
+    const form = document.getElementById("authForm");
+    const loginTab = document.getElementById("loginTab");
+    const registerTab = document.getElementById("registerTab");
+    const submitButton = document.getElementById("submitButton");
+    const message = document.getElementById("message");
+    const password = document.getElementById("password");
+
+    let mode = "login";
+
+    function setMode(nextMode) {
+      mode = nextMode;
+      const registering = mode === "register";
+
+      loginTab.classList.toggle("active", !registering);
+      registerTab.classList.toggle("active", registering);
+      submitButton.textContent = registering ? "アカウントを作成" : "ログイン";
+      password.autocomplete = registering ? "new-password" : "current-password";
+      message.textContent = "";
+    }
+
+    loginTab.addEventListener("click", () => setMode("login"));
+    registerTab.addEventListener("click", () => setMode("register"));
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const username = document.getElementById("username").value.trim();
+      const passwordValue = password.value;
+
+      message.textContent = "";
+      submitButton.disabled = true;
+      submitButton.textContent = "処理中…";
+
+      try {
+        const response = await fetch(
+          mode === "register" ? "/api/register" : "/api/login",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username,
+              password: passwordValue
+            })
+          }
+        );
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.error || "処理に失敗しました。");
+        }
+
+        // Firebaseの接続設定が完成したら、ここで
+        // カスタムトークンを使ったログイン処理を追加します。
+        message.textContent =
+          "サーバーから応答がありました。Firebaseのログイン接続は次の手順で設定します。";
+
+        console.log("Authentication response received.");
+      } catch (error) {
+        message.textContent =
+          error.message === "Failed to fetch"
+            ? "サーバーがまだ起動していないか、接続できません。"
+            : error.message;
+      } finally {
+        submitButton.disabled = false;
+        submitButton.textContent =
+          mode === "register" ? "アカウントを作成" : "ログイン";
+      }
+    });
+  </script>
+</body>
+</html>
