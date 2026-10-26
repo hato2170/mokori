@@ -1,1 +1,358 @@
 
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f6">
+  <title>チャット | mokori</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      background: #faf9f6;
+      color: #34342f;
+      font-family: -apple-system, BlinkMacSystemFont,
+        "Helvetica Neue", sans-serif;
+    }
+
+    header {
+      height: 66px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 18px;
+      background: #fff;
+      border-bottom: 1px solid #eeece5;
+    }
+
+    .goat { font-size: 26px; }
+
+    .brand {
+      font-size: 20px;
+      font-weight: 500;
+      letter-spacing: 1px;
+    }
+
+    .status {
+      margin-left: auto;
+      font-size: 12px;
+      color: #99968d;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .welcome {
+      margin: auto;
+      text-align: center;
+      color: #99968d;
+      font-size: 13px;
+      line-height: 1.9;
+    }
+
+    .message {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      max-width: 82%;
+      gap: 5px;
+    }
+
+    .message.mine {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .sender {
+      color: #8d897f;
+      font-size: 11px;
+      padding: 0 4px;
+    }
+
+    .bubble {
+      padding: 11px 14px;
+      background: #fff;
+      border: 1px solid #eeece5;
+      border-radius: 5px 16px 16px;
+      font-size: 14px;
+      line-height: 1.65;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .mine .bubble {
+      background: #e9e8dd;
+      border-color: #e9e8dd;
+      border-radius: 16px 5px 16px 16px;
+    }
+
+    .time {
+      color: #aaa69d;
+      font-size: 10px;
+      padding: 0 4px;
+    }
+
+    #error {
+      color: #9a5747;
+      background: #fff8f5;
+      font-size: 12px;
+      line-height: 1.6;
+      padding: 8px 16px;
+    }
+
+    #error:empty { display: none; }
+
+    form {
+      display: flex;
+      align-items: flex-end;
+      gap: 9px;
+      padding: 12px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
+      background: #fff;
+      border-top: 1px solid #eeece5;
+    }
+
+    textarea {
+      flex: 1;
+      min-width: 0;
+      max-height: 120px;
+      resize: none;
+      border: 1px solid #e7e5dd;
+      border-radius: 18px;
+      padding: 12px 14px;
+      font: inherit;
+      font-size: 14px;
+      outline: none;
+      background: #faf9f6;
+    }
+
+    textarea:focus { border-color: #aaa58f; }
+
+    #send {
+      flex-shrink: 0;
+      width: 46px;
+      height: 46px;
+      border: 0;
+      border-radius: 50%;
+      background: #424239;
+      color: white;
+      font-size: 19px;
+      cursor: pointer;
+    }
+
+    #send:disabled { opacity: .45; }
+
+    .bottom {
+      display: flex;
+      justify-content: center;
+      gap: 22px;
+      padding: 10px;
+      background: white;
+      border-top: 1px solid #f0eee8;
+      font-size: 11px;
+      color: #aaa69d;
+    }
+
+    .bottom a {
+      color: inherit;
+      text-decoration: none;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div class="goat">🐐</div>
+    <div class="brand">mokori</div>
+    <div class="status" id="userStatus">接続確認中…</div>
+  </header>
+
+  <main id="messages">
+    <div class="welcome">
+      <div style="font-size:32px">🐐</div>
+      メッセージを準備しています。
+    </div>
+  </main>
+
+  <div id="error" role="status" aria-live="polite"></div>
+
+  <form id="messageForm">
+    <textarea
+      id="messageInput"
+      rows="1"
+      maxlength="2000"
+      placeholder="メッセージを入力…"
+      aria-label="メッセージ"
+      required
+    ></textarea>
+    <button id="send" type="submit" aria-label="送信">↑</button>
+  </form>
+
+  <nav class="bottom">
+    <a href="/">ログイン画面</a>
+    <span>mokori</span>
+    <span>みんなの居場所</span>
+  </nav>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+  <script>
+    // index.html と同じ Firebase 設定を入れてください
+    const firebaseConfig = {
+      apiKey: "自分のapiKey",
+      authDomain: "自分のauthDomain",
+      projectId: "自分のprojectId",
+      appId: "自分のappId"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    const messages = document.getElementById("messages");
+    const errorBox = document.getElementById("error");
+    const form = document.getElementById("messageForm");
+    const input = document.getElementById("messageInput");
+    const send = document.getElementById("send");
+    const status = document.getElementById("userStatus");
+
+    let currentUser = null;
+    let unsubscribe = null;
+
+    function showError(message) {
+      errorBox.textContent = message;
+    }
+
+    function renderMessages(snapshot) {
+      const items = snapshot.docs.slice().reverse();
+      messages.replaceChildren();
+
+      if (items.length === 0) {
+        const welcome = document.createElement("div");
+        welcome.className = "welcome";
+        welcome.textContent = "🐐 ここから会話が始まるよ。";
+        messages.appendChild(welcome);
+        return;
+      }
+
+      for (const doc of items) {
+        const data = doc.data();
+        const mine = data.senderUid === currentUser.uid;
+
+        const wrapper = document.createElement("div");
+        wrapper.className = mine ? "message mine" : "message";
+
+        const sender = document.createElement("div");
+        sender.className = "sender";
+        sender.textContent = mine ? "あなた" : (data.senderName || "ユーザー");
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.textContent = data.text || "";
+
+        const time = document.createElement("div");
+        time.className = "time";
+
+        if (data.createdAt && data.createdAt.toDate) {
+          time.textContent = data.createdAt.toDate().toLocaleTimeString(
+            "ja-JP",
+            { hour: "2-digit", minute: "2-digit" }
+          );
+        }
+
+        wrapper.append(sender, bubble, time);
+        messages.appendChild(wrapper);
+      }
+
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    auth.onAuthStateChanged((user) => {
+      if (unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+      }
+
+      currentUser = user;
+
+      if (!user) {
+        status.textContent = "ログインが必要です";
+        showError("先にログイン画面からログインしてください。");
+        send.disabled = true;
+        return;
+      }
+
+      status.textContent = user.displayName || "ログイン中";
+      send.disabled = false;
+      showError("");
+
+      unsubscribe = db.collection("messages")
+        .orderBy("createdAt", "asc")
+        .limit(100)
+        .onSnapshot(
+          renderMessages,
+          (error) => {
+            console.error(error);
+            showError(
+              "メッセージを読み込めません。Firestoreの安全なアクセス設定が必要です。"
+            );
+          }
+        );
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const text = input.value.trim();
+
+      if (!text || !currentUser) {
+        showError("メッセージを送るにはログインが必要です。");
+        return;
+      }
+
+      send.disabled = true;
+      showError("");
+
+      try {
+        await db.collection("messages").add({
+          senderUid: currentUser.uid,
+          senderName: currentUser.displayName || "ユーザー",
+          text,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        input.value = "";
+        input.style.height = "auto";
+      } catch (error) {
+        console.error(error);
+        showError(
+          "送信できませんでした。Firestoreのアクセス設定を確認する必要があります。"
+        );
+      } finally {
+        send.disabled = false;
+      }
+    });
+
+    input.addEventListener("input", () => {
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 120) + "px";
+    });
+  </script>
+</body>
+</html>
