@@ -5,6 +5,33 @@ const bcrypt = require("bcryptjs");
 
 const app = express();
 app.use(express.json());
+
+async function requireLogin(req, res, next) {
+  if (!auth) {
+    return res.status(503).json({
+      error: "認証サービスが利用できません。"
+    });
+  }
+
+  const header = req.headers.authorization || "";
+  const match = header.match(/^Bearer (.+)$/);
+
+  if (!match) {
+    return res.status(401).json({
+      error: "ログインしてください。"
+    });
+  }
+
+  try {
+    const decoded = await auth.verifyIdToken(match[1]);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      error: "ログイン情報を確認できませんでした。"
+    });
+  }
+}
 app.use(express.static("public"));
 
 let db;
