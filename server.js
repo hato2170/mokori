@@ -422,6 +422,44 @@ app.post("/api/friends/accept", requireLogin, async (req, res) => {
     });
   }
 });
+
+app.get("/api/friends/requests", requireLogin, async (req, res) => {
+  try {
+    const snapshot = await db
+      .collection("friendRequests")
+      .where("toUid", "==", req.user.uid)
+      .get();
+
+    const requests = [];
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+
+      if (data.status !== "pending") {
+        continue;
+      }
+
+      const senderDoc = await db
+        .collection("users")
+        .doc(data.fromUid)
+        .get();
+
+      requests.push({
+        requestId: doc.id,
+        username: senderDoc.exists
+          ? senderDoc.data().username
+          : "不明なユーザー"
+      });
+    }
+
+    return res.json({ requests });
+  } catch (error) {
+    console.error("友達申請一覧エラー:", error);
+    return res.status(500).json({
+      error: "友達申請一覧を取得できませんでした。"
+    });
+  }
+});
 const port = process.env.PORT || 3000;
 
 app.listen(port, () => {
