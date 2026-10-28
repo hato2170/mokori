@@ -1,0 +1,286 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f6">
+  <title>友達 - mokori</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px 16px 48px;
+      background: #faf9f6;
+      color: #34342f;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    main { max-width: 520px; margin: auto; }
+    header { text-align: center; margin: 12px 0 28px; }
+    .goat { font-size: 34px; }
+    h1 { font-size: 27px; font-weight: 500; margin: 6px; }
+    .sub { color: #969389; font-size: 13px; }
+    section {
+      background: white;
+      border: 1px solid #eeece5;
+      border-radius: 18px;
+      padding: 20px;
+      margin: 14px 0;
+    }
+    h2 { font-size: 17px; font-weight: 600; margin: 0 0 14px; }
+    input {
+      width: 100%;
+      padding: 13px;
+      border: 1px solid #e7e5dd;
+      border-radius: 10px;
+      font-size: 15px;
+      background: white;
+    }
+    button {
+      padding: 11px 14px;
+      border: 0;
+      border-radius: 10px;
+      background: #424239;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .5; }
+    .primary { width: 100%; margin-top: 10px; }
+    .item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid #f0eee8;
+    }
+    .item:last-child { border-bottom: 0; }
+    .username { overflow-wrap: anywhere; }
+    .muted { color: #99968d; font-size: 13px; }
+    .message { min-height: 22px; font-size: 13px; line-height: 1.6; }
+    .back { display: inline-block; margin-bottom: 8px; color: #68665e; }
+    a { color: inherit; }
+    .refresh { background: #efeee8; color: #424239; }
+  </style>
+</head>
+<body>
+<main>
+  <a class="back" href="/chat.html">← チャットに戻る</a>
+
+  <header>
+    <div class="goat">🐐</div>
+    <h1>友達</h1>
+    <div class="sub">mokori · みんなの居場所</div>
+  </header>
+
+  <p id="status" class="message" role="status">ログイン状態を確認中…</p>
+
+  <section>
+    <h2>友達を探す</h2>
+    <form id="searchForm">
+      <input id="searchName" maxlength="20"
+        placeholder="相手のユーザー名" required>
+      <button class="primary" type="submit">ユーザーを検索</button>
+    </form>
+    <div id="searchResult"></div>
+  </section>
+
+  <section>
+    <h2>届いた友達申請</h2>
+    <div id="requestList" class="muted">読み込み中…</div>
+  </section>
+
+  <section>
+    <h2>友達一覧</h2>
+    <div id="friendList" class="muted">読み込み中…</div>
+    <button id="refreshButton" class="refresh" type="button">
+      一覧を更新
+    </button>
+  </section>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyAXv7r2M0q22JLa0s4XcpPomf-KW19CPPE",
+    authDomain: "mokori-by-riona-iwakami.firebaseapp.com",
+    projectId: "mokori-by-riona-iwakami",
+    storageBucket: "mokori-by-riona-iwakami.firebasestorage.app",
+    messagingSenderId: "78875890394",
+    appId: "1:78875890394:web:ee631706d895893ec10be3"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+
+  const status = document.getElementById("status");
+  const searchForm = document.getElementById("searchForm");
+  const searchResult = document.getElementById("searchResult");
+  const requestList = document.getElementById("requestList");
+  const friendList = document.getElementById("friendList");
+
+  let currentUser = null;
+
+  function showMessage(element, message) {
+    element.textContent = message;
+  }
+
+  async function api(path, options = {}) {
+    if (!currentUser) {
+      throw new Error("先にログインしてください。");
+    }
+
+    const token = await currentUser.getIdToken();
+
+    const response = await fetch(path, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + token,
+        ...(options.headers || {})
+      }
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.error || "処理に失敗しました。");
+    }
+
+    return result;
+  }
+
+  function addItem(container, username, buttonText, onClick) {
+    const item = document.createElement("div");
+    item.className = "item";
+
+    const name = document.createElement("span");
+    name.className = "username";
+    name.textContent = username;
+
+    item.appendChild(name);
+
+    if (buttonText) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = buttonText;
+
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          await onClick();
+        } catch (error) {
+          alert(error.message);
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      item.appendChild(button);
+    }
+
+    container.appendChild(item);
+  }
+
+  searchForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const username = document.getElementById("searchName").value.trim();
+    searchResult.replaceChildren();
+    showMessage(searchResult, "検索中…");
+
+    try {
+      const result = await api(
+        "/api/users/search?username=" + encodeURIComponent(username)
+      );
+
+      searchResult.replaceChildren();
+
+      addItem(searchResult, result.user.username, "申請する", async () => {
+        const sent = await api("/api/friends/request", {
+          method: "POST",
+          body: JSON.stringify({ username: result.user.username })
+        });
+
+        alert(sent.message);
+      });
+    } catch (error) {
+      showMessage(searchResult, error.message);
+    }
+  });
+
+  async function loadRequests() {
+    requestList.replaceChildren();
+
+    try {
+      const result = await api("/api/friends/requests");
+
+      if (!result.requests.length) {
+        showMessage(requestList, "届いている申請はありません。");
+        return;
+      }
+
+      for (const request of result.requests) {
+        addItem(requestList, request.username, "承認", async () => {
+          const result = await api("/api/friends/accept", {
+            method: "POST",
+            body: JSON.stringify({ requestId: request.requestId })
+          });
+
+          alert(result.message);
+          await loadAll();
+        });
+      }
+    } catch (error) {
+      showMessage(requestList, error.message);
+    }
+  }
+
+  async function loadFriends() {
+    friendList.replaceChildren();
+
+    try {
+      const result = await api("/api/friends");
+
+      if (!result.friends.length) {
+        showMessage(friendList, "まだ友達はいません。");
+        return;
+      }
+
+      for (const friend of result.friends) {
+        addItem(friendList, friend.username, null, null);
+      }
+    } catch (error) {
+      showMessage(friendList, error.message);
+    }
+  }
+
+  async function loadAll() {
+    await Promise.all([loadRequests(), loadFriends()]);
+  }
+
+  document.getElementById("refreshButton").addEventListener("click", loadAll);
+
+  auth.onAuthStateChanged(async (user) => {
+    currentUser = user;
+
+    if (!user) {
+      showMessage(status, "ログインしていません。先にログイン画面を開いてください。");
+      showMessage(requestList, "ログインすると表示されます。");
+      showMessage(friendList, "ログインすると表示されます。");
+      return;
+    }
+
+    showMessage(status, "ログイン中 · " + (user.displayName || "ユーザー"));
+
+    try {
+      await loadAll();
+    } catch (error) {
+      showMessage(status, error.message);
+    }
+  });
+</script>
+</body>
+</html>
