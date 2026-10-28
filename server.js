@@ -460,6 +460,43 @@ app.get("/api/friends/requests", requireLogin, async (req, res) => {
     });
   }
 });
+
+app.get("/api/friends", requireLogin, async (req, res) => {
+  try {
+    const snapshot = await db
+      .collection("friendships")
+      .doc(req.user.uid)
+      .collection("friends")
+      .get();
+
+    const friends = [];
+
+    for (const doc of snapshot.docs) {
+      const friendUid = doc.id;
+
+      const userDoc = await db
+        .collection("users")
+        .doc(friendUid)
+        .get();
+
+      if (userDoc.exists) {
+        friends.push({
+          uid: friendUid,
+          username: userDoc.data().username || "ユーザー"
+        });
+      }
+    }
+
+    friends.sort((a, b) => a.username.localeCompare(b.username, "ja"));
+
+    return res.json({ friends });
+  } catch (error) {
+    console.error("友達一覧エラー:", error);
+    return res.status(500).json({
+      error: "友達一覧を取得できませんでした。"
+    });
+  }
+});
 const port = process.env.PORT || 3000;
 
 app.listen(port, () => {
