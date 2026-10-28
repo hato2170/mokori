@@ -247,10 +247,9 @@
     }
 
     function renderMessages(snapshot) {
-      const items = snapshot.docs.slice().reverse();
+      const items = snapshot.docs;
       messages.replaceChildren();
-
-      if (items.length === 0) {
+　　　   if (items.length === 0) {
         const welcome = document.createElement("div");
         welcome.className = "welcome";
         welcome.textContent = "🐐 ここから会話が始まるよ。";
