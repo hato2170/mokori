@@ -194,6 +194,56 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+app.get("/api/users/search", requireLogin, async (req, res) => {
+  try {
+    const username = String(req.query.username || "").trim();
+
+    if (!username || username.length > 20) {
+      return res.status(400).json({
+        error: "ユーザー名を入力してください。"
+      });
+    }
+
+    const usernameDoc = await db
+      .collection("usernames")
+      .doc(username.toLowerCase())
+      .get();
+
+    if (!usernameDoc.exists) {
+      return res.status(404).json({
+        error: "ユーザーが見つかりませんでした。"
+      });
+    }
+
+    const uid = usernameDoc.data().uid;
+
+    if (uid === req.user.uid) {
+      return res.status(400).json({
+        error: "自分自身は検索結果にできません。"
+      });
+    }
+
+    const userDoc = await db.collection("users").doc(uid).get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        error: "ユーザー情報が見つかりませんでした。"
+      });
+    }
+
+    return res.json({
+      user: {
+        username: userDoc.data().username
+      }
+    });
+  } catch (error) {
+    console.error("ユーザー検索エラー:", error);
+    return res.status(500).json({
+      error: "ユーザー検索に失敗しました。"
+    });
+  }
+});
+
 const port = process.env.PORT || 3000;
 
 app.listen(port, () => {
