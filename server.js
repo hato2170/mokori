@@ -244,6 +244,75 @@ app.get("/api/users/search", requireLogin, async (req, res) => {
   }
 });
 
+app.post("/api/friends/request", requireLogin, async (req, res) => {
+  try {
+    const username = String(req.body.username || "").trim();
+
+    if (!username || username.length > 20) {
+      return res.status(400).json({
+        error: "申請する相手のユーザー名を入力してください。"
+      });
+    }
+
+    const targetDoc = await db
+      .collection("usernames")
+      .doc(username.toLowerCase())
+      .get();
+
+    if (!targetDoc.exists) {
+      return res.status(404).json({
+        error: "そのユーザーは見つかりませんでした。"
+      });
+    }
+
+    const targetUid = targetDoc.data().uid;
+    const myUid = req.user.uid;
+
+    if (targetUid === myUid) {
+      return res.status(400).json({
+        error: "自分に友達申請は送れません。"
+      });
+    }
+
+    const requestId = `${myUid}_${targetUid}`;
+    const requestRef = db.collection("friendRequests").doc(requestId);
+
+    const existing = await requestRef.get();
+
+    if (existing.exists) {
+      const status = existing.data().status;
+
+      if (status === "pending") {
+        return res.status(409).json({
+          error: "すでに友達申請を送っています。"
+        });
+      }
+
+      if (status === "accepted") {
+        return res.status(409).json({
+          error: "すでに友達です。"
+        });
+      }
+    }
+
+    await requestRef.set({
+      fromUid: myUid,
+      toUid: targetUid,
+      status: "pending",
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return res.json({
+      ok: true,
+      message: "友達申請を送信しました。"
+    });
+  } catch (error) {
+    console.error("友達申請エラー:", error);
+    return res.status(500).json({
+      error: "友達申請に失敗しました。"
+    });
+  }
+});
 const port = process.env.PORT || 3000;
 
 app.listen(port, () => {
