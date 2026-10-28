@@ -192,7 +192,7 @@
 
         await auth.signInWithCustomToken(result.token);
 
-        message.textContent = "ログインできたよ！ 次はチャット画面を作ろう。";
+      window.location.href = "/chat.html";
       } catch (error) {
         console.error(error);
         message.textContent =
