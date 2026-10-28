@@ -287,9 +287,11 @@
         messages.appendChild(wrapper);
       }
 
-  　requestAnimationFrame(() => {
-  messages.scrollTop = messages.scrollHeight;
-　});
+  　      requestAnimationFrame(() => {
+        messages.scrollTop = messages.scrollHeight;
+      });
+    }
+
     auth.onAuthStateChanged((user) => {
       if (unsubscribe) {
         unsubscribe();
