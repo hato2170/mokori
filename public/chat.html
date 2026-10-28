@@ -287,9 +287,9 @@
         messages.appendChild(wrapper);
       }
 
-      messages.scrollTop = messages.scrollHeight;
-    }
-
+  　requestAnimationFrame(() => {
+  messages.scrollTop = messages.scrollHeight;
+　});
     auth.onAuthStateChanged((user) => {
       if (unsubscribe) {
         unsubscribe();
