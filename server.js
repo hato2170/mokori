@@ -313,6 +313,115 @@ app.post("/api/friends/request", requireLogin, async (req, res) => {
     });
   }
 });
+
+app.post("/api/friends/accept", requireLogin, async (req, res) => {
+  try {
+    const requestId = String(req.body.requestId || "").trim();
+
+    if (!requestId || requestId.length > 200) {
+      return res.status(400).json({
+        error: "友達申請を指定してください。"
+      });
+    }
+
+    const requestRef = db.collection("friendRequests").doc(requestId);
+
+    const result = await db.runTransaction(async (transaction) => {
+      const requestDoc = await transaction.get(requestRef);
+
+      if (!requestDoc.exists) {
+        return { status: "not_found" };
+      }
+
+      const request = requestDoc.data();
+
+      if (request.toUid !== req.user.uid) {
+        return { status: "forbidden" };
+      }
+
+      if (request.status === "accepted") {
+        return { status: "already_accepted" };
+      }
+
+      if (request.status !== "pending") {
+        return { status: "invalid" };
+      }
+
+      const fromUid = request.fromUid;
+      const toUid = request.toUid;
+
+      if (!fromUid || fromUid === toUid) {
+        return { status: "invalid" };
+      }
+
+      const timestamp = admin.firestore.FieldValue.serverTimestamp();
+
+      const fromFriendRef = db
+        .collection("friendships")
+        .doc(fromUid)
+        .collection("friends")
+        .doc(toUid);
+
+      const toFriendRef = db
+        .collection("friendships")
+        .doc(toUid)
+        .collection("friends")
+        .doc(fromUid);
+
+      transaction.update(requestRef, {
+        status: "accepted",
+        acceptedAt: timestamp
+      });
+
+      transaction.set(fromFriendRef, {
+        uid: toUid,
+        createdAt: timestamp
+      });
+
+      transaction.set(toFriendRef, {
+        uid: fromUid,
+        createdAt: timestamp
+      });
+
+      return { status: "accepted" };
+    });
+
+    if (result.status === "not_found") {
+      return res.status(404).json({
+        error: "友達申請が見つかりません。"
+      });
+    }
+
+    if (result.status === "forbidden") {
+      return res.status(403).json({
+        error: "自分宛ての申請だけ承認できます。"
+      });
+    }
+
+    if (result.status === "already_accepted") {
+      return res.json({
+        ok: true,
+        message: "この申請はすでに承認済みです。"
+      });
+    }
+
+    if (result.status !== "accepted") {
+      return res.status(409).json({
+        error: "この申請は承認できません。"
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "友達申請を承認しました！"
+    });
+  } catch (error) {
+    console.error("友達申請の承認エラー:", error);
+    return res.status(500).json({
+      error: "友達申請の承認に失敗しました。"
+    });
+  }
+});
 const port = process.env.PORT || 3000;
 
 app.listen(port, () => {
