@@ -1,10 +1,10 @@
-
 const express = require("express");
 const admin = require("firebase-admin");
 const bcrypt = require("bcryptjs");
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
 async function requireLogin(req, res, next) {
   if (!auth) {
@@ -32,6 +32,7 @@ async function requireLogin(req, res, next) {
     });
   }
 }
+
 app.use(express.static("public"));
 
 let db;
@@ -57,6 +58,9 @@ try {
   console.error("Firebase setup error:", error.message);
 }
 
+// ----------------------------------------------------
+// ヘルスチェック
+// ----------------------------------------------------
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
@@ -65,6 +69,9 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// ----------------------------------------------------
+// 認証: 登録・ログイン
+// ----------------------------------------------------
 app.post("/api/register", async (req, res) => {
   if (!db || !auth) {
     return res.status(503).json({
@@ -126,7 +133,6 @@ app.post("/api/register", async (req, res) => {
     });
 
     const token = await auth.createCustomToken(userRecord.uid);
-
     res.status(201).json({ token, username });
   } catch (error) {
     console.error("Registration failed:", error.message);
@@ -194,6 +200,9 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+// ----------------------------------------------------
+// 友達機能: 検索・申請・承認・一覧
+// ----------------------------------------------------
 app.get("/api/users/search", requireLogin, async (req, res) => {
   try {
     const username = String(req.query.username || "").trim();
@@ -233,6 +242,7 @@ app.get("/api/users/search", requireLogin, async (req, res) => {
 
     return res.json({
       user: {
+        uid,
         username: userDoc.data().username
       }
     });
@@ -446,6 +456,7 @@ app.get("/api/friends/requests", requireLogin, async (req, res) => {
 
       requests.push({
         requestId: doc.id,
+        fromUid: data.fromUid,
         username: senderDoc.exists
           ? senderDoc.data().username
           : "不明なユーザー"
@@ -497,6 +508,758 @@ app.get("/api/friends", requireLogin, async (req, res) => {
     });
   }
 });
+
+// ----------------------------------------------------
+// LINE風機能: トーク一覧 (個人・グループ)
+// ----------------------------------------------------
+app.get("/api/chats", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const myUid = req.user.uid;
+
+  try {
+    const snapshot = await db
+      .collection("chats")
+      .where("members", "array-contains", myUid)
+      .get();
+
+    const chats = [];
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      let name = data.name;
+      let partnerUid = null;
+
+      if (data.type === "direct") {
+        partnerUid = (data.members || []).find((u) => u !== myUid) || myUid;
+        const partnerInfo = data.memberInfo && data.memberInfo[partnerUid];
+        name = partnerInfo ? partnerInfo.username : "ユーザー";
+      }
+
+      // 未読判定
+      const myReadTimestamp = (data.readStatus && data.readStatus[myUid]) || null;
+      let hasUnread = false;
+
+      if (
+        data.lastMessage &&
+        data.lastMessage.senderUid !== myUid &&
+        !data.lastMessage.unsent
+      ) {
+        const msgTime = data.lastMessage.createdAt && data.lastMessage.createdAt.toMillis
+          ? data.lastMessage.createdAt.toMillis()
+          : (typeof data.lastMessage.createdAt === "number" ? data.lastMessage.createdAt : 0);
+
+        const readTime = myReadTimestamp && myReadTimestamp.toMillis
+          ? myReadTimestamp.toMillis()
+          : (typeof myReadTimestamp === "number" ? myReadTimestamp : 0);
+
+        if (msgTime > readTime) {
+          hasUnread = true;
+        }
+      }
+
+      chats.push({
+        id: doc.id,
+        type: data.type || "direct",
+        name: name || "トーク",
+        members: data.members || [],
+        memberInfo: data.memberInfo || {},
+        partnerUid,
+        lastMessage: data.lastMessage || null,
+        lastMessageAt: data.lastMessageAt || null,
+        unread: hasUnread,
+        announcement: data.announcement || null,
+        createdAt: data.createdAt || null
+      });
+    }
+
+    // 最新発言順にソート
+    chats.sort((a, b) => {
+      const tA = a.lastMessageAt && a.lastMessageAt.toMillis
+        ? a.lastMessageAt.toMillis()
+        : (typeof a.lastMessageAt === "number" ? a.lastMessageAt : 0);
+      const tB = b.lastMessageAt && b.lastMessageAt.toMillis
+        ? b.lastMessageAt.toMillis()
+        : (typeof b.lastMessageAt === "number" ? b.lastMessageAt : 0);
+      return tB - tA;
+    });
+
+    return res.json({ chats });
+  } catch (error) {
+    console.error("トーク一覧取得エラー:", error);
+    return res.status(500).json({ error: "トーク一覧の取得に失敗しました。" });
+  }
+});
+
+// 1対1トークの開始または取得
+app.post("/api/chats/direct", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const myUid = req.user.uid;
+  const friendUid = String(req.body.friendUid || "").trim();
+
+  if (!friendUid || friendUid === myUid) {
+    return res.status(400).json({ error: "有効な相手を指定してください。" });
+  }
+
+  try {
+    const chatId = [myUid, friendUid].sort().join("_");
+    const chatRef = db.collection("chats").doc(chatId);
+    const chatDoc = await chatRef.get();
+
+    if (chatDoc.exists) {
+      const data = chatDoc.data();
+      const partnerInfo = data.memberInfo && data.memberInfo[friendUid];
+      return res.json({
+        chat: {
+          id: chatDoc.id,
+          ...data,
+          name: partnerInfo ? partnerInfo.username : "ユーザー",
+          partnerUid: friendUid
+        }
+      });
+    }
+
+    const [myUserDoc, friendUserDoc] = await Promise.all([
+      db.collection("users").doc(myUid).get(),
+      db.collection("users").doc(friendUid).get()
+    ]);
+
+    const myUsername = myUserDoc.exists
+      ? (myUserDoc.data().username || "ユーザー")
+      : "ユーザー";
+    const friendUsername = friendUserDoc.exists
+      ? (friendUserDoc.data().username || "ユーザー")
+      : "ユーザー";
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    const newChat = {
+      type: "direct",
+      name: null,
+      members: [myUid, friendUid],
+      memberInfo: {
+        [myUid]: { username: myUsername },
+        [friendUid]: { username: friendUsername }
+      },
+      createdUid: myUid,
+      createdAt: now,
+      updatedAt: now,
+      lastMessage: null,
+      lastMessageAt: now,
+      readStatus: {
+        [myUid]: now
+      }
+    };
+
+    await chatRef.set(newChat);
+
+    return res.status(201).json({
+      chat: {
+        id: chatId,
+        ...newChat,
+        name: friendUsername,
+        partnerUid: friendUid
+      }
+    });
+  } catch (error) {
+    console.error("1対1トーク作成エラー:", error);
+    return res.status(500).json({ error: "トークの作成に失敗しました。" });
+  }
+});
+
+// グループトークの作成
+app.post("/api/chats/group", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const myUid = req.user.uid;
+  const name = String(req.body.name || "").trim();
+  const rawMembers = Array.isArray(req.body.memberUids) ? req.body.memberUids : [];
+
+  if (!name || name.length > 30) {
+    return res.status(400).json({ error: "グループ名は1〜30文字で入力してください。" });
+  }
+
+  const memberUids = Array.from(new Set([myUid, ...rawMembers.filter(Boolean)]));
+  if (memberUids.length < 2) {
+    return res.status(400).json({ error: "グループには1人以上の友達を追加してください。" });
+  }
+
+  try {
+    const myUserDoc = await db.collection("users").doc(myUid).get();
+    const myUsername = myUserDoc.exists
+      ? (myUserDoc.data().username || "ユーザー")
+      : "ユーザー";
+
+    const memberInfo = {};
+    for (const uid of memberUids) {
+      const uDoc = await db.collection("users").doc(uid).get();
+      memberInfo[uid] = {
+        username: uDoc.exists ? (uDoc.data().username || "ユーザー") : "ユーザー",
+        joinedAt: Date.now()
+      };
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const chatRef = db.collection("chats").doc();
+
+    const newChat = {
+      type: "group",
+      name,
+      members: memberUids,
+      memberInfo,
+      createdUid: myUid,
+      createdAt: now,
+      updatedAt: now,
+      lastMessage: {
+        text: `${myUsername}がグループを作成しました`,
+        type: "system",
+        senderUid: "system",
+        senderName: "システム",
+        unsent: false,
+        createdAt: now
+      },
+      lastMessageAt: now,
+      readStatus: {
+        [myUid]: now
+      }
+    };
+
+    await chatRef.set(newChat);
+
+    await chatRef.collection("messages").add({
+      chatId: chatRef.id,
+      senderUid: "system",
+      senderName: "システム",
+      type: "system",
+      text: `${myUsername}がグループ「${name}」を作成しました`,
+      readBy: memberUids,
+      unsent: false,
+      createdAt: now
+    });
+
+    return res.status(201).json({
+      chat: {
+        id: chatRef.id,
+        ...newChat
+      }
+    });
+  } catch (error) {
+    console.error("グループ作成エラー:", error);
+    return res.status(500).json({ error: "グループの作成に失敗しました。" });
+  }
+});
+
+// 単一チャット情報
+app.get("/api/chats/:chatId", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+
+  try {
+    const chatRef = db.collection("chats").doc(chatId);
+    const chatDoc = await chatRef.get();
+
+    if (!chatDoc.exists) {
+      return res.status(404).json({ error: "チャットが見つかりません。" });
+    }
+
+    const data = chatDoc.data();
+    if (!data.members || !data.members.includes(myUid)) {
+      return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
+    }
+
+    let name = data.name;
+    let partnerUid = null;
+    if (data.type === "direct") {
+      partnerUid = data.members.find((u) => u !== myUid) || myUid;
+      const pInfo = data.memberInfo && data.memberInfo[partnerUid];
+      name = pInfo ? pInfo.username : "ユーザー";
+    }
+
+    return res.json({
+      chat: {
+        id: chatDoc.id,
+        ...data,
+        name: name || "トーク",
+        partnerUid
+      }
+    });
+  } catch (error) {
+    console.error("チャット情報取得エラー:", error);
+    return res.status(500).json({ error: "チャット情報の取得に失敗しました。" });
+  }
+});
+
+// ----------------------------------------------------
+// メッセージ: 取得・送信・既読・送信取り消し・リアクション・アナウンス
+// ----------------------------------------------------
+app.get("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+
+  try {
+    const chatRef = db.collection("chats").doc(chatId);
+    const chatDoc = await chatRef.get();
+
+    if (!chatDoc.exists) {
+      return res.status(404).json({ error: "チャットが見つかりません。" });
+    }
+
+    const chatData = chatDoc.data();
+    if (!chatData.members || !chatData.members.includes(myUid)) {
+      return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
+    }
+
+    const snapshot = await chatRef
+      .collection("messages")
+      .orderBy("createdAt", "asc")
+      .limit(200)
+      .get();
+
+    const batch = db.batch();
+    let unreadUpdated = false;
+    const messages = [];
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const readBy = Array.isArray(data.readBy) ? [...data.readBy] : [];
+
+      // 相手の未読メッセージを自分の既読リストに追加
+      if (!readBy.includes(myUid) && data.senderUid !== myUid && !data.unsent) {
+        batch.update(doc.ref, {
+          readBy: admin.firestore.FieldValue.arrayUnion(myUid)
+        });
+        readBy.push(myUid);
+        unreadUpdated = true;
+      }
+
+      messages.push({
+        id: doc.id,
+        ...data,
+        readBy
+      });
+    }
+
+    if (unreadUpdated) {
+      await batch.commit().catch((e) => console.warn("既読バッチ更新警告:", e.message));
+    }
+
+    // チャットの最終既読時刻を更新
+    await chatRef.update({
+      [`readStatus.${myUid}`]: admin.firestore.FieldValue.serverTimestamp()
+    }).catch(() => {});
+
+    return res.json({ messages });
+  } catch (error) {
+    console.error("メッセージ取得エラー:", error);
+    return res.status(500).json({ error: "メッセージの取得に失敗しました。" });
+  }
+});
+
+app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+
+  try {
+    const chatRef = db.collection("chats").doc(chatId);
+    const chatDoc = await chatRef.get();
+
+    if (!chatDoc.exists) {
+      return res.status(404).json({ error: "チャットが見つかりません。" });
+    }
+
+    const chatData = chatDoc.data();
+    if (!chatData.members || !chatData.members.includes(myUid)) {
+      return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
+    }
+
+    const userDoc = await db.collection("users").doc(myUid).get();
+    const myUsername = userDoc.exists
+      ? (userDoc.data().username || "ユーザー")
+      : "ユーザー";
+
+    const type = req.body.type || "text"; // "text", "image", "stamp"
+    const text = String(req.body.text || "").trim();
+    const imageUrl = req.body.imageUrl ? String(req.body.imageUrl) : null;
+    const stampId = req.body.stampId ? String(req.body.stampId) : null;
+    const replyTo = req.body.replyTo && req.body.replyTo.messageId ? {
+      messageId: String(req.body.replyTo.messageId),
+      text: String(req.body.replyTo.text || "").slice(0, 100),
+      senderName: String(req.body.replyTo.senderName || "")
+    } : null;
+
+    if (type === "text" && !text) {
+      return res.status(400).json({ error: "メッセージを入力してください。" });
+    }
+    if (type === "image" && !imageUrl) {
+      return res.status(400).json({ error: "画像データが指定されていません。" });
+    }
+    if (type === "stamp" && !stampId) {
+      return res.status(400).json({ error: "スタンプが選択されていません。" });
+    }
+
+    let previewText = text;
+    if (type === "image") previewText = "📷 [画像]";
+    if (type === "stamp") previewText = "🐐 [スタンプ]";
+
+    const messageData = {
+      chatId,
+      senderUid: myUid,
+      senderName: myUsername,
+      type,
+      text: previewText,
+      originalText: text,
+      imageUrl,
+      stampId,
+      replyTo,
+      reactions: {},
+      readBy: [myUid],
+      unsent: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    const msgDoc = await chatRef.collection("messages").add(messageData);
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    await chatRef.update({
+      lastMessage: {
+        id: msgDoc.id,
+        senderUid: myUid,
+        senderName: myUsername,
+        text: previewText,
+        type,
+        unsent: false,
+        createdAt: now
+      },
+      lastMessageAt: now,
+      [`readStatus.${myUid}`]: now
+    });
+
+    return res.status(201).json({
+      ok: true,
+      messageId: msgDoc.id,
+      message: {
+        id: msgDoc.id,
+        ...messageData
+      }
+    });
+  } catch (error) {
+    console.error("メッセージ送信エラー:", error);
+    return res.status(500).json({ error: "メッセージの送信に失敗しました。" });
+  }
+});
+
+// 既読にする
+app.post("/api/chats/:chatId/read", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+
+  try {
+    const chatRef = db.collection("chats").doc(chatId);
+    await chatRef.update({
+      [`readStatus.${myUid}`]: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("既読更新エラー:", error);
+    return res.status(500).json({ error: "既読更新に失敗しました。" });
+  }
+});
+
+// 送信取り消し (LINEと同じ)
+app.post("/api/chats/:chatId/messages/:messageId/unsend", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const { chatId, messageId } = req.params;
+  const myUid = req.user.uid;
+
+  try {
+    const chatRef = db.collection("chats").doc(chatId);
+    const msgRef = chatRef.collection("messages").doc(messageId);
+    const msgDoc = await msgRef.get();
+
+    if (!msgDoc.exists) {
+      return res.status(404).json({ error: "メッセージが見つかりません。" });
+    }
+
+    const msgData = msgDoc.data();
+    if (msgData.senderUid !== myUid) {
+      return res.status(403).json({ error: "自分のメッセージのみ送信取り消しできます。" });
+    }
+
+    if (msgData.unsent) {
+      return res.json({ ok: true, message: "すでに送信が取り消されています。" });
+    }
+
+    await msgRef.update({
+      unsent: true,
+      text: "メッセージの送信を取り消しました",
+      imageUrl: null,
+      stampId: null,
+      reactions: {},
+      replyTo: null,
+      unsentAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    const chatDoc = await chatRef.get();
+    if (chatDoc.exists) {
+      const cData = chatDoc.data();
+      if (cData.lastMessage && cData.lastMessage.id === messageId) {
+        await chatRef.update({
+          "lastMessage.unsent": true,
+          "lastMessage.text": "メッセージの送信を取り消しました"
+        });
+      }
+      if (cData.announcement && cData.announcement.messageId === messageId) {
+        await chatRef.update({ announcement: null });
+      }
+    }
+
+    return res.json({ ok: true, message: "送信を取り消しました。" });
+  } catch (error) {
+    console.error("送信取り消しエラー:", error);
+    return res.status(500).json({ error: "送信取り消しに失敗しました。" });
+  }
+});
+
+// リアクション (LINE風スタンプリアクション)
+app.post("/api/chats/:chatId/messages/:messageId/reactions", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const { chatId, messageId } = req.params;
+  const myUid = req.user.uid;
+  const emoji = String(req.body.emoji || "").trim();
+
+  const allowedEmojis = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉"];
+  if (!allowedEmojis.includes(emoji)) {
+    return res.status(400).json({ error: "無効なリアクションです。" });
+  }
+
+  try {
+    const msgRef = db.collection("chats").doc(chatId).collection("messages").doc(messageId);
+    const msgDoc = await msgRef.get();
+
+    if (!msgDoc.exists) {
+      return res.status(404).json({ error: "メッセージが見つかりません。" });
+    }
+
+    if (msgDoc.data().unsent) {
+      return res.status(400).json({ error: "送信取り消しされたメッセージにはリアクションできません。" });
+    }
+
+    const currentReactions = msgDoc.data().reactions || {};
+    let uids = currentReactions[emoji] ? [...currentReactions[emoji]] : [];
+
+    if (uids.includes(myUid)) {
+      uids = uids.filter((u) => u !== myUid);
+    } else {
+      uids.push(myUid);
+    }
+
+    if (uids.length === 0) {
+      delete currentReactions[emoji];
+    } else {
+      currentReactions[emoji] = uids;
+    }
+
+    await msgRef.update({ reactions: currentReactions });
+    return res.json({ ok: true, reactions: currentReactions });
+  } catch (error) {
+    console.error("リアクションエラー:", error);
+    return res.status(500).json({ error: "リアクションの更新に失敗しました。" });
+  }
+});
+
+// アナウンス (ピン留め)
+app.post("/api/chats/:chatId/announcement", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const chatId = req.params.chatId;
+  const { messageId, clear } = req.body;
+
+  try {
+    const chatRef = db.collection("chats").doc(chatId);
+
+    if (clear) {
+      await chatRef.update({ announcement: null });
+      return res.json({ ok: true, announcement: null });
+    }
+
+    const msgDoc = await chatRef.collection("messages").doc(messageId).get();
+    if (!msgDoc.exists || msgDoc.data().unsent) {
+      return res.status(400).json({ error: "このメッセージはアナウンスに設定できません。" });
+    }
+
+    const data = msgDoc.data();
+    const announcement = {
+      messageId,
+      text: data.text || (data.type === "image" ? "[画像]" : "[スタンプ]"),
+      senderName: data.senderName,
+      pinnedAt: Date.now()
+    };
+
+    await chatRef.update({ announcement });
+    return res.json({ ok: true, announcement });
+  } catch (error) {
+    console.error("アナウンス設定エラー:", error);
+    return res.status(500).json({ error: "アナウンスの設定に失敗しました。" });
+  }
+});
+
+// グループメンバー招待
+app.post("/api/chats/:chatId/members", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+  const { memberUids } = req.body;
+
+  if (!Array.isArray(memberUids) || memberUids.length === 0) {
+    return res.status(400).json({ error: "追加するメンバーを選択してください。" });
+  }
+
+  try {
+    const chatRef = db.collection("chats").doc(chatId);
+    const chatDoc = await chatRef.get();
+
+    if (!chatDoc.exists) {
+      return res.status(404).json({ error: "チャットが見つかりません。" });
+    }
+
+    const chatData = chatDoc.data();
+    if (chatData.type !== "group") {
+      return res.status(400).json({ error: "グループチャットでのみメンバーを追加できます。" });
+    }
+
+    if (!chatData.members.includes(myUid)) {
+      return res.status(403).json({ error: "このグループのメンバーではありません。" });
+    }
+
+    const myUserDoc = await db.collection("users").doc(myUid).get();
+    const myUsername = myUserDoc.exists ? myUserDoc.data().username : "ユーザー";
+
+    const newMembers = memberUids.filter((uid) => !chatData.members.includes(uid));
+    if (newMembers.length === 0) {
+      return res.status(400).json({ error: "指定されたユーザーは全員すでに追加されています。" });
+    }
+
+    const addedUsernames = [];
+    const newMemberInfo = { ...(chatData.memberInfo || {}) };
+
+    for (const uid of newMembers) {
+      const uDoc = await db.collection("users").doc(uid).get();
+      const uName = uDoc.exists ? uDoc.data().username : "ユーザー";
+      addedUsernames.push(uName);
+      newMemberInfo[uid] = { username: uName, joinedAt: Date.now() };
+    }
+
+    const updatedMembers = [...chatData.members, ...newMembers];
+    await chatRef.update({
+      members: updatedMembers,
+      memberInfo: newMemberInfo
+    });
+
+    await chatRef.collection("messages").add({
+      chatId,
+      senderUid: "system",
+      senderName: "システム",
+      type: "system",
+      text: `${myUsername}が${addedUsernames.join("、")}を招待しました`,
+      readBy: updatedMembers,
+      unsent: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return res.json({ ok: true, members: updatedMembers, memberInfo: newMemberInfo });
+  } catch (error) {
+    console.error("メンバー追加エラー:", error);
+    return res.status(500).json({ error: "メンバーの追加に失敗しました。" });
+  }
+});
+
+// グループ退会
+app.post("/api/chats/:chatId/leave", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+
+  try {
+    const chatRef = db.collection("chats").doc(chatId);
+    const chatDoc = await chatRef.get();
+
+    if (!chatDoc.exists) {
+      return res.status(404).json({ error: "チャットが見つかりません。" });
+    }
+
+    const chatData = chatDoc.data();
+    if (chatData.type !== "group") {
+      return res.status(400).json({ error: "グループチャットでのみ退会できます。" });
+    }
+
+    if (!chatData.members.includes(myUid)) {
+      return res.status(400).json({ error: "このグループに参加していません。" });
+    }
+
+    const userDoc = await db.collection("users").doc(myUid).get();
+    const myUsername = userDoc.exists ? userDoc.data().username : "ユーザー";
+
+    const updatedMembers = chatData.members.filter((uid) => uid !== myUid);
+    await chatRef.update({
+      members: updatedMembers
+    });
+
+    await chatRef.collection("messages").add({
+      chatId,
+      senderUid: "system",
+      senderName: "システム",
+      type: "system",
+      text: `${myUsername}がグループを退会しました`,
+      readBy: updatedMembers,
+      unsent: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return res.json({ ok: true, message: "グループを退会しました。" });
+  } catch (error) {
+    console.error("グループ退会エラー:", error);
+    return res.status(500).json({ error: "グループの退会に失敗しました。" });
+  }
+});
+
 const port = process.env.PORT || 3000;
 
 app.listen(port, () => {
