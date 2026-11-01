@@ -102,8 +102,20 @@
 
     list.innerHTML = "";
 
-    // 全トーク一覧（window.allChats）から生成
-    const chats = window.allChats || [];
+    // 全トーク一覧（window.allChats）から生成 (重複排除)
+    const rawChats = window.allChats || [];
+    const seenIds = new Set();
+    const chats = [];
+    let hasAll = false;
+    for (const c of rawChats) {
+      if (!c || !c.id || seenIds.has(c.id)) continue;
+      seenIds.add(c.id);
+      if (c.id === "all_members" || c.name === "🐐 もこり全員グループ" || c.type === "all") {
+        if (hasAll) continue;
+        hasAll = true;
+      }
+      chats.push(c);
+    }
     if (chats.length === 0) {
       list.innerHTML = `<div style="text-align:center;padding:16px;color:#94a3b8;font-size:13px;">転送可能なトークがありません</div>`;
     } else {

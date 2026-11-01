@@ -1336,7 +1336,21 @@
     const filter = document.getElementById("searchInput").value.trim().toLowerCase();
     container.innerHTML = "";
 
-    const filtered = allChats.filter((c) => (c.name || "").toLowerCase().includes(filter));
+    // 重複防止
+    const seenIds = new Set();
+    const dedupedChats = [];
+    let hasAllMembers = false;
+    for (const c of allChats) {
+      if (!c || !c.id || seenIds.has(c.id)) continue;
+      seenIds.add(c.id);
+      if (c.id === "all_members" || c.name === "🐐 もこり全員グループ" || c.type === "all") {
+        if (hasAllMembers) continue;
+        hasAllMembers = true;
+      }
+      dedupedChats.push(c);
+    }
+
+    const filtered = dedupedChats.filter((c) => (c.name || "").toLowerCase().includes(filter));
     if (filtered.length === 0) {
       container.innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:13px;">トークはありません</div>`;
       return;

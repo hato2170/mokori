@@ -594,6 +594,7 @@ app.get("/api/chats", requireLogin, async (req, res) => {
     }
 
     for (const doc of snapshot.docs) {
+      if (doc.id === "all_members") continue;
       const data = doc.data();
       let name = data.name;
       let partnerUid = null;
@@ -641,8 +642,31 @@ app.get("/api/chats", requireLogin, async (req, res) => {
       });
     }
 
-    // 最新発言順にソート
-    chats.sort((a, b) => {
+    // ID重複および「全員グループ」の重複を完全に一本化
+    const seenChatIds = new Set();
+    const finalChats = [];
+    let hasAllMembersGroup = false;
+
+    for (const c of chats) {
+      if (!c || !c.id || seenChatIds.has(c.id)) continue;
+      seenChatIds.add(c.id);
+
+      const isAll = c.id === "all_members" || c.name === "🐐 もこり全員グループ" || c.type === "all";
+      if (isAll) {
+        if (hasAllMembersGroup) continue;
+        hasAllMembersGroup = true;
+        c.id = "all_members";
+        c.name = "🐐 もこり全員グループ";
+        c.type = "all";
+      }
+
+      finalChats.push(c);
+    }
+
+    // 全員グループを最上部に固定、残りは最新発言順にソート
+    finalChats.sort((a, b) => {
+      if (a.id === "all_members") return -1;
+      if (b.id === "all_members") return 1;
       const tA = a.lastMessageAt && a.lastMessageAt.toMillis
         ? a.lastMessageAt.toMillis()
         : (typeof a.lastMessageAt === "number" ? a.lastMessageAt : 0);
@@ -652,7 +676,7 @@ app.get("/api/chats", requireLogin, async (req, res) => {
       return tB - tA;
     });
 
-    return res.json({ chats });
+    return res.json({ chats: finalChats });
   } catch (error) {
     console.error("トーク一覧取得エラー:", error);
     return res.status(500).json({ error: "トーク一覧の取得に失敗しました。" });
