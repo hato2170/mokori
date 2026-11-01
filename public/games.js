@@ -207,7 +207,8 @@
       daifugo: "🃏 大富豪（4人対戦）",
       snowball: "❄️ snowball.io（雪玉バトル）",
       paper: "📄 paper.io（陣取りバトル）",
-      brawl: "⭐ ブロスタ（3v3バトル）",
+      brawl: "⭐ ブロスタ（2D軽量版）",
+      "brawl-webgl": "⭐ ブロスタ WebGL版（本家完全再現）",
       "brawl-crazygames": "⭐ Brawl Squad（CrazyGames版）",
       solitaire: "♠️ ソリティア（クロンダイク）"
     };
@@ -233,6 +234,9 @@
         break;
       case "brawl":
         renderBrawlGame(embed);
+        break;
+      case "brawl-webgl":
+        renderBrawlWebglGame(embed);
         break;
       case "brawl-crazygames":
         renderCrazyGamesBrawl(embed);
@@ -263,6 +267,8 @@
     if (window._stopSnowball) window._stopSnowball();
     if (window._stopPaper) window._stopPaper();
     if (window._stopBrawl) window._stopBrawl();
+    const mokoriBrawlIframe = document.getElementById("mokoriBrawlIframe");
+    if (mokoriBrawlIframe) mokoriBrawlIframe.src = "about:blank";
     if (window._othelloPollTimer) clearInterval(window._othelloPollTimer);
     if (window._unoPollTimer) clearInterval(window._unoPollTimer);
     if (window._daifugoPollTimer) clearInterval(window._daifugoPollTimer);
@@ -1388,6 +1394,84 @@
     window._stopPaper = () => {
       if (animId) cancelAnimationFrame(animId);
     };
+  }
+
+  // ==================================================
+  // 6-b. ⭐ ブロスタ WebGL版（本家完全再現 & 埋め込み）
+  // ==================================================
+  const BRAWL_WEBGL_SERVERS = {
+    1: { name: "本家3D WebGL版 (StaticQuasar)", url: "https://staticquasar931.github.io/Brawl-Stars/" },
+    2: { name: "TurboWarp 60FPS版 (全69キャラ)", url: "https://turbowarp.org/544538470/embed?autoplay=true" },
+    3: { name: "TurboWarp最新アプデ版 (Gods vs Monsters)", url: "https://turbowarp.org/1059386427/embed?autoplay=true" }
+  };
+  let currentMokoriBrawlServer = 1;
+
+  window.switchMokoriBrawlServer = function(num) {
+    currentMokoriBrawlServer = num;
+    for (let i = 1; i <= 3; i++) {
+      const btn = document.getElementById("mokoriBrawlSrv" + i);
+      if (!btn) continue;
+      if (i === num) {
+        btn.style.background = "#424239";
+        btn.style.color = "#fff";
+        btn.style.border = "none";
+      } else {
+        btn.style.background = "#fff";
+        btn.style.color = "#424239";
+        btn.style.border = "1px solid #d4d2c9";
+      }
+    }
+    const iframe = document.getElementById("mokoriBrawlIframe");
+    const cfg = BRAWL_WEBGL_SERVERS[num] || BRAWL_WEBGL_SERVERS[1];
+    if (iframe) iframe.src = cfg.url;
+  };
+
+  window.reloadMokoriBrawl = function() {
+    const iframe = document.getElementById("mokoriBrawlIframe");
+    if (iframe) {
+      const s = iframe.src;
+      iframe.src = "about:blank";
+      setTimeout(() => { iframe.src = s; }, 50);
+    }
+  };
+
+  window.openMokoriBrawlNewTab = function() {
+    const cfg = BRAWL_WEBGL_SERVERS[currentMokoriBrawlServer] || BRAWL_WEBGL_SERVERS[1];
+    window.open(cfg.url, "_blank");
+  };
+
+  window.toggleMokoriBrawlFs = function() {
+    const wrap = document.getElementById("mokoriBrawlIframeWrap");
+    if (!wrap) return;
+    if (!document.fullscreenElement) {
+      wrap.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
+
+  function renderBrawlWebglGame(container) {
+    currentMokoriBrawlServer = 1;
+    container.innerHTML = `
+      <div style="display:flex; flex-direction:column; width:100%; height:100%; max-width:860px; margin:0 auto; padding:4px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:8px; background:#f0eee8; padding:8px 12px; border-radius:10px;">
+          <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
+            <span style="font-size:12px; font-weight:bold; color:#424239;">🌐 サーバー:</span>
+            <button id="mokoriBrawlSrv1" onclick="window.switchMokoriBrawlServer(1)" style="background:#424239; color:#fff; border:none; padding:4px 8px; font-size:11px; border-radius:6px; cursor:pointer;">⚡ 1: 本家3D WebGL</button>
+            <button id="mokoriBrawlSrv2" onclick="window.switchMokoriBrawlServer(2)" style="background:#fff; color:#424239; border:1px solid #d4d2c9; padding:4px 8px; font-size:11px; border-radius:6px; cursor:pointer;">🌐 2: TurboWarp 69キャラ</button>
+            <button id="mokoriBrawlSrv3" onclick="window.switchMokoriBrawlServer(3)" style="background:#fff; color:#424239; border:1px solid #d4d2c9; padding:4px 8px; font-size:11px; border-radius:6px; cursor:pointer;">🚀 3: TurboWarp最新版</button>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button onclick="window.reloadMokoriBrawl()" style="background:#fff; color:#424239; border:1px solid #d4d2c9; padding:4px 8px; font-size:11px; border-radius:6px; cursor:pointer;">🔄 再読込</button>
+            <button onclick="window.openMokoriBrawlNewTab()" style="background:#fff; color:#424239; border:1px solid #d4d2c9; padding:4px 8px; font-size:11px; border-radius:6px; cursor:pointer;">🔗 別タブ</button>
+            <button onclick="window.toggleMokoriBrawlFs()" style="background:#fff; color:#424239; border:1px solid #d4d2c9; padding:4px 8px; font-size:11px; border-radius:6px; cursor:pointer;">⛶ 全画面</button>
+          </div>
+        </div>
+        <div id="mokoriBrawlIframeWrap" style="flex:1; width:100%; min-height:480px; height:68vh; border-radius:12px; overflow:hidden; border:2px solid #e0ded5; background:#000;">
+          <iframe id="mokoriBrawlIframe" src="https://staticquasar931.github.io/Brawl-Stars/" style="width:100%; height:100%; border:none; display:block;" allow="autoplay; fullscreen; web-share; gamepad; pointer-lock" allowfullscreen></iframe>
+        </div>
+      </div>
+    `;
   }
 
   // ==================================================
