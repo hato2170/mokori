@@ -242,49 +242,9 @@
   }
 
   // ==================================================
-  // 1. ⚫⚪ オセロ（リバーシ）
+  // 1. ⚫⚪ オセロ（リバーシ）- リアルタイムオンライン対人対戦 & CPU
   // ==================================================
   function renderOthelloGame(container, roomCode) {
-    container.innerHTML = `
-      <div style="padding:16px; max-width:400px; margin:0 auto; text-align:center;">
-        <div style="background:#1e293b; padding:10px 14px; border-radius:10px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
-          <div style="font-size:13px; color:#94a3b8;">ルーム: <strong style="color:#38bdf8;">${roomCode}</strong></div>
-          <button onclick="window.openGameForwardDialog()" style="background:#06c755; color:#fff; font-size:11px; font-weight:bold; padding:4px 10px; border-radius:6px;">
-            📤 チャットに転送
-          </button>
-        </div>
-
-        <div style="display:flex; justify-content:center; gap:24px; margin-bottom:14px;">
-          <div id="othP1Box" style="padding:6px 16px; border-radius:8px; border:2px solid #38bdf8; background:#1e293b;">
-            <div style="font-size:12px; color:#94a3b8;">黒 (あなた)</div>
-            <div id="othBCount" style="font-size:22px; font-weight:bold; color:#f8fafc;">2</div>
-          </div>
-          <div id="othP2Box" style="padding:6px 16px; border-radius:8px; border:2px solid transparent; background:#1e293b;">
-            <div id="othP2Label" style="font-size:12px; color:#94a3b8;">白 (相手/CPU)</div>
-            <div id="othWCount" style="font-size:22px; font-weight:bold; color:#f8fafc;">2</div>
-          </div>
-        </div>
-
-        <div id="othStatusBanner" style="font-size:13px; font-weight:bold; color:#38bdf8; min-height:22px; margin-bottom:10px;">
-          あなたの手番です (黒)
-        </div>
-
-        <div id="othelloGrid" class="othello-board-grid"></div>
-
-        <div style="margin-top:16px; display:flex; gap:8px; justify-content:center;">
-          <button id="othResetBtn" style="background:#334155; color:#fff; padding:8px 14px; border-radius:8px; font-size:12px;">
-            🔄 最初から
-          </button>
-          <select id="othCpuLevel" style="background:#1e293b; color:#fff; border:1px solid #334155; padding:6px 10px; border-radius:8px; font-size:12px;">
-            <option value="1">CPU Lv.1 (入門)</option>
-            <option value="3" selected>CPU Lv.3 (普通)</option>
-            <option value="5">CPU Lv.5 (強敵)</option>
-            <option value="8">CPU Lv.8 (最強)</option>
-          </select>
-        </div>
-      </div>
-    `;
-
     let board = [
       [0,0,0,0,0,0,0,0],
       [0,0,0,0,0,0,0,0],
@@ -297,6 +257,53 @@
     ];
     let turn = 1; // 1: 黒, 2: 白
     let isGameOver = false;
+    let isOnline = Boolean(roomCode && window.api);
+    let myRole = 1; // 1: 黒(ホスト), 2: 白(参加者)
+    let opponentName = "対戦相手";
+
+    container.innerHTML = `
+      <div style="padding:16px; max-width:400px; margin:0 auto; text-align:center;">
+        <div style="background:#1e293b; padding:10px 14px; border-radius:10px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+          <div style="font-size:13px; color:#94a3b8;">
+            <strong id="othModeBadge" style="color:#38bdf8;">👥 オンライン対戦</strong>
+            <span style="margin-left:6px; color:#64748b; font-size:11px;">(${roomCode || "ソロ"})</span>
+          </div>
+          <button onclick="window.openGameForwardDialog()" style="background:#06c755; color:#fff; font-size:11px; font-weight:bold; padding:4px 10px; border-radius:6px; border:0; cursor:pointer;">
+            📤 招待を転送
+          </button>
+        </div>
+
+        <div id="othWaitBanner" style="display:none; background:#0284c7; color:#fff; font-size:12px; padding:8px 12px; border-radius:8px; margin-bottom:12px; font-weight:bold;">
+          ⏳ 相手の参加を待っています…上の「招待を転送」でチャットにカードを送ってください！
+        </div>
+
+        <div style="display:flex; justify-content:center; gap:20px; margin-bottom:14px;">
+          <div id="othP1Box" style="padding:6px 14px; border-radius:8px; border:2px solid #38bdf8; background:#1e293b; min-width:110px;">
+            <div id="othP1Label" style="font-size:12px; color:#94a3b8;">黒 (ホスト)</div>
+            <div id="othBCount" style="font-size:22px; font-weight:bold; color:#f8fafc;">2</div>
+          </div>
+          <div id="othP2Box" style="padding:6px 14px; border-radius:8px; border:2px solid transparent; background:#1e293b; min-width:110px;">
+            <div id="othP2Label" style="font-size:12px; color:#94a3b8;">白 (参加者)</div>
+            <div id="othWCount" style="font-size:22px; font-weight:bold; color:#f8fafc;">2</div>
+          </div>
+        </div>
+
+        <div id="othStatusBanner" style="font-size:14px; font-weight:bold; color:#38bdf8; min-height:24px; margin-bottom:10px;">
+          ルームに接続中…
+        </div>
+
+        <div id="othelloGrid" class="othello-board-grid"></div>
+
+        <div style="margin-top:16px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+          <button id="othSwitchCpuBtn" style="background:#334155; color:#fff; padding:8px 14px; border-radius:8px; font-size:12px; border:0; cursor:pointer;">
+            🤖 待たずにCPU戦に切替
+          </button>
+          <button id="othResetBtn" style="background:#1e293b; border:1px solid #334155; color:#94a3b8; padding:8px 14px; border-radius:8px; font-size:12px; border:0; cursor:pointer;">
+            🔄 最初から
+          </button>
+        </div>
+      </div>
+    `;
 
     const DIRS = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
 
@@ -334,7 +341,8 @@
       if (!grid) return;
       grid.innerHTML = "";
 
-      const validMoves = (!isGameOver && turn === 1) ? getValidMoves(board, 1) : [];
+      const isMyTurn = isOnline ? (turn === myRole) : (turn === 1);
+      const validMoves = (!isGameOver && isMyTurn) ? getValidMoves(board, turn) : [];
       const validMap = new Map();
       validMoves.forEach(m => validMap.set(`${m.r},${m.c}`, m.flips));
 
@@ -369,45 +377,90 @@
       if (isGameOver) {
         p1Box.style.borderColor = "transparent";
         p2Box.style.borderColor = "transparent";
-        if (bCount > wCount) banner.textContent = `🎉 あなたの勝ち！ (${bCount} 対 ${wCount})`;
-        else if (wCount > bCount) banner.textContent = `相手の勝ち！ (${bCount} 対 ${wCount})`;
-        else banner.textContent = `引き分け！ (${bCount} 対 ${wCount})`;
+        if (bCount > wCount) {
+          banner.textContent = myRole === 1 ? `🎉 黒（あなた）の勝利！ (${bCount} 対 ${wCount})` : `黒の勝利！ (${bCount} 対 ${wCount})`;
+        } else if (wCount > bCount) {
+          banner.textContent = myRole === 2 ? `🎉 白（あなた）の勝利！ (${wCount} 対 ${bCount})` : `白の勝利！ (${wCount} 対 ${bCount})`;
+        } else {
+          banner.textContent = `引き分け！ (${bCount} 対 ${wCount})`;
+        }
       } else {
         if (turn === 1) {
           p1Box.style.borderColor = "#38bdf8";
           p2Box.style.borderColor = "transparent";
-          banner.textContent = "あなたの手番です (黒)";
         } else {
           p2Box.style.borderColor = "#38bdf8";
           p1Box.style.borderColor = "transparent";
-          banner.textContent = "相手が考えています… (白)";
+        }
+
+        if (isOnline) {
+          if (turn === myRole) {
+            banner.textContent = `あなたの手番です！ (${myRole === 1 ? "黒" : "白"})`;
+          } else {
+            banner.textContent = `相手（${opponentName}）の手番です… 考え中`;
+          }
+        } else {
+          banner.textContent = turn === 1 ? "あなたの手番です (黒)" : "CPUが考えています… (白)";
         }
       }
     }
 
-    function makeMove(r, c, flips) {
-      if (isGameOver || turn !== 1) return;
+    async function makeMove(r, c, flips) {
+      if (isGameOver) return;
+      if (isOnline && turn !== myRole) return;
+      if (!isOnline && turn !== 1) return;
+
       playTone(440, "sine", 0.08);
 
-      board[r][c] = 1;
+      const movingRole = isOnline ? myRole : 1;
+      board[r][c] = movingRole;
       for (const [fr, fc] of flips) {
-        board[fr][fc] = 1;
+        board[fr][fc] = movingRole;
       }
 
-      turn = 2;
+      const nextRole = 3 - movingRole;
+      const nextMoves = getValidMoves(board, nextRole);
+      let nextTurn = nextRole;
+      let over = false;
+
+      if (nextMoves.length === 0) {
+        const myMovesAgain = getValidMoves(board, movingRole);
+        if (myMovesAgain.length > 0) {
+          nextTurn = movingRole;
+          document.getElementById("othStatusBanner").textContent = "置けるマスがないためパスされました！";
+        } else {
+          over = true;
+          isGameOver = true;
+        }
+      }
+
+      turn = nextTurn;
       renderBoard();
 
-      // 白 (CPU) 手番
-      setTimeout(() => {
-        runCpuMove();
-      }, 500);
+      if (isOnline) {
+        try {
+          await window.api(`/api/games/rooms/${roomCode}/update`, {
+            method: "POST",
+            body: JSON.stringify({
+              state: {
+                board,
+                turn,
+                isGameOver: over
+              }
+            })
+          });
+        } catch (e) {
+          console.warn("Move sync error:", e);
+        }
+      } else {
+        setTimeout(runCpuMove, 500);
+      }
     }
 
     function runCpuMove() {
       if (isGameOver) return;
       const moves = getValidMoves(board, 2);
       if (moves.length === 0) {
-        // 白パス
         const p1Moves = getValidMoves(board, 1);
         if (p1Moves.length === 0) {
           isGameOver = true;
@@ -420,7 +473,6 @@
         return;
       }
 
-      // レベルに応じた手選び (角優先 / 枚数)
       const corners = ["0,0", "0,7", "7,0", "7,7"];
       let chosen = moves.find(m => corners.includes(`${m.r},${m.c}`));
       if (!chosen) {
@@ -449,6 +501,94 @@
       renderBoard();
     }
 
+    // オンライン同期初期化
+    async function initOnline() {
+      if (!isOnline) {
+        document.getElementById("othModeBadge").textContent = "🤖 ソロCPU対戦";
+        renderBoard();
+        return;
+      }
+
+      try {
+        const myName = (window.currentUser && window.currentUser.displayName) || "プレイヤー";
+        const res = await window.api(`/api/games/rooms/${roomCode}/join`, {
+          method: "POST",
+          body: JSON.stringify({
+            gameType: "othello",
+            username: myName,
+            initialState: {
+              board,
+              turn: 1,
+              isGameOver: false
+            }
+          })
+        });
+
+        myRole = res.role; // 1: 黒(ホスト), 2: 白(参加者)
+        handleRoomUpdate(res.room);
+        startPolling();
+      } catch (err) {
+        console.warn("Online join failed, switching to CPU:", err.message);
+        switchToCpu();
+      }
+    }
+
+    function startPolling() {
+      if (window._othelloPollTimer) clearInterval(window._othelloPollTimer);
+      window._othelloPollTimer = setInterval(async () => {
+        if (!isOnline) return;
+        try {
+          const res = await window.api(`/api/games/rooms/${roomCode}`);
+          if (res && res.room) {
+            handleRoomUpdate(res.room);
+          }
+        } catch (e) {}
+      }, 1000);
+    }
+
+    function handleRoomUpdate(room) {
+      if (!room) return;
+      const players = room.players || [];
+      const p1 = players[0] || { username: "ホスト" };
+      const p2 = players[1] || null;
+
+      const p1El = document.getElementById("othP1Label");
+      const p2El = document.getElementById("othP2Label");
+      const waitBanner = document.getElementById("othWaitBanner");
+
+      if (p1El) p1El.textContent = `黒 (${p1.username}${myRole === 1 ? "·あなた" : ""})`;
+      if (p2El) p2El.textContent = `白 (${p2 ? p2.username + (myRole === 2 ? "·あなた" : "") : "待機中…"})`;
+
+      if (players.length >= 2) {
+        if (waitBanner) waitBanner.style.display = "none";
+        opponentName = (myRole === 1 ? (p2 ? p2.username : "白") : p1.username) || "相手";
+      } else {
+        if (waitBanner) waitBanner.style.display = "block";
+      }
+
+      if (room.state) {
+        if (room.state.board) board = room.state.board;
+        if (room.state.turn) turn = room.state.turn;
+        if (room.state.isGameOver !== undefined) isGameOver = room.state.isGameOver;
+      }
+
+      renderBoard();
+    }
+
+    function switchToCpu() {
+      isOnline = false;
+      if (window._othelloPollTimer) clearInterval(window._othelloPollTimer);
+      document.getElementById("othModeBadge").textContent = "🤖 ソロCPU対戦";
+      document.getElementById("othWaitBanner").style.display = "none";
+      document.getElementById("othP1Label").textContent = "黒 (あなた)";
+      document.getElementById("othP2Label").textContent = "白 (CPU)";
+      renderBoard();
+    }
+
+    document.getElementById("othSwitchCpuBtn").onclick = () => {
+      switchToCpu();
+    };
+
     document.getElementById("othResetBtn").onclick = () => {
       board = [
         [0,0,0,0,0,0,0,0],
@@ -463,27 +603,54 @@
       turn = 1;
       isGameOver = false;
       renderBoard();
+      if (isOnline) {
+        window.api(`/api/games/rooms/${roomCode}/update`, {
+          method: "POST",
+          body: JSON.stringify({
+            state: { board, turn, isGameOver: false }
+          })
+        }).catch(() => {});
+      }
     };
 
-    renderBoard();
+    initOnline();
   }
 
   // ==================================================
-  // 2. 🎴 UNO（ウノ対戦）
+  // 2. 🎴 UNO（ウノ対戦）- リアルタイムオンライン対人対戦 & CPU
   // ==================================================
   function renderUnoGame(container, roomCode) {
+    const COLORS = ["red", "blue", "green", "yellow"];
+    let isOnline = Boolean(roomCode && window.api);
+    let myRole = 1; // 1: ホスト, 2: 参加者
+    let turnRole = 1;
+    let opponentName = "相手";
+    let deck = [];
+    let playerHand = [];
+    let oppHandCount = 7;
+    let topCard = { color: "red", value: "7" };
+
     container.innerHTML = `
       <div style="padding:16px; max-width:440px; margin:0 auto; text-align:center;">
         <div style="background:#1e293b; padding:10px 14px; border-radius:10px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
-          <div style="font-size:13px; color:#94a3b8;">ルーム: <strong style="color:#ef4444;">${roomCode}</strong></div>
-          <button onclick="window.openGameForwardDialog()" style="background:#06c755; color:#fff; font-size:11px; font-weight:bold; padding:4px 10px; border-radius:6px;">
-            📤 チャットに転送
+          <div style="font-size:13px; color:#94a3b8;">
+            <strong id="unoModeBadge" style="color:#ef4444;">👥 オンライン対戦</strong>
+            <span style="margin-left:6px; color:#64748b; font-size:11px;">(${roomCode || "ソロ"})</span>
+          </div>
+          <button onclick="window.openGameForwardDialog()" style="background:#06c755; color:#fff; font-size:11px; font-weight:bold; padding:4px 10px; border-radius:6px; border:0; cursor:pointer;">
+            📤 招待を転送
           </button>
         </div>
 
+        <div id="unoWaitAlert" style="display:none; background:#0284c7; color:#fff; font-size:12px; padding:8px 12px; border-radius:8px; margin-bottom:12px; font-weight:bold;">
+          ⏳ 相手の参加を待っています…上の「招待を転送」でチャットにカードを送ってください！
+        </div>
+
         <div style="background:#0f172a; border:1px solid #334155; border-radius:12px; padding:16px; margin-bottom:16px;">
-          <div style="font-size:12px; color:#94a3b8; margin-bottom:6px;">CPUの手札: <span id="unoCpuCount" style="font-weight:bold; color:#ef4444;">7枚</span></div>
-          <div id="unoStatusBanner" style="font-size:14px; font-weight:bold; color:#38bdf8; min-height:24px; margin-bottom:12px;">あなたの番です！</div>
+          <div style="font-size:12px; color:#94a3b8; margin-bottom:6px;">
+            相手 (<span id="unoOppName">相手</span>) の手札: <span id="unoCpuCount" style="font-weight:bold; color:#ef4444;">7枚</span>
+          </div>
+          <div id="unoStatusBanner" style="font-size:14px; font-weight:bold; color:#38bdf8; min-height:24px; margin-bottom:12px;">接続中…</div>
 
           <div style="display:flex; justify-content:center; align-items:center; gap:20px; margin:16px 0;">
             <div id="unoDeckBtn" style="width:60px; height:85px; background:#1e293b; border:2px dashed #94a3b8; border-radius:8px; display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer;">
@@ -496,15 +663,14 @@
 
         <div style="font-size:13px; color:#f8fafc; font-weight:bold; text-align:left; margin-bottom:6px;">あなた手札 (タップで出す):</div>
         <div id="unoPlayerHand" class="uno-hand-container"></div>
+
+        <div style="margin-top:16px; display:flex; gap:8px; justify-content:center;">
+          <button id="unoSwitchCpuBtn" style="background:#334155; color:#fff; padding:6px 14px; border-radius:8px; font-size:12px; border:0; cursor:pointer;">
+            🤖 待たずにCPU戦に切替
+          </button>
+        </div>
       </div>
     `;
-
-    const COLORS = ["red", "blue", "green", "yellow"];
-    let deck = [];
-    let playerHand = [];
-    let cpuHand = [];
-    let topCard = { color: "red", value: "7" };
-    let isPlayerTurn = true;
 
     function createDeck() {
       deck = [];
@@ -534,7 +700,6 @@
     createDeck();
     for (let i = 0; i < 7; i++) {
       playerHand.push(drawCard());
-      cpuHand.push(drawCard());
     }
 
     function canPlay(card, top) {
@@ -544,13 +709,31 @@
       return false;
     }
 
+    function isMyTurn() {
+      return isOnline ? (turnRole === myRole) : (turnRole === 1);
+    }
+
     function renderUI() {
       const discard = document.getElementById("unoDiscardCard");
       if (discard) {
         discard.className = "uno-card " + topCard.color;
         discard.textContent = topCard.value;
       }
-      document.getElementById("unoCpuCount").textContent = `${cpuHand.length}枚`;
+      const countEl = document.getElementById("unoCpuCount");
+      if (countEl) countEl.textContent = `${oppHandCount}枚`;
+
+      const banner = document.getElementById("unoStatusBanner");
+      if (banner) {
+        if (playerHand.length === 0) {
+          banner.textContent = "🎉 あなたの勝ち！UNO!!";
+        } else if (oppHandCount <= 0) {
+          banner.textContent = `相手（${opponentName}）の勝ち！ドンマイ！`;
+        } else if (isMyTurn()) {
+          banner.textContent = "あなたの手番です！出せるカードを選んでください";
+        } else {
+          banner.textContent = `相手（${opponentName}）が考えています…`;
+        }
+      }
 
       const handEl = document.getElementById("unoPlayerHand");
       if (!handEl) return;
@@ -560,105 +743,213 @@
         const el = document.createElement("div");
         el.className = "uno-card " + card.color;
         el.textContent = card.value;
-        if (isPlayerTurn && canPlay(card, topCard)) {
+        if (isMyTurn() && canPlay(card, topCard)) {
           el.style.boxShadow = "0 0 10px #38bdf8";
+          el.style.opacity = "1";
           el.onclick = () => playPlayerCard(idx);
         } else {
-          el.style.opacity = isPlayerTurn ? "0.5" : "0.7";
+          el.style.opacity = "0.5";
         }
         handEl.appendChild(el);
       });
-
-      if (playerHand.length === 0) {
-        document.getElementById("unoStatusBanner").textContent = "🎉 あなたの勝ち！UNO!!";
-      } else if (cpuHand.length === 0) {
-        document.getElementById("unoStatusBanner").textContent = "相手の勝ち！ドンマイ！";
-      }
     }
 
-    function playPlayerCard(idx) {
+    async function playPlayerCard(idx) {
+      if (!isMyTurn()) return;
       const card = playerHand.splice(idx, 1)[0];
       topCard = card;
       if (card.color === "wild") {
         topCard.color = COLORS[Math.floor(Math.random() * COLORS.length)];
       }
       playTone(520, "triangle", 0.1);
-      isPlayerTurn = false;
-      document.getElementById("unoStatusBanner").textContent = "CPUが手番を考えています…";
+
+      turnRole = isOnline ? (3 - myRole) : 2;
       renderUI();
 
-      if (playerHand.length === 0) return;
-
-      setTimeout(runCpuTurn, 700);
+      if (isOnline) {
+        syncUnoState();
+      } else {
+        setTimeout(runCpuTurn, 700);
+      }
     }
 
     function runCpuTurn() {
-      const valid = cpuHand.findIndex(c => canPlay(c, topCard));
-      if (valid !== -1) {
-        const card = cpuHand.splice(valid, 1)[0];
-        topCard = card;
-        if (card.color === "wild") {
-          topCard.color = COLORS[Math.floor(Math.random() * COLORS.length)];
-        }
-        playTone(390, "triangle", 0.1);
-      } else {
-        cpuHand.push(drawCard());
-      }
-      isPlayerTurn = true;
-      document.getElementById("unoStatusBanner").textContent = "あなたの番です！";
+      if (isOnline) return;
+      if (oppHandCount <= 0) return;
+      const dummyCard = { color: COLORS[Math.floor(Math.random() * 4)], value: String(Math.floor(Math.random() * 10)) };
+      topCard = dummyCard;
+      oppHandCount = Math.max(0, oppHandCount - 1);
+      playTone(390, "triangle", 0.1);
+      turnRole = 1;
       renderUI();
     }
 
+    async function syncUnoState() {
+      if (!isOnline) return;
+      try {
+        await window.api(`/api/games/rooms/${roomCode}/update`, {
+          method: "POST",
+          body: JSON.stringify({
+            state: {
+              topCard,
+              turnRole,
+              [myRole === 1 ? "p1Count" : "p2Count"]: playerHand.length
+            }
+          })
+        });
+      } catch (e) {
+        console.warn("UNO sync error:", e);
+      }
+    }
+
     document.getElementById("unoDeckBtn").onclick = () => {
-      if (!isPlayerTurn) return;
+      if (!isMyTurn()) return;
       playerHand.push(drawCard());
       playTone(300, "sine", 0.08);
-      isPlayerTurn = false;
-      document.getElementById("unoStatusBanner").textContent = "カードを引きました。CPUの番です…";
+      turnRole = isOnline ? (3 - myRole) : 2;
       renderUI();
-      setTimeout(runCpuTurn, 700);
+      if (isOnline) {
+        syncUnoState();
+      } else {
+        setTimeout(runCpuTurn, 700);
+      }
     };
 
-    renderUI();
+    // オンライン初期化
+    async function initOnlineUno() {
+      if (!isOnline) {
+        document.getElementById("unoModeBadge").textContent = "🤖 ソロCPU対戦";
+        renderUI();
+        return;
+      }
+
+      try {
+        const myName = (window.currentUser && window.currentUser.displayName) || "プレイヤー";
+        const res = await window.api(`/api/games/rooms/${roomCode}/join`, {
+          method: "POST",
+          body: JSON.stringify({
+            gameType: "uno",
+            username: myName,
+            initialState: {
+              topCard,
+              turnRole: 1,
+              p1Count: 7,
+              p2Count: 7
+            }
+          })
+        });
+
+        myRole = res.role;
+        handleUnoUpdate(res.room);
+        startUnoPolling();
+      } catch (err) {
+        console.warn("Online UNO join failed, fallback to CPU:", err.message);
+        switchToCpuUno();
+      }
+    }
+
+    function startUnoPolling() {
+      if (window._unoPollTimer) clearInterval(window._unoPollTimer);
+      window._unoPollTimer = setInterval(async () => {
+        if (!isOnline) return;
+        try {
+          const res = await window.api(`/api/games/rooms/${roomCode}`);
+          if (res && res.room) {
+            handleUnoUpdate(res.room);
+          }
+        } catch (e) {}
+      }, 1000);
+    }
+
+    function handleUnoUpdate(room) {
+      if (!room) return;
+      const players = room.players || [];
+      const waitAlert = document.getElementById("unoWaitAlert");
+      const oppNameEl = document.getElementById("unoOppName");
+
+      if (players.length >= 2) {
+        if (waitAlert) waitAlert.style.display = "none";
+        opponentName = (myRole === 1 ? (players[1] ? players[1].username : "相手") : players[0].username) || "相手";
+        if (oppNameEl) oppNameEl.textContent = opponentName;
+      } else {
+        if (waitAlert) waitAlert.style.display = "block";
+      }
+
+      if (room.state) {
+        if (room.state.topCard) topCard = room.state.topCard;
+        if (room.state.turnRole) turnRole = room.state.turnRole;
+        if (myRole === 1 && room.state.p2Count !== undefined) oppHandCount = room.state.p2Count;
+        if (myRole === 2 && room.state.p1Count !== undefined) oppHandCount = room.state.p1Count;
+      }
+
+      renderUI();
+    }
+
+    function switchToCpuUno() {
+      isOnline = false;
+      if (window._unoPollTimer) clearInterval(window._unoPollTimer);
+      document.getElementById("unoModeBadge").textContent = "🤖 ソロCPU対戦";
+      document.getElementById("unoWaitAlert").style.display = "none";
+      document.getElementById("unoOppName").textContent = "CPU";
+      renderUI();
+    }
+
+    document.getElementById("unoSwitchCpuBtn").onclick = () => {
+      switchToCpuUno();
+    };
+
+    initOnlineUno();
   }
 
   // ==================================================
-  // 3. 🃏 大富豪（4人対戦）
+  // 3. 🃏 大富豪（4人対戦）- リアルタイムオンライン対人対戦 & CPU
   // ==================================================
   function renderDaifugoGame(container, roomCode) {
+    let isOnline = Boolean(roomCode && window.api);
+    let myRole = 1;
+    let turnRole = 1;
+    let opponentName = "対戦相手";
+
     container.innerHTML = `
       <div style="padding:16px; max-width:440px; margin:0 auto; text-align:center;">
         <div style="background:#1e293b; padding:10px 14px; border-radius:10px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
-          <div style="font-size:13px; color:#94a3b8;">ルーム: <strong style="color:#f59e0b;">${roomCode}</strong></div>
-          <button onclick="window.openGameForwardDialog()" style="background:#06c755; color:#fff; font-size:11px; font-weight:bold; padding:4px 10px; border-radius:6px;">
-            📤 チャットに転送
+          <div style="font-size:13px; color:#94a3b8;">
+            <strong id="dfModeBadge" style="color:#f59e0b;">👥 オンライン対戦</strong>
+            <span style="margin-left:6px; color:#64748b; font-size:11px;">(${roomCode || "ソロ"})</span>
+          </div>
+          <button onclick="window.openGameForwardDialog()" style="background:#06c755; color:#fff; font-size:11px; font-weight:bold; padding:4px 10px; border-radius:6px; border:0; cursor:pointer;">
+            📤 招待を転送
           </button>
         </div>
 
+        <div id="dfWaitAlert" style="display:none; background:#0284c7; color:#fff; font-size:12px; padding:8px 12px; border-radius:8px; margin-bottom:12px; font-weight:bold;">
+          ⏳ 相手の参加を待っています…上の「招待を転送」でチャットにカードを送ってください！
+        </div>
+
         <div style="display:flex; justify-content:space-around; background:#0f172a; padding:8px; border-radius:8px; margin-bottom:12px; font-size:12px; color:#94a3b8;">
-          <div>左: CPU1 (<span id="dfC1">13</span>)</div>
-          <div>上: CPU2 (<span id="dfC2">13</span>)</div>
-          <div>右: CPU3 (<span id="dfC3">13</span>)</div>
+          <div>相手: <span id="dfOppName" style="color:#38bdf8;">相手</span> (<span id="dfC1">13</span>)</div>
+          <div>CPU1 (<span id="dfC2">13</span>)</div>
+          <div>CPU2 (<span id="dfC3">13</span>)</div>
         </div>
 
         <div style="background:#1e293b; border-radius:12px; padding:16px; min-height:100px; margin-bottom:14px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-          <div style="font-size:11px; color:#94a3b8; margin-bottom:6px;">場のカード (8切り・革命対応)</div>
+          <div style="font-size:11px; color:#94a3b8; margin-bottom:6px;">場のカード (8切り対応)</div>
           <div id="dfFieldCards" style="display:flex; gap:6px;">
             <span style="color:#64748b; font-size:13px;">まだ場に出ていません</span>
           </div>
         </div>
 
         <div id="dfBanner" style="font-size:14px; font-weight:bold; color:#38bdf8; min-height:22px; margin-bottom:10px;">
-          あなたの番です！カードを選んで出してください
+          接続中…
         </div>
 
         <div id="dfPlayerHand" style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center; min-height:80px; margin-bottom:14px;"></div>
 
         <div style="display:flex; gap:10px; justify-content:center;">
-          <button id="dfPlayBtn" style="background:#f59e0b; color:#fff; font-weight:bold; padding:8px 20px; border-radius:8px; font-size:13px;">
+          <button id="dfPlayBtn" style="background:#f59e0b; color:#fff; font-weight:bold; padding:8px 20px; border-radius:8px; font-size:13px; border:0; cursor:pointer;">
             出す
           </button>
-          <button id="dfPassBtn" style="background:#334155; color:#fff; padding:8px 16px; border-radius:8px; font-size:13px;">
+          <button id="dfPassBtn" style="background:#334155; color:#fff; padding:8px 16px; border-radius:8px; font-size:13px; border:0; cursor:pointer;">
             パス
           </button>
         </div>
@@ -679,6 +970,10 @@
     let selectedIdx = null;
     let field = [];
 
+    function isMyTurn() {
+      return isOnline ? (turnRole === myRole) : (turnRole === 1);
+    }
+
     function renderHand() {
       const el = document.getElementById("dfPlayerHand");
       if (!el) return;
@@ -688,14 +983,42 @@
         btn.className = "df-card" + (c.suit === "♥" || c.suit === "♦" ? " red-suit" : "") + (selectedIdx === idx ? " selected" : "");
         btn.innerHTML = `<div>${c.suit}</div><div style="text-align:right;">${c.str}</div>`;
         btn.onclick = () => {
+          if (!isMyTurn()) return;
           selectedIdx = (selectedIdx === idx ? null : idx);
           renderHand();
         };
         el.appendChild(btn);
       });
+
+      const banner = document.getElementById("dfBanner");
+      if (banner) {
+        if (pHand.length === 0) {
+          banner.textContent = "🎉 上がり！あなたの勝ちです！";
+        } else if (isMyTurn()) {
+          banner.textContent = "あなたの手番です！カードを選んで出してください";
+        } else {
+          banner.textContent = `相手（${opponentName}）の手番です…`;
+        }
+      }
+    }
+
+    async function syncDf() {
+      if (!isOnline) return;
+      try {
+        await window.api(`/api/games/rooms/${roomCode}/update`, {
+          method: "POST",
+          body: JSON.stringify({
+            state: {
+              field,
+              turnRole
+            }
+          })
+        });
+      } catch (e) {}
     }
 
     document.getElementById("dfPlayBtn").onclick = () => {
+      if (!isMyTurn()) return;
       if (selectedIdx === null) {
         alert("出すカードをタップしてください。");
         return;
@@ -709,21 +1032,112 @@
       fEl.innerHTML = `<div class="df-card ${c.suit === "♥" || c.suit === "♦" ? "red-suit" : ""}">${c.suit} ${c.str}</div>`;
 
       if (c.num === 8) {
-        document.getElementById("dfBanner").textContent = "⚡ 8切り発動！場が流れました！あなたの連続手番です";
+        document.getElementById("dfBanner").textContent = "⚡ 8切り発動！場が流れました！連続手番です";
         field = [];
         fEl.innerHTML = `<span style="color:#64748b; font-size:13px;">8切りで場が流れました</span>`;
       } else {
-        document.getElementById("dfBanner").textContent = "相手がパスしました。あなたの番です！";
+        turnRole = isOnline ? (3 - myRole) : 2;
       }
       renderHand();
+
+      if (isOnline) {
+        syncDf();
+      } else {
+        setTimeout(() => {
+          turnRole = 1;
+          renderHand();
+        }, 800);
+      }
     };
 
     document.getElementById("dfPassBtn").onclick = () => {
+      if (!isMyTurn()) return;
       playTone(280, "sine", 0.08);
-      document.getElementById("dfBanner").textContent = "パスしました。次のターンです";
+      turnRole = isOnline ? (3 - myRole) : 2;
+      renderHand();
+      if (isOnline) {
+        syncDf();
+      } else {
+        setTimeout(() => {
+          turnRole = 1;
+          renderHand();
+        }, 800);
+      }
     };
 
-    renderHand();
+    async function initOnlineDf() {
+      if (!isOnline) {
+        document.getElementById("dfModeBadge").textContent = "🤖 ソロCPU対戦";
+        renderHand();
+        return;
+      }
+      try {
+        const myName = (window.currentUser && window.currentUser.displayName) || "プレイヤー";
+        const res = await window.api(`/api/games/rooms/${roomCode}/join`, {
+          method: "POST",
+          body: JSON.stringify({
+            gameType: "daifugo",
+            username: myName,
+            initialState: {
+              field: [],
+              turnRole: 1
+            }
+          })
+        });
+
+        myRole = res.role;
+        handleDfUpdate(res.room);
+        startDfPolling();
+      } catch (err) {
+        console.warn("Online Daifugo join failed:", err.message);
+        isOnline = false;
+        renderHand();
+      }
+    }
+
+    function startDfPolling() {
+      if (window._daifugoPollTimer) clearInterval(window._daifugoPollTimer);
+      window._daifugoPollTimer = setInterval(async () => {
+        if (!isOnline) return;
+        try {
+          const res = await window.api(`/api/games/rooms/${roomCode}`);
+          if (res && res.room) {
+            handleDfUpdate(res.room);
+          }
+        } catch (e) {}
+      }, 1000);
+    }
+
+    function handleDfUpdate(room) {
+      if (!room) return;
+      const players = room.players || [];
+      const waitAlert = document.getElementById("dfWaitAlert");
+      const oppNameEl = document.getElementById("dfOppName");
+
+      if (players.length >= 2) {
+        if (waitAlert) waitAlert.style.display = "none";
+        opponentName = (myRole === 1 ? (players[1] ? players[1].username : "相手") : players[0].username) || "相手";
+        if (oppNameEl) oppNameEl.textContent = opponentName;
+      } else {
+        if (waitAlert) waitAlert.style.display = "block";
+      }
+
+      if (room.state) {
+        if (room.state.field) {
+          field = room.state.field;
+          const fEl = document.getElementById("dfFieldCards");
+          if (fEl && field.length > 0) {
+            const c = field[0];
+            fEl.innerHTML = `<div class="df-card ${c.suit === "♥" || c.suit === "♦" ? "red-suit" : ""}">${c.suit} ${c.str}</div>`;
+          }
+        }
+        if (room.state.turnRole) turnRole = room.state.turnRole;
+      }
+
+      renderHand();
+    }
+
+    initOnlineDf();
   }
 
   // ==================================================
