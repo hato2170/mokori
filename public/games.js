@@ -206,7 +206,8 @@
       uno: "🎴 UNO（ウノ対戦）",
       daifugo: "🃏 大富豪（4人対戦）",
       snowball: "❄️ snowball.io（雪玉バトル）",
-      paper: "📄 paper.io（陣取りバトル）",
+      paper: "📄 paper.io（2D陣取りバトル）",
+      "paper-webgl": "⭐ paper.io WebGL版（本家完全再現）",
       brawl: "⭐ ブロスタ（2D軽量版）",
       "brawl-webgl": "⭐ ブロスタ WebGL版（本家完全再現）",
       "brawl-crazygames": "⭐ Brawl Squad（CrazyGames版）",
@@ -231,6 +232,9 @@
         break;
       case "paper":
         renderPaperGame(embed);
+        break;
+      case "paper-webgl":
+        renderPaperWebglGame(embed);
         break;
       case "brawl":
         renderBrawlGame(embed);
@@ -1315,18 +1319,27 @@
   }
 
   // ==================================================
-  // 5. 📄 paper.io（陣取りバトル）
+  // 5. 📄 paper.io（2D陣取りバトル）
   // ==================================================
   function renderPaperGame(container) {
     container.innerHTML = `
       <div style="padding:12px; max-width:400px; margin:0 auto; text-align:center;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span style="font-size:13px; color:#ec4899; font-weight:bold;">📄 paper.io (陣取り)</span>
+          <span style="font-size:13px; color:#ec4899; font-weight:bold;">📄 paper.io (2D陣取り)</span>
           <span style="font-size:12px; color:#94a3b8;">領地率: <strong id="paperScore" style="color:#ec4899;">8.4%</strong></span>
         </div>
         <canvas id="paperCanvas" width="360" height="360" style="background:#111827; border:2px solid #ec4899; border-radius:12px; touch-action:none;"></canvas>
+        <!-- iPhone / iPad タッチ操作用 D-Pad -->
+        <div style="margin-top:10px; display:inline-grid; grid-template-columns:52px 52px 52px; grid-template-rows:44px 44px; gap:6px; justify-content:center;">
+          <div></div>
+          <button id="pUp" style="background:#1e293b; color:#fff; border:1px solid #475569; border-radius:8px; font-size:18px; cursor:pointer; touch-action:manipulation;">▲</button>
+          <div></div>
+          <button id="pLeft" style="background:#1e293b; color:#fff; border:1px solid #475569; border-radius:8px; font-size:18px; cursor:pointer; touch-action:manipulation;">◀</button>
+          <button id="pDown" style="background:#1e293b; color:#fff; border:1px solid #475569; border-radius:8px; font-size:18px; cursor:pointer; touch-action:manipulation;">▼</button>
+          <button id="pRight" style="background:#1e293b; color:#fff; border:1px solid #475569; border-radius:8px; font-size:18px; cursor:pointer; touch-action:manipulation;">▶</button>
+        </div>
         <div style="font-size:11px; color:#94a3b8; margin-top:8px;">
-          矢印キーまたはスワイプで方向転換！領地を囲んで拡大！
+          ボタンタップ・画面スワイプ・矢印キーで方向転換！領地を囲んで拡大！
         </div>
       </div>
     `;
@@ -1348,12 +1361,53 @@
       }
     }
 
+    function changeDir(newX, newY) {
+      if (newX !== 0 && dir.x === 0) dir = { x: newX, y: 0 };
+      if (newY !== 0 && dir.y === 0) dir = { x: 0, y: newY };
+    }
+
     window.onkeydown = (e) => {
-      if (e.key === "ArrowUp" && dir.y === 0) dir = { x: 0, y: -2 };
-      if (e.key === "ArrowDown" && dir.y === 0) dir = { x: 0, y: 2 };
-      if (e.key === "ArrowLeft" && dir.x === 0) dir = { x: -2, y: 0 };
-      if (e.key === "ArrowRight" && dir.x === 0) dir = { x: 2, y: 0 };
+      if (e.key === "ArrowUp") changeDir(0, -2);
+      if (e.key === "ArrowDown") changeDir(0, 2);
+      if (e.key === "ArrowLeft") changeDir(-2, 0);
+      if (e.key === "ArrowRight") changeDir(2, 0);
     };
+
+    // ボタンクリック・タッチ
+    const btnUp = document.getElementById("pUp");
+    const btnDown = document.getElementById("pDown");
+    const btnLeft = document.getElementById("pLeft");
+    const btnRight = document.getElementById("pRight");
+    if (btnUp) btnUp.onpointerdown = (e) => { e.preventDefault(); changeDir(0, -2); };
+    if (btnDown) btnDown.onpointerdown = (e) => { e.preventDefault(); changeDir(0, 2); };
+    if (btnLeft) btnLeft.onpointerdown = (e) => { e.preventDefault(); changeDir(-2, 0); };
+    if (btnRight) btnRight.onpointerdown = (e) => { e.preventDefault(); changeDir(2, 0); };
+
+    // スワイプ操作 (iOS/iPadOS対応)
+    let touchStart = null;
+    cv.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      touchStart = { x: t.clientX, y: t.clientY };
+    }, { passive: false });
+
+    cv.addEventListener("touchmove", (e) => {
+      e.preventDefault();
+      if (!touchStart) return;
+      const t = e.touches[0];
+      const dx = t.clientX - touchStart.x;
+      const dy = t.clientY - touchStart.y;
+      if (Math.hypot(dx, dy) > 15) {
+        if (Math.abs(dx) > Math.abs(dy)) {
+          changeDir(dx > 0 ? 2 : -2, 0);
+        } else {
+          changeDir(0, dy > 0 ? 2 : -2);
+        }
+        touchStart = { x: t.clientX, y: t.clientY };
+      }
+    }, { passive: false });
+
+    cv.addEventListener("touchend", () => { touchStart = null; });
 
     function loop() {
       ctx.fillStyle = "#111827";
@@ -1394,6 +1448,93 @@
     window._stopPaper = () => {
       if (animId) cancelAnimationFrame(animId);
     };
+  }
+
+  // ==================================================
+  // 5-b. ⭐ paper.io WebGL版（本家完全再現 & 埋め込み）
+  // ==================================================
+  const PAPER_WEBGL_SERVERS = {
+    1: { name: "GitLab高速ミラー (公式版)", url: "https://paperio2.gitlab.io/file/" },
+    2: { name: "GitHub Pages公式 (Unblocked版)", url: "https://ubg17.github.io/PaperIO2/" }
+  };
+  let currentMokoriPaperServer = 1;
+
+  window.switchMokoriPaperServer = function(num) {
+    currentMokoriPaperServer = num;
+    for (let i = 1; i <= 2; i++) {
+      const btn = document.getElementById("mokoriPaperSrv" + i);
+      if (!btn) continue;
+      if (i === num) {
+        btn.style.background = "#ec4899";
+        btn.style.color = "#fff";
+        btn.style.border = "none";
+      } else {
+        btn.style.background = "#1e293b";
+        btn.style.color = "#94a3b8";
+        btn.style.border = "1px solid #475569";
+      }
+    }
+    const iframe = document.getElementById("mokoriPaperIframe");
+    const cfg = PAPER_WEBGL_SERVERS[num] || PAPER_WEBGL_SERVERS[1];
+    if (iframe) iframe.src = cfg.url;
+  };
+
+  window.reloadMokoriPaper = function() {
+    const iframe = document.getElementById("mokoriPaperIframe");
+    if (iframe) {
+      const cfg = PAPER_WEBGL_SERVERS[currentMokoriPaperServer] || PAPER_WEBGL_SERVERS[1];
+      iframe.src = "about:blank";
+      setTimeout(() => {
+        iframe.src = cfg.url + (cfg.url.includes("?") ? "&" : "?") + "t=" + Date.now();
+      }, 50);
+    }
+  };
+
+  window.toggleMokoriPaperFullscreen = function() {
+    const wrap = document.getElementById("mokoriPaperFrameWrap");
+    if (!wrap) return;
+    if (!document.fullscreenElement) {
+      if (wrap.requestFullscreen) wrap.requestFullscreen();
+      else if (wrap.webkitRequestFullscreen) wrap.webkitRequestFullscreen();
+    } else {
+      if (document.exitFullscreen) document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    }
+  };
+
+  function renderPaperWebglGame(container) {
+    container.innerHTML = `
+      <div style="padding:10px; max-width:860px; margin:0 auto; text-align:center;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+            <span style="font-size:12px; color:#ec4899; font-weight:bold;">🌐 サーバー:</span>
+            <button id="mokoriPaperSrv1" onclick="switchMokoriPaperServer(1)" style="background:#ec4899; color:#fff; padding:4px 10px; font-size:11px; border-radius:6px; border:none; cursor:pointer;">
+              🚀 サーバー1 (GitLab高速版)
+            </button>
+            <button id="mokoriPaperSrv2" onclick="switchMokoriPaperServer(2)" style="background:#1e293b; color:#94a3b8; padding:4px 10px; font-size:11px; border-radius:6px; border:1px solid #475569; cursor:pointer;">
+              🌐 サーバー2 (GitHub Pages公式)
+            </button>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button onclick="reloadMokoriPaper()" style="background:#1e293b; color:#cbd5e1; border:1px solid #475569; padding:4px 10px; border-radius:6px; font-size:11px; cursor:pointer;">
+              🔄 再読込
+            </button>
+            <button onclick="toggleMokoriPaperFullscreen()" style="background:#1e293b; color:#fff; border:1px solid #475569; padding:4px 10px; border-radius:6px; font-size:11px; cursor:pointer;">
+              ⛶ 全画面
+            </button>
+            <button onclick="window.open((PAPER_WEBGL_SERVERS[currentMokoriPaperServer]||PAPER_WEBGL_SERVERS[1]).url, '_blank')" style="background:#1e293b; color:#cbd5e1; border:1px solid #475569; padding:4px 10px; border-radius:6px; font-size:11px; cursor:pointer;">
+              ↗️ 別タブ
+            </button>
+          </div>
+        </div>
+        <div id="mokoriPaperFrameWrap" style="position:relative; width:100%; height:68vh; min-height:440px; background:#000; border-radius:12px; overflow:hidden; border:2px solid #ec4899;">
+          <iframe id="mokoriPaperIframe" src="https://paperio2.gitlab.io/file/" style="width:100%; height:100%; border:none; display:block;" allow="autoplay; fullscreen; web-share; gamepad; pointer-lock" allowfullscreen></iframe>
+        </div>
+        <div style="font-size:11px; color:#94a3b8; margin-top:8px;">
+          💡 iPhone・iPad・PC対応！学校のiPadでもブロックされず快適に動きます。
+        </div>
+      </div>
+    `;
   }
 
   // ==================================================
