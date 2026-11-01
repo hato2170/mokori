@@ -274,6 +274,86 @@
 }
 .df-card.red-suit { color: #dc2626; }
 
+/* CrazyGames 外部プレイ案内 */
+.crazygames-launch-panel {
+  width: min(100%, 720px);
+  margin: auto;
+  padding: clamp(20px, 5vw, 40px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: #f8fafc;
+  text-align: center;
+}
+.crazygames-launch-panel h2 {
+  margin: 0;
+  font-size: clamp(20px, 5vw, 28px);
+}
+.crazygames-launch-panel p {
+  max-width: 520px;
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.crazygames-launch-icon {
+  font-size: 48px;
+}
+.crazygames-launch-button {
+  min-height: 50px;
+  padding: 12px 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #f59e0b;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.crazygames-launch-button:active {
+  transform: scale(0.98);
+}
+.crazygames-launch-note {
+  color: #94a3b8 !important;
+  font-size: 12px !important;
+}
+
+@media (max-width: 600px) {
+  #gameActiveArea.external-game-active > div:first-child {
+    height: auto !important;
+    min-height: 56px;
+    padding: 8px 10px !important;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  #gameActiveArea.external-game-active > div:first-child > div:first-child,
+  #gameActiveArea.external-game-active > div:first-child > div:last-child {
+    width: 100%;
+    min-width: 0;
+  }
+  #gameActiveArea.external-game-active > div:first-child > div:last-child {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  #gameActiveArea.external-game-active #activeGameTitle {
+    min-width: 0;
+    font-size: 13px !important;
+  }
+  #gameActiveArea.external-game-active #gameEmbedContainer {
+    padding: 8px;
+  }
+  .crazygames-launch-panel {
+    padding: 20px 12px;
+  }
+  .crazygames-launch-button {
+    width: 100%;
+    min-height: 54px;
+  }
+}
+
 /* 転送モーダルリスト */
 .forward-chat-item {
   display: flex;

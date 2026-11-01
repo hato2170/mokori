@@ -8,6 +8,7 @@
   let activeRoomCode = null;
   let currentGameTitle = "";
   let gameAudioCtx = null;
+  const CRAZYGAMES_BRAWL_URL = "https://www.crazygames.com/game/brawl-squad";
 
   function playTone(freq, type = "sine", duration = 0.1) {
     try {
@@ -55,7 +56,10 @@
     const home = document.getElementById("gameHubHome");
     const activeArea = document.getElementById("gameActiveArea");
     if (home) home.style.display = "block";
-    if (activeArea) activeArea.style.display = "none";
+    if (activeArea) {
+      activeArea.style.display = "none";
+      activeArea.classList.remove("external-game-active");
+    }
     activeGame = null;
     activeRoomCode = null;
   };
@@ -192,7 +196,10 @@
     const embed = document.getElementById("gameEmbedContainer");
 
     if (home) home.style.display = "none";
-    if (activeArea) activeArea.style.display = "flex";
+    if (activeArea) {
+      activeArea.style.display = "flex";
+      activeArea.classList.toggle("external-game-active", gameType === "brawl-crazygames");
+    }
 
     const titles = {
       othello: "⚫⚪ オセロ（リバーシ）",
@@ -201,6 +208,7 @@
       snowball: "❄️ snowball.io（雪玉バトル）",
       paper: "📄 paper.io（陣取りバトル）",
       brawl: "⭐ ブロスタ（3v3バトル）",
+      "brawl-crazygames": "⭐ Brawl Squad（CrazyGames版）",
       solitaire: "♠️ ソリティア（クロンダイク）"
     };
 
@@ -226,10 +234,29 @@
       case "brawl":
         renderBrawlGame(embed);
         break;
+      case "brawl-crazygames":
+        renderCrazyGamesBrawl(embed);
+        break;
       case "solitaire":
         renderSolitaireGame(embed);
         break;
     }
+  }
+
+  function renderCrazyGamesBrawl(container) {
+    container.innerHTML = `
+      <section class="crazygames-launch-panel">
+        <div class="crazygames-launch-icon" aria-hidden="true">⭐</div>
+        <h2>Brawl Squad（CrazyGames版）</h2>
+        <p>CrazyGamesの公式ページでプレイできます。埋め込みでの動作を確認できないため、ゲームは別タブで開きます。</p>
+        <a class="crazygames-launch-button" href="${CRAZYGAMES_BRAWL_URL}" target="_blank" rel="noopener noreferrer">
+          CrazyGamesでプレイ（別タブ） ↗
+        </a>
+        <p class="crazygames-launch-note">別タブが自動で開かなかった場合は、上のボタンをタップしてください。</p>
+      </section>
+    `;
+
+    window.open(CRAZYGAMES_BRAWL_URL, "_blank", "noopener,noreferrer");
   }
 
   function stopAllGames() {
