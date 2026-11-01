@@ -527,6 +527,72 @@ app.get("/api/chats", requireLogin, async (req, res) => {
 
     const chats = [];
 
+    // もこり全員グループ (全ユーザー参加)
+    try {
+      const allMembersRef = db.collection("chats").doc("all_members");
+      let allMembersDoc = await allMembersRef.get();
+      const now = admin.firestore.FieldValue.serverTimestamp();
+
+      if (!allMembersDoc.exists) {
+        const initialAllChat = {
+          type: "all",
+          name: "🐐 もこり全員グループ",
+          description: "もこりに登録している全員が話せる全体グループです",
+          isAllMembers: true,
+          members: [myUid],
+          memberInfo: {
+            [myUid]: { username: "システム", joinedAt: Date.now() }
+          },
+          createdUid: "system",
+          createdAt: now,
+          updatedAt: now,
+          lastMessage: {
+            text: "もこりへようこそ！全員でチャットできるグループです🐐",
+            type: "system",
+            senderUid: "system",
+            senderName: "システム",
+            unsent: false,
+            createdAt: now
+          },
+          lastMessageAt: now,
+          readStatus: {}
+        };
+        await allMembersRef.set(initialAllChat);
+        allMembersDoc = await allMembersRef.get();
+      }
+
+      const allData = allMembersDoc.data();
+      const myReadTimestamp = (allData.readStatus && allData.readStatus[myUid]) || null;
+      let hasAllUnread = false;
+      if (allData.lastMessage && allData.lastMessage.senderUid !== myUid && !allData.lastMessage.unsent) {
+        const msgTime = allData.lastMessage.createdAt && allData.lastMessage.createdAt.toMillis
+          ? allData.lastMessage.createdAt.toMillis()
+          : (typeof allData.lastMessage.createdAt === "number" ? allData.lastMessage.createdAt : 0);
+        const readTime = myReadTimestamp && myReadTimestamp.toMillis
+          ? myReadTimestamp.toMillis()
+          : (typeof myReadTimestamp === "number" ? myReadTimestamp : 0);
+        if (msgTime > readTime) hasAllUnread = true;
+      }
+
+      chats.push({
+        id: "all_members",
+        type: "all",
+        name: "🐐 もこり全員グループ",
+        description: "もこりに登録している全員が話せる全体グループです",
+        isAllMembers: true,
+        members: allData.members || [],
+        memberInfo: allData.memberInfo || {},
+        partnerUid: null,
+        lastMessage: allData.lastMessage || null,
+        lastMessageAt: allData.lastMessageAt || null,
+        unread: hasAllUnread,
+        announcement: allData.announcement || null,
+        createdAt: allData.createdAt || null
+      });
+    } catch (err) {
+      console.warn("全員グループ確認警告:", err.message);
+    }
+
     for (const doc of snapshot.docs) {
       const data = doc.data();
       let name = data.name;
@@ -774,7 +840,8 @@ app.get("/api/chats/:chatId", requireLogin, async (req, res) => {
     }
 
     const data = chatDoc.data();
-    if (!data.members || !data.members.includes(myUid)) {
+    const isAllMembers = chatId === "all_members";
+    if (!isAllMembers && (!data.members || !data.members.includes(myUid))) {
       return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
     }
 
@@ -820,7 +887,8 @@ app.get("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
     }
 
     const chatData = chatDoc.data();
-    if (!chatData.members || !chatData.members.includes(myUid)) {
+    const isAllMembers = chatId === "all_members";
+    if (!isAllMembers && (!chatData.members || !chatData.members.includes(myUid))) {
       return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
     }
 
@@ -887,7 +955,8 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
     }
 
     const chatData = chatDoc.data();
-    if (!chatData.members || !chatData.members.includes(myUid)) {
+    const isAllMembers = chatId === "all_members";
+    if (!isAllMembers && (!chatData.members || !chatData.members.includes(myUid))) {
       return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
     }
 
@@ -896,7 +965,7 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
       ? (userDoc.data().username || "ユーザー")
       : "ユーザー";
 
-    const type = req.body.type || "text"; // "text", "image", "stamp"
+    const type = req.body.type || "text"; // "text", "image", "stamp", "game_invite"
     const text = String(req.body.text || "").trim();
     const imageUrl = req.body.imageUrl ? String(req.body.imageUrl) : null;
     const stampId = req.body.stampId ? String(req.body.stampId) : null;
@@ -919,6 +988,11 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
     let previewText = text;
     if (type === "image") previewText = "📷 [画像]";
     if (type === "stamp") previewText = "🐐 [スタンプ]";
+    const gameInvite = req.body.gameInvite || null;
+    if (type === "game_invite") {
+      const gTitle = (gameInvite && gameInvite.gameTitle) || "ゲーム";
+      previewText = `🎮 [対戦招待] ${myUsername}から${gTitle}の対戦招待が届いたよ！`;
+    }
 
     const messageData = {
       chatId,
@@ -929,6 +1003,7 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
       originalText: text,
       imageUrl,
       stampId,
+      gameInvite,
       replyTo,
       reactions: {},
       readBy: [myUid],
@@ -989,6 +1064,94 @@ app.post("/api/chats/:chatId/read", requireLogin, async (req, res) => {
   }
 });
 
+// ----------------------------------------------------
+// ゲームセッション管理 (オセロ・UNO・大富豪などのマルチ対戦)
+// ----------------------------------------------------
+app.get("/api/games/rooms/:roomId", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  try {
+    const roomRef = db.collection("game_rooms").doc(req.params.roomId);
+    const snap = await roomRef.get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: "ルームが見つかりません。" });
+    }
+    return res.json({ room: snap.data() });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/games/rooms/:roomId/join", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const username = String(req.body.username || "ユーザー");
+  const gameType = String(req.body.gameType || "othello");
+
+  try {
+    const roomRef = db.collection("game_rooms").doc(req.params.roomId);
+    const snap = await roomRef.get();
+    const now = Date.now();
+
+    if (!snap.exists) {
+      const initialData = {
+        roomId: req.params.roomId,
+        gameType,
+        hostUid: myUid,
+        hostName: username,
+        players: [{ uid: myUid, username, joinedAt: now }],
+        status: "waiting",
+        state: req.body.initialState || {},
+        updatedAt: now
+      };
+      await roomRef.set(initialData);
+      return res.json({ room: initialData, role: 1 });
+    }
+
+    const data = snap.data();
+    let players = Array.isArray(data.players) ? [...data.players] : [];
+    const existingIdx = players.findIndex(p => p.uid === myUid);
+    let role = existingIdx >= 0 ? existingIdx + 1 : players.length + 1;
+
+    if (existingIdx === -1 && players.length < 4) {
+      players.push({ uid: myUid, username, joinedAt: now });
+      role = players.length;
+    }
+
+    let status = data.status;
+    if (players.length >= 2 && status === "waiting") {
+      status = "playing";
+    }
+
+    await roomRef.update({
+      players,
+      status,
+      updatedAt: now
+    });
+
+    return res.json({
+      room: { ...data, players, status, updatedAt: now },
+      role
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/games/rooms/:roomId/update", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  try {
+    const roomRef = db.collection("game_rooms").doc(req.params.roomId);
+    const updateData = {
+      ...req.body,
+      updatedAt: Date.now()
+    };
+    await roomRef.update(updateData);
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // 送信取り消し (LINEと同じ)
 app.post("/api/chats/:chatId/messages/:messageId/unsend", requireLogin, async (req, res) => {
   if (!db) {
@@ -1021,6 +1184,7 @@ app.post("/api/chats/:chatId/messages/:messageId/unsend", requireLogin, async (r
       text: "メッセージの送信を取り消しました",
       imageUrl: null,
       stampId: null,
+      gameInvite: null,
       reactions: {},
       replyTo: null,
       unsentAt: admin.firestore.FieldValue.serverTimestamp()

@@ -1,0 +1,292 @@
+/* ====================================================
+   mokori ゲーム広場 & LINE風ゲーム招待カード スタイル
+   ==================================================== */
+
+/* LINE風ゲーム招待カード (ぶるぶるどうぶつ・通話招待風) */
+.game-invite-card {
+  width: 250px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  transition: transform .12s, box-shadow .12s;
+  text-align: left;
+  user-select: none;
+}
+.game-invite-card:active {
+  transform: scale(0.98);
+}
+.invite-header {
+  background: linear-gradient(135deg, #06c755, #00b900);
+  color: #ffffff;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 700;
+}
+.invite-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.25);
+  padding: 2px 6px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+}
+.invite-host {
+  font-size: 11px;
+  opacity: 0.95;
+  max-width: 130px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.invite-body {
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #fff;
+}
+.invite-icon-box {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  flex-shrink: 0;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+}
+.invite-icon-box.othello { background: #eff6ff; border-color: #bfdbfe; }
+.invite-icon-box.uno { background: #fef2f2; border-color: #fecaca; }
+.invite-icon-box.daifugo { background: #fffbeb; border-color: #fde68a; }
+.invite-icon-box.snowball { background: #f0fdf4; border-color: #bbf7d0; }
+.invite-icon-box.paper { background: #fdf2f8; border-color: #fbcfe8; }
+.invite-icon-box.brawl { background: #fff7ed; border-color: #fed7aa; }
+.invite-icon-box.solitaire { background: #f5f3ff; border-color: #ddd6fe; }
+
+.invite-info {
+  flex: 1;
+  min-width: 0;
+}
+.invite-game-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.invite-room-desc {
+  font-size: 11px;
+  color: #6b7280;
+}
+.room-code-badge {
+  font-family: monospace;
+  font-weight: 700;
+  color: #06c755;
+  background: #f0fdf4;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.invite-join-btn {
+  width: calc(100% - 24px);
+  margin: 0 12px 12px 12px;
+  padding: 9px 0;
+  background: #06c755;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: 0 2px 4px rgba(6, 199, 85, 0.25);
+  transition: background .15s;
+}
+.invite-join-btn:hover {
+  background: #05b04c;
+}
+
+/* ゲーム広場 全画面モーダル */
+#gameHubModal {
+  position: fixed;
+  inset: 0;
+  background: #0f172a;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+}
+#gameHubModal.hidden {
+  display: none !important;
+}
+
+/* ゲーム選択カード */
+.game-hub-card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all .15s;
+}
+.game-hub-card:hover {
+  background: #273549;
+  border-color: #38bdf8;
+  transform: translateY(-1px);
+}
+.game-hub-card .left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.game-hub-card .icon-circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+}
+.game-hub-card .title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f8fafc;
+  margin-bottom: 2px;
+}
+.game-hub-card .desc {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* オセロ専用スタイル */
+.othello-board-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  gap: 2px;
+  background: #15803d;
+  border: 4px solid #14532d;
+  border-radius: 8px;
+  width: 320px;
+  height: 320px;
+  margin: 0 auto;
+}
+.othello-cell {
+  background: #16a34a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+.othello-disc {
+  width: 80%;
+  height: 80%;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+}
+.othello-disc.black { background: radial-gradient(circle at 35% 35%, #475569, #0f172a); }
+.othello-disc.white { background: radial-gradient(circle at 35% 35%, #ffffff, #cbd5e1); }
+.othello-cell.valid-move::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+/* UNO専用スタイル */
+.uno-hand-container {
+  display: flex;
+  overflow-x: auto;
+  gap: 6px;
+  padding: 10px 4px;
+  justify-content: center;
+  min-height: 90px;
+}
+.uno-card {
+  width: 50px;
+  height: 75px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 18px;
+  color: #fff;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+  transition: transform .1s;
+}
+.uno-card:hover { transform: translateY(-6px); }
+.uno-card.red { background: #ef4444; }
+.uno-card.blue { background: #3b82f6; }
+.uno-card.green { background: #10b981; }
+.uno-card.yellow { background: #f59e0b; }
+.uno-card.wild { background: linear-gradient(135deg, #ef4444 25%, #3b82f6 25%, #3b82f6 50%, #f59e0b 50%, #f59e0b 75%, #10b981 75%); }
+
+/* 大富豪専用スタイル */
+.df-card {
+  width: 44px;
+  height: 66px;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 3px 5px;
+  font-weight: 700;
+  font-size: 13px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+  cursor: pointer;
+  user-select: none;
+  transition: transform .1s;
+}
+.df-card:hover, .df-card.selected {
+  transform: translateY(-8px);
+  border-color: #38bdf8;
+  box-shadow: 0 4px 10px rgba(56, 189, 248, 0.4);
+}
+.df-card.red-suit { color: #dc2626; }
+
+/* 転送モーダルリスト */
+.forward-chat-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.forward-chat-item:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}

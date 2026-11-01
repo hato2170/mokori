@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#faf9f6">
   <title>mokori - トーク</title>
+  <link rel="stylesheet" href="/games.css">
 
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -833,6 +834,7 @@
         <span>mokori</span>
       </div>
       <div class="header-actions">
+        <button class="icon-btn" id="openGameHubBtn" title="ゲーム広場" onclick="window.openGameHub()" style="font-size:18px;">🎮</button>
         <button class="icon-btn" id="newChatBtn" title="新しいトーク">＋</button>
         <button class="icon-btn" id="refreshAllBtn" title="更新">🔄</button>
       </div>
@@ -914,6 +916,7 @@
           </div>
         </div>
         <div class="room-actions">
+          <button class="icon-btn" onclick="window.openGameHub()" title="ゲームを起動して遊ぶ" style="font-size:18px;">🎮</button>
           <button class="icon-btn" id="roomSearchToggleBtn" title="メッセージ検索">🔍</button>
           <button class="icon-btn" id="roomSettingsBtn" title="チャット設定">⋮</button>
         </div>
@@ -962,6 +965,7 @@
           <input type="file" id="imageFileInput" accept="image/*" class="hidden">
           <button class="tool-btn" id="imageUploadBtn" title="画像添付">📷</button>
           <button class="tool-btn" id="stampToggleBtn" title="スタンプ">🐐</button>
+          <button class="tool-btn" onclick="window.openGameHub()" title="ゲーム招待・広場" style="font-size:16px;">🎮</button>
         </div>
         <textarea id="messageInput" rows="1" placeholder="メッセージを入力…"></textarea>
         <button id="sendBtn" title="送信" disabled>↑</button>
@@ -1058,9 +1062,160 @@
   <img id="lightboxImg" src="" style="max-width:90vw;max-height:90vh;border-radius:8px;object-fit:contain;">
 </div>
 
+<!-- ==============================================
+     ゲーム広場 全画面モーダル (myyajuu移植ゲーム一式)
+     ============================================== -->
+<div id="gameHubModal" class="hidden">
+  <!-- ホーム一覧画面 -->
+  <div id="gameHubHome" style="display:flex;flex-direction:column;height:100%;background:#0f172a;color:#f8fafc;overflow-y:auto;padding:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <button onclick="window.closeGameHub()" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 16px;border-radius:8px;font-weight:bold;font-size:13px;">
+        ← トークへ戻る
+      </button>
+      <button onclick="window.panicEscapeGame()" style="background:#dc2626;color:#fff;padding:8px 14px;border-radius:8px;font-weight:bold;font-size:12px;">
+        🚨 緊急回避 (数学)
+      </button>
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <h2 style="margin:0 0 4px;font-size:22px;color:#f8fafc;">🎮 mokori ゲーム広場</h2>
+      <p style="margin:0;font-size:13px;color:#94a3b8;">友だちや全体グループに対戦カードを転送して即マルチプレイ！</p>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px;padding-bottom:30px;">
+      <!-- オセロ -->
+      <div class="game-hub-card" onclick="window.openGameHub('othello')">
+        <div class="left">
+          <div class="icon-circle" style="color:#38bdf8;">⚫⚪</div>
+          <div>
+            <div class="title">オセロ（リバーシ）</div>
+            <div class="desc">合言葉・URL・チャット転送対応！CPU対戦も完備</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:#38bdf8;">▶</span>
+      </div>
+
+      <!-- UNO -->
+      <div class="game-hub-card" onclick="window.openGameHub('uno')">
+        <div class="left">
+          <div class="icon-circle" style="color:#ef4444;">🎴</div>
+          <div>
+            <div class="title">UNO（ウノ対戦）</div>
+            <div class="desc">手札ゼロを目指せ！友だち招待＆サクサク対戦</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:#ef4444;">▶</span>
+      </div>
+
+      <!-- 大富豪 -->
+      <div class="game-hub-card" onclick="window.openGameHub('daifugo')">
+        <div class="left">
+          <div class="icon-circle" style="color:#f59e0b;">🃏</div>
+          <div>
+            <div class="title">大富豪（4人対戦）</div>
+            <div class="desc">革命・8切り対応！友達やCPUと白熱バトル</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:#f59e0b;">▶</span>
+      </div>
+
+      <!-- snowball.io -->
+      <div class="game-hub-card" onclick="window.openGameHub('snowball')">
+        <div class="left">
+          <div class="icon-circle" style="color:#10b981;">❄️</div>
+          <div>
+            <div class="title">snowball.io（雪玉バトル）</div>
+            <div class="desc">雪玉を転がして巨大化！敵をぶっ飛ばせ！</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:#10b981;">▶</span>
+      </div>
+
+      <!-- paper.io -->
+      <div class="game-hub-card" onclick="window.openGameHub('paper')">
+        <div class="left">
+          <div class="icon-circle" style="color:#ec4899;">📄</div>
+          <div>
+            <div class="title">paper.io（陣取りバトル）</div>
+            <div class="desc">領地を囲んでマップを制覇！しっぽ切断で撃破！</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:#ec4899;">▶</span>
+      </div>
+
+      <!-- ブロスタ -->
+      <div class="game-hub-card" onclick="window.openGameHub('brawl')">
+        <div class="left">
+          <div class="icon-circle" style="color:#f59e0b;">⭐</div>
+          <div>
+            <div class="title">ブロスタ（Brawl Stars 3v3）</div>
+            <div class="desc">シェリーのショット＆ウルト必殺技！ジェム集め対戦</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:#f59e0b;">▶</span>
+      </div>
+
+      <!-- ソリティア -->
+      <div class="game-hub-card" onclick="window.openGameHub('solitaire')">
+        <div class="left">
+          <div class="icon-circle" style="color:#a855f7;">♠️</div>
+          <div>
+            <div class="title">ソリティア（クロンダイク）</div>
+            <div class="desc">授業中や移動中の暇つぶしに最適な定番トランプ</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:#a855f7;">▶</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- アクティブゲーム実行画面 -->
+  <div id="gameActiveArea" style="display:none;flex-direction:column;height:100%;background:#0f172a;">
+    <div style="height:56px;padding:0 16px;background:#1e293b;border-bottom:1px solid #334155;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button onclick="window.returnToGameHome()" style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer;">
+          ← 広場一覧
+        </button>
+        <div id="activeGameTitle" style="font-weight:bold;color:#f8fafc;font-size:15px;">ゲームタイトル</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button onclick="window.openGameForwardDialog()" style="background:#06c755;color:#fff;border:0;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer;">
+          📤 チャットに転送
+        </button>
+        <button onclick="window.panicEscapeGame()" style="background:#dc2626;color:#fff;border:0;padding:6px 10px;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer;">
+          🚨 回避
+        </button>
+      </div>
+    </div>
+    <div id="gameEmbedContainer" style="flex:1;overflow-y:auto;position:relative;"></div>
+  </div>
+</div>
+
+<!-- チャット転送先選択モーダル -->
+<div id="gameForwardModal" class="modal-backdrop hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span>ゲーム招待カードの送信先を選択</span>
+      <button class="close-modal-btn" onclick="window.closeGameForwardDialog()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
+        選択したトークルームにLINE風の対戦招待カードを直接送信します。
+      </div>
+      <div id="forwardChatList" style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;">
+        <!-- JSで一覧描画 -->
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-sm btn-secondary" onclick="window.closeGameForwardDialog()">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="/games.js"></script>
 
 <script>
   // Firebase 設定
@@ -1102,7 +1257,7 @@
   let selectedMsgForMenu = null; // { messageId, senderUid, text, unsent }
 
   // API 呼び出しヘルパー
-  async function api(path, options = {}) {
+  window.api = async function(path, options = {}) {
     if (!currentUser) throw new Error("ログインしてください。");
     const token = await currentUser.getIdToken();
     const res = await fetch(path, {
@@ -1116,11 +1271,13 @@
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "リクエストに失敗しました。");
     return data;
-  }
+  };
+  const api = window.api;
 
   // 初期化 & 認証監視
   auth.onAuthStateChanged(async (user) => {
     currentUser = user;
+    window.currentUser = user;
     if (!user) {
       window.location.href = "/";
       return;
@@ -1165,6 +1322,7 @@
     try {
       const res = await api("/api/chats");
       allChats = res.chats || [];
+      window.allChats = allChats;
       renderChatList();
       updateTotalUnread();
     } catch (err) {
@@ -1189,9 +1347,9 @@
       item.className = "chat-item" + (chat.id === activeChatId ? " active" : "");
       item.addEventListener("click", () => openChat(chat.id));
 
-      const isGroup = chat.type === "group";
+      const isGroup = chat.type === "group" || chat.id === "all_members";
       const memberCount = isGroup ? ` <span class="member-count">(${chat.members.length})</span>` : "";
-      const avatarIcon = isGroup ? "👥" : (chat.name ? chat.name.charAt(0) : "🐐");
+      const avatarIcon = chat.id === "all_members" ? "🐐" : (isGroup ? "👥" : (chat.name ? chat.name.charAt(0) : "🐐"));
 
       let preview = "メッセージはありません";
       let isUnsent = false;
@@ -1458,8 +1616,52 @@
           bubble.appendChild(quote);
         }
 
+        // ゲーム招待カード (LINEのぶるぶるどうぶつ・グループ通話風)
+        if (msg.type === "game_invite" && msg.gameInvite) {
+          const inv = msg.gameInvite;
+          const card = document.createElement("div");
+          card.className = "game-invite-card";
+
+          const gType = inv.gameType || "othello";
+          const gTitle = inv.gameTitle || "ゲーム対戦";
+          const rCode = inv.roomCode || "----";
+          const inviter = inv.inviterName || msg.senderName || "友だち";
+
+          const icons = {
+            othello: "⚫⚪", uno: "🎴", daifugo: "🃏",
+            snowball: "❄️", paper: "📄", brawl: "⭐", solitaire: "♠️"
+          };
+          const gameIcon = icons[gType] || "🎮";
+
+          card.innerHTML = `
+            <div class="invite-header">
+              <div class="invite-badge">🎮 GAME INVITE</div>
+              <div class="invite-host">${escapeHtml(inviter)} から</div>
+            </div>
+            <div class="invite-body">
+              <div class="invite-icon-box ${gType}">${gameIcon}</div>
+              <div class="invite-info">
+                <div class="invite-game-title">${escapeHtml(gTitle)}</div>
+                <div class="invite-room-desc">ルーム: <span class="room-code-badge">${escapeHtml(rCode)}</span></div>
+              </div>
+            </div>
+            <button class="invite-join-btn">
+              <span>今すぐ対戦に参加する</span>
+              <span>▶</span>
+            </button>
+          `;
+
+          card.querySelector(".invite-join-btn").addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (window.joinGameFromInvite) {
+              window.joinGameFromInvite(gType, rCode);
+            }
+          });
+
+          bubble.appendChild(card);
+        }
         // スタンプ
-        if (msg.type === "stamp" && msg.stampId) {
+        else if (msg.type === "stamp" && msg.stampId) {
           const stampDef = STAMPS.find((s) => s.id === msg.stampId);
           const stampElem = document.createElement("div");
           stampElem.className = "stamp-badge";
@@ -2183,6 +2385,7 @@
       .replace(/\"/g, "&quot;")
       .replace(/'/g, "&#39;");
   }
+  window.escapeHtml = escapeHtml;
 </script>
 </body>
 </html>
