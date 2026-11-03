@@ -211,6 +211,7 @@
       brawl: "⭐ ブロスタ 3D本家完全再現版",
       "brawl-webgl": "⭐ ブロスタ 3D本家完全再現版",
       "brawl-crazygames": "⭐ Brawl Squad（CrazyGames版）",
+      fortnite: "🏆 Fortnite 3D（バトルロイヤル）",
       solitaire: "♠️ ソリティア（クロンダイク）"
     };
 
@@ -243,6 +244,9 @@
       case "brawl-crazygames":
         renderCrazyGamesBrawl(embed);
         break;
+      case "fortnite":
+        renderFortniteGame(embed);
+        break;
       case "solitaire":
         renderSolitaireGame(embed);
         break;
@@ -267,6 +271,7 @@
 
   function stopAllGames() {
     window.onkeydown = null;
+    if (window.stopFortnite3DGame) window.stopFortnite3DGame();
     if (window.stop3DBrawlGame) window.stop3DBrawlGame();
     if (window._stopSnowball) { window._stopSnowball(); window._stopSnowball = null; }
     if (window._stopPaper) { window._stopPaper(); window._stopPaper = null; }
@@ -1625,6 +1630,15 @@
       window.start3DBrawlGame(container, "shelly");
     } else {
       renderBrawlWebglGame(container);
+    }
+  }
+
+  // ==================================================
+  // 6-c. 🏆 Fortnite 3D（フォートナイト バトルロイヤル）
+  // ==================================================
+  function renderFortniteGame(container) {
+    if (window.startFortnite3DGame) {
+      window.startFortnite3DGame(container);
     }
   }
 
