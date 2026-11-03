@@ -238,7 +238,7 @@
         break;
       case "brawl":
       case "brawl-webgl":
-        renderBrawlWebglGame(embed);
+        renderBrawlGame(embed);
         break;
       case "brawl-crazygames":
         renderCrazyGamesBrawl(embed);
@@ -267,6 +267,7 @@
 
   function stopAllGames() {
     window.onkeydown = null;
+    if (window.stop3DBrawlGame) window.stop3DBrawlGame();
     if (window._stopSnowball) { window._stopSnowball(); window._stopSnowball = null; }
     if (window._stopPaper) { window._stopPaper(); window._stopPaper = null; }
     if (window._stopBrawl) { window._stopBrawl(); window._stopBrawl = null; }
@@ -1617,11 +1618,14 @@
   }
 
   // ==================================================
-  // 6. ⭐ ブロスタ（本家3D完全再現版）
+  // 6. ⭐ ブロスタ（自前内蔵 3D本家完全再現版）
   // ==================================================
   function renderBrawlGame(container) {
-    // 2Dではなく本物の3Dブロスタをそのまま起動
-    renderBrawlWebglGame(container);
+    if (window.start3DBrawlGame) {
+      window.start3DBrawlGame(container, "shelly");
+    } else {
+      renderBrawlWebglGame(container);
+    }
   }
 
   // ==================================================
