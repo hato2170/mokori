@@ -208,8 +208,8 @@
       snowball: "❄️ snowball.io（雪玉バトル）",
       paper: "📄 paper.io（2D陣取りバトル）",
       "paper-webgl": "⭐ paper.io WebGL版（本家完全再現）",
-      brawl: "⭐ ブロスタ（2D軽量版）",
-      "brawl-webgl": "⭐ ブロスタ WebGL版（本家完全再現）",
+      brawl: "⭐ ブロスタ 3D本家完全再現版",
+      "brawl-webgl": "⭐ ブロスタ 3D本家完全再現版",
       "brawl-crazygames": "⭐ Brawl Squad（CrazyGames版）",
       solitaire: "♠️ ソリティア（クロンダイク）"
     };
@@ -237,8 +237,6 @@
         renderPaperWebglGame(embed);
         break;
       case "brawl":
-        renderBrawlGame(embed);
-        break;
       case "brawl-webgl":
         renderBrawlWebglGame(embed);
         break;
@@ -268,14 +266,17 @@
   }
 
   function stopAllGames() {
-    if (window._stopSnowball) window._stopSnowball();
-    if (window._stopPaper) window._stopPaper();
-    if (window._stopBrawl) window._stopBrawl();
+    window.onkeydown = null;
+    if (window._stopSnowball) { window._stopSnowball(); window._stopSnowball = null; }
+    if (window._stopPaper) { window._stopPaper(); window._stopPaper = null; }
+    if (window._stopBrawl) { window._stopBrawl(); window._stopBrawl = null; }
     const mokoriBrawlIframe = document.getElementById("mokoriBrawlIframe");
     if (mokoriBrawlIframe) mokoriBrawlIframe.src = "about:blank";
-    if (window._othelloPollTimer) clearInterval(window._othelloPollTimer);
-    if (window._unoPollTimer) clearInterval(window._unoPollTimer);
-    if (window._daifugoPollTimer) clearInterval(window._daifugoPollTimer);
+    const mokoriPaperIframe = document.getElementById("mokoriPaperIframe");
+    if (mokoriPaperIframe) mokoriPaperIframe.src = "about:blank";
+    if (window._othelloPollTimer) { clearInterval(window._othelloPollTimer); window._othelloPollTimer = null; }
+    if (window._unoPollTimer) { clearInterval(window._unoPollTimer); window._unoPollTimer = null; }
+    if (window._daifugoPollTimer) { clearInterval(window._daifugoPollTimer); window._daifugoPollTimer = null; }
   }
 
   // ==================================================
@@ -1616,108 +1617,513 @@
   }
 
   // ==================================================
-  // 6. ⭐ ブロスタ（Brawl Stars 3v3ジェムグラブ）
+  // 6. ⭐ ブロスタ（本家3D完全再現版）
   // ==================================================
   function renderBrawlGame(container) {
-    container.innerHTML = `
-      <div style="padding:12px; max-width:400px; margin:0 auto; text-align:center;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span style="font-size:13px; color:#f59e0b; font-weight:bold;">⭐ ブロスタ (3v3 ジェムグラブ)</span>
-          <span style="font-size:12px; color:#94a3b8;">
-            青ジェム: <strong id="brBlue" style="color:#38bdf8;">0</strong> | 赤: <strong id="brRed" style="color:#ef4444;">0</strong>
-          </span>
-        </div>
-        <canvas id="brawlCanvas" width="360" height="360" style="background:#0f172a; border:2px solid #f59e0b; border-radius:12px; touch-action:none;"></canvas>
-        <div style="margin-top:8px; display:flex; gap:8px; justify-content:center;">
-          <button id="brAttackBtn" style="background:#38bdf8; color:#fff; font-weight:bold; padding:8px 24px; border-radius:8px; font-size:13px;">
-            💥 ショット
-          </button>
-          <button id="brUltBtn" style="background:#f59e0b; color:#fff; font-weight:bold; padding:8px 20px; border-radius:8px; font-size:13px;">
-            ⚡ 必殺技
-          </button>
-        </div>
-      </div>
-    `;
-
-    const cv = document.getElementById("brawlCanvas");
-    if (!cv) return;
-    const ctx = cv.getContext("2d");
-
-    let player = { x: 180, y: 300, hp: 3000, gems: 0 };
-    let bullets = [];
-    let gems = [{ x: 180, y: 180 }];
-    let animId = null;
-
-    document.getElementById("brAttackBtn").onclick = () => {
-      bullets.push({ x: player.x, y: player.y, vx: 0, vy: -7, r: 4 });
-      bullets.push({ x: player.x, y: player.y, vx: -2, vy: -6.5, r: 4 });
-      bullets.push({ x: player.x, y: player.y, vx: 2, vy: -6.5, r: 4 });
-      playTone(480, "square", 0.08);
-    };
-
-    document.getElementById("brUltBtn").onclick = () => {
-      for (let i = -3; i <= 3; i++) {
-        bullets.push({ x: player.x, y: player.y, vx: i * 1.5, vy: -8, r: 6 });
-      }
-      playTone(660, "sawtooth", 0.15);
-    };
-
-    function loop() {
-      ctx.fillStyle = "#0f172a";
-      ctx.fillRect(0, 0, 360, 360);
-
-      // 中央ジェム鉱山
-      ctx.fillStyle = "#475569";
-      ctx.fillRect(160, 160, 40, 40);
-      ctx.fillStyle = "#a855f7";
-      gems.forEach(g => {
-        ctx.beginPath();
-        ctx.arc(g.x, g.y, 6, 0, Math.PI * 2);
-        ctx.fill();
-      });
-
-      // 弾丸
-      ctx.fillStyle = "#38bdf8";
-      for (let i = bullets.length - 1; i >= 0; i--) {
-        const b = bullets[i];
-        b.x += b.vx;
-        b.y += b.vy;
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-        ctx.fill();
-        if (b.y < 0) bullets.splice(i, 1);
-      }
-
-      // シェリー (自キャラ)
-      ctx.fillStyle = "#38bdf8";
-      ctx.beginPath();
-      ctx.arc(player.x, player.y, 14, 0, Math.PI * 2);
-      ctx.fill();
-
-      animId = requestAnimationFrame(loop);
-    }
-    loop();
-
-    window._stopBrawl = () => {
-      if (animId) cancelAnimationFrame(animId);
-    };
+    // 2Dではなく本物の3Dブロスタをそのまま起動
+    renderBrawlWebglGame(container);
   }
 
   // ==================================================
-  // 7. ♠️ ソリティア（クロンダイク）
+  // 7. ♠️ ソリティア（本物クロンダイク完全実装）
   // ==================================================
+/* ======================
+   ソリティア (クロンダイク)
+====================== */
+
+let solStock = [];
+let solWaste = [];
+let solFoundations = [[], [], [], []];
+let solTableau = [[], [], [], [], [], [], []];
+let solScore = 0;
+let solMoves = 0;
+let solSelected = null;
+let solInitialSnapshot = null;
+
+const SOL_SUITS = [
+  { name: "spade", symbol: "♠", color: "black", foundIdx: 0 },
+  { name: "heart", symbol: "♥", color: "red", foundIdx: 1 },
+  { name: "diamond", symbol: "♦", color: "red", foundIdx: 2 },
+  { name: "club", symbol: "♣", color: "black", foundIdx: 3 }
+];
+
+const SOL_NUM_NAMES = {
+  1: "A", 2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8", 9: "9", 10: "10", 11: "J", 12: "Q", 13: "K"
+};
+
+function createSolDeck() {
+  const deck = [];
+  for (let sIdx = 0; sIdx < 4; sIdx++) {
+    for (let num = 1; num <= 13; num++) {
+      deck.push({
+        id: `${SOL_SUITS[sIdx].name}_${num}_${Math.random().toString(36).slice(2, 6)}`,
+        suit: SOL_SUITS[sIdx].name,
+        symbol: SOL_SUITS[sIdx].symbol,
+        color: SOL_SUITS[sIdx].color,
+        foundIdx: SOL_SUITS[sIdx].foundIdx,
+        num: num,
+        name: SOL_NUM_NAMES[num],
+        faceUp: false
+      });
+    }
+  }
+  return deck;
+}
+
+function shuffleSolDeck(deck) {
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
+}
+
+window.openSolitaireHub = function () {
+  window.hideAllScreens();
+  const screen = document.getElementById("solitaireScreen");
+  if (screen) screen.style.display = "block";
+  if (!solInitialSnapshot) {
+    window.startNewSolitaireGame();
+  } else {
+    renderSolitaireUI();
+  }
+};
+
+window.startNewSolitaireGame = function () {
+  const deck = shuffleSolDeck(createSolDeck());
+  solStock = [];
+  solWaste = [];
+  solFoundations = [[], [], [], []];
+  solTableau = [[], [], [], [], [], [], []];
+  solScore = 0;
+  solMoves = 0;
+  solSelected = null;
+
+  for (let col = 0; col < 7; col++) {
+    for (let row = 0; row <= col; row++) {
+      const card = deck.pop();
+      card.faceUp = (row === col);
+      solTableau[col].push(card);
+    }
+  }
+
+  solStock = deck;
+
+  solInitialSnapshot = JSON.stringify({
+    stock: solStock,
+    waste: solWaste,
+    foundations: solFoundations,
+    tableau: solTableau
+  });
+
+  renderSolitaireUI();
+};
+
+window.restartSolitaire = function () {
+  if (!solInitialSnapshot) {
+    window.startNewSolitaireGame();
+    return;
+  }
+  const snap = JSON.parse(solInitialSnapshot);
+  solStock = snap.stock;
+  solWaste = snap.waste;
+  solFoundations = snap.foundations;
+  solTableau = snap.tableau;
+  solScore = 0;
+  solMoves = 0;
+  solSelected = null;
+  renderSolitaireUI();
+};
+
+window.drawSolitaireStock = function () {
+  solSelected = null;
+  if (solStock.length > 0) {
+    const card = solStock.pop();
+    card.faceUp = true;
+    solWaste.push(card);
+    solMoves++;
+  } else if (solWaste.length > 0) {
+    solStock = solWaste.reverse().map(c => {
+      c.faceUp = false;
+      return c;
+    });
+    solWaste = [];
+    solMoves++;
+  }
+  renderSolitaireUI();
+};
+
+window.clickSolWaste = function () {
+  if (solWaste.length === 0) return;
+  const topCard = solWaste[solWaste.length - 1];
+
+  if (solSelected && solSelected.location === "waste") {
+    solSelected = null;
+    renderSolitaireUI();
+    return;
+  }
+
+  const canSendFound = tryAutoMoveCardToFoundation(topCard);
+  if (canSendFound) {
+    solWaste.pop();
+    solScore += 10;
+    solMoves++;
+    solSelected = null;
+    checkSolitaireWinCondition();
+    renderSolitaireUI();
+    return;
+  }
+
+  solSelected = { location: "waste", card: topCard };
+  renderSolitaireUI();
+};
+
+function tryAutoMoveCardToFoundation(card) {
+  const fIdx = card.foundIdx;
+  const foundPile = solFoundations[fIdx];
+  if (foundPile.length === 0) {
+    if (card.num === 1) {
+      foundPile.push(card);
+      return true;
+    }
+  } else {
+    const top = foundPile[foundPile.length - 1];
+    if (top.num + 1 === card.num) {
+      foundPile.push(card);
+      return true;
+    }
+  }
+  return false;
+}
+
+window.clickSolFoundation = function (fIdx) {
+  const foundPile = solFoundations[fIdx];
+
+  if (solSelected) {
+    const card = solSelected.card;
+    let valid = false;
+    if (foundPile.length === 0 && card.num === 1 && card.foundIdx === fIdx) {
+      valid = true;
+    } else if (foundPile.length > 0) {
+      const top = foundPile[foundPile.length - 1];
+      if (top.foundIdx === fIdx && top.num + 1 === card.num) {
+        valid = true;
+      }
+    }
+
+    if (valid) {
+      removeSelectedSolCard();
+      foundPile.push(card);
+      solScore += 10;
+      solMoves++;
+      solSelected = null;
+      checkSolitaireWinCondition();
+      renderSolitaireUI();
+      return;
+    }
+  }
+
+  if (foundPile.length > 0) {
+    const card = foundPile[foundPile.length - 1];
+    if (solSelected && solSelected.location === "found" && solSelected.fIdx === fIdx) {
+      solSelected = null;
+    } else {
+      solSelected = { location: "found", fIdx: fIdx, card: card };
+    }
+    renderSolitaireUI();
+  }
+};
+
+window.clickSolTableau = function (colIdx, cardIdx) {
+  const col = solTableau[colIdx];
+
+  if (col.length === 0) {
+    if (solSelected && solSelected.card.num === 13) {
+      const movingCards = getSelectedSolCards();
+      removeSelectedSolCard();
+      solTableau[colIdx].push(...movingCards);
+      solScore += 5;
+      solMoves++;
+      solSelected = null;
+      renderSolitaireUI();
+    }
+    return;
+  }
+
+  const clickedCard = col[cardIdx];
+
+  if (!clickedCard.faceUp) {
+    if (cardIdx === col.length - 1) {
+      clickedCard.faceUp = true;
+      solScore += 5;
+      solMoves++;
+      renderSolitaireUI();
+    }
+    return;
+  }
+
+  if (solSelected) {
+    if (solSelected.location === "tableau" && solSelected.colIdx === colIdx && solSelected.cardIdx === cardIdx) {
+      solSelected = null;
+      renderSolitaireUI();
+      return;
+    }
+
+    const movingCard = solSelected.card;
+    const destCard = col[col.length - 1];
+
+    if (destCard.color !== movingCard.color && destCard.num === movingCard.num + 1) {
+      const movingCards = getSelectedSolCards();
+      removeSelectedSolCard();
+      solTableau[colIdx].push(...movingCards);
+      solScore += 5;
+      solMoves++;
+      solSelected = null;
+      renderSolitaireUI();
+      return;
+    }
+  }
+
+  if (cardIdx === col.length - 1) {
+    const canFound = tryAutoMoveCardToFoundation(clickedCard);
+    if (canFound) {
+      col.pop();
+      if (col.length > 0 && !col[col.length - 1].faceUp) {
+        col[col.length - 1].faceUp = true;
+        solScore += 5;
+      }
+      solScore += 10;
+      solMoves++;
+      solSelected = null;
+      checkSolitaireWinCondition();
+      renderSolitaireUI();
+      return;
+    }
+  }
+
+  solSelected = {
+    location: "tableau",
+    colIdx: colIdx,
+    cardIdx: cardIdx,
+    card: clickedCard
+  };
+  renderSolitaireUI();
+};
+
+function getSelectedSolCards() {
+  if (!solSelected) return [];
+  if (solSelected.location === "waste" || solSelected.location === "found") {
+    return [solSelected.card];
+  }
+  if (solSelected.location === "tableau") {
+    const col = solTableau[solSelected.colIdx];
+    return col.slice(solSelected.cardIdx);
+  }
+  return [];
+}
+
+function removeSelectedSolCard() {
+  if (!solSelected) return;
+  if (solSelected.location === "waste") {
+    solWaste.pop();
+  } else if (solSelected.location === "found") {
+    solFoundations[solSelected.fIdx].pop();
+  } else if (solSelected.location === "tableau") {
+    const col = solTableau[solSelected.colIdx];
+    col.splice(solSelected.cardIdx);
+    if (col.length > 0 && !col[col.length - 1].faceUp) {
+      col[col.length - 1].faceUp = true;
+      solScore += 5;
+    }
+  }
+}
+
+function checkSolitaireWinCondition() {
+  const totalFound = solFoundations.reduce((acc, f) => acc + f.length, 0);
+  if (totalFound === 52) {
+    setTimeout(() => {
+      alert("🎉 祝・クリア！ソリティア完成おめでとうございます！スコア: " + solScore);
+    }, 200);
+    return;
+  }
+
+  let allFaceUp = true;
+  for (const col of solTableau) {
+    for (const c of col) {
+      if (!c.faceUp) { allFaceUp = false; break; }
+    }
+  }
+  const canAuto = allFaceUp && solStock.length === 0 && solWaste.length === 0;
+  const autoBtn = document.getElementById("solitaireAutoBtn");
+  if (autoBtn) autoBtn.style.display = canAuto ? "block" : "none";
+}
+
+window.autoSolveSolitaire = function () {
+  let moved = false;
+  for (let c = 0; c < 7; c++) {
+    const col = solTableau[c];
+    if (col.length > 0) {
+      const card = col[col.length - 1];
+      if (tryAutoMoveCardToFoundation(card)) {
+        col.pop();
+        solScore += 10;
+        solMoves++;
+        moved = true;
+        break;
+      }
+    }
+  }
+  renderSolitaireUI();
+  checkSolitaireWinCondition();
+  if (moved) {
+    setTimeout(window.autoSolveSolitaire, 80);
+  }
+};
+
+function renderSolitaireUI() {
+  document.getElementById("solitaireScore").textContent = solScore;
+  document.getElementById("solitaireMoves").textContent = solMoves;
+
+  const wasteEl = document.getElementById("solWaste");
+  if (wasteEl) {
+    if (solWaste.length === 0) {
+      wasteEl.innerHTML = "";
+    } else {
+      const top = solWaste[solWaste.length - 1];
+      const isSel = solSelected && solSelected.location === "waste";
+      wasteEl.innerHTML = `
+        <div class="pcard ${top.color} ${isSel ? 'selected' : ''}" style="width:100%; height:100%; margin:0;">
+          <div style="font-size:10px;">${top.symbol}${top.name}</div>
+          <div style="font-size:16px; text-align:center;">${top.symbol}</div>
+          <div style="font-size:10px; text-align:right;">${top.name}</div>
+        </div>
+      `;
+    }
+  }
+
+  for (let i = 0; i < 4; i++) {
+    const fEl = document.getElementById(`solFound${i}`);
+    if (!fEl) continue;
+    const fPile = solFoundations[i];
+    if (fPile.length === 0) {
+      const symbols = ["♠", "♥", "♦", "♣"];
+      fEl.innerHTML = symbols[i];
+    } else {
+      const top = fPile[fPile.length - 1];
+      const isSel = solSelected && solSelected.location === "found" && solSelected.fIdx === i;
+      fEl.innerHTML = `
+        <div class="pcard ${top.color} ${isSel ? 'selected' : ''}" style="width:100%; height:100%; margin:0;">
+          <div style="font-size:10px;">${top.symbol}${top.name}</div>
+          <div style="font-size:16px; text-align:center;">${top.symbol}</div>
+          <div style="font-size:10px; text-align:right;">${top.name}</div>
+        </div>
+      `;
+    }
+  }
+
+  const tableauArea = document.getElementById("solTableauArea");
+  if (!tableauArea) return;
+  tableauArea.innerHTML = "";
+
+  for (let colIdx = 0; colIdx < 7; colIdx++) {
+    const col = solTableau[colIdx];
+    const colDiv = document.createElement("div");
+    colDiv.style.position = "relative";
+    colDiv.style.minHeight = "280px";
+    colDiv.onclick = (e) => {
+      if (e.target === colDiv && col.length === 0) {
+        window.clickSolTableau(colIdx, 0);
+      }
+    };
+
+    if (col.length === 0) {
+      colDiv.innerHTML = `<div style="width:100%; height:60px; border:1px dashed #059669; border-radius:6px; background:rgba(0,0,0,0.15);"></div>`;
+    } else {
+      col.forEach((card, cardIdx) => {
+        const isSel = solSelected && solSelected.location === "tableau" && solSelected.colIdx === colIdx && cardIdx >= solSelected.cardIdx;
+        const cardDiv = document.createElement("div");
+        cardDiv.className = `pcard ${card.faceUp ? card.color : 'back'} ${isSel ? 'selected' : ''}`;
+        cardDiv.style.position = "absolute";
+        cardDiv.style.top = `${cardIdx * 18}px`;
+        cardDiv.style.left = "0";
+        cardDiv.style.right = "0";
+        cardDiv.style.width = "100%";
+        cardDiv.style.zIndex = cardIdx + 1;
+
+        if (card.faceUp) {
+          cardDiv.innerHTML = `
+            <div style="font-size:10px;">${card.symbol}${card.name}</div>
+            <div style="font-size:14px; text-align:center;">${card.symbol}</div>
+            <div style="font-size:10px; text-align:right;">${card.name}</div>
+          `;
+        } else {
+          cardDiv.innerHTML = `🎴`;
+        }
+
+        cardDiv.onclick = (e) => {
+          e.stopPropagation();
+          window.clickSolTableau(colIdx, cardIdx);
+        };
+        colDiv.appendChild(cardDiv);
+      });
+    }
+
+    tableauArea.appendChild(colDiv);
+  }
+}
+
+
+
   function renderSolitaireGame(container) {
     container.innerHTML = `
-      <div style="padding:16px; max-width:440px; margin:0 auto; text-align:center;">
-        <div style="font-size:15px; color:#10b981; font-weight:bold; margin-bottom:12px;">♠️ 定番クロンダイク・ソリティア</div>
-        <div style="background:#064e3b; border:3px solid #047857; border-radius:12px; padding:20px; min-height:260px; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;">
-          <div style="font-size:32px;">♠️ ♥️ ♣️ ♦️</div>
-          <div style="font-size:14px;">タップ操作対応・自動移動サポート付き</div>
-          <button onclick="alert('カードを配りました！ゲーム開始！')" style="background:#10b981; color:#fff; font-weight:bold; border:0; padding:10px 24px; border-radius:8px; cursor:pointer;">
-            シャッフルして配る
+      <div style="padding:10px; max-width:540px; margin:0 auto; text-align:center;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+          <div style="font-size:14px; color:#10b981; font-weight:bold;">♠️ クロンダイク・ソリティア</div>
+          <div style="display:flex; gap:6px;">
+            <button onclick="window.restartSolitaire()" style="background:#1e293b; border:1px solid #334155; color:#f0f6fc; padding:4px 10px; font-size:12px; border-radius:6px; cursor:pointer;">
+              🔄 最初から
+            </button>
+            <button onclick="window.startNewSolitaireGame()" style="background:#10b981; color:#fff; border:none; padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; cursor:pointer;">
+              🆕 新ゲーム
+            </button>
+          </div>
+        </div>
+
+        <!-- ステータスバー -->
+        <div style="display:flex; justify-content:space-between; align-items:center; background:#161b22; border:1px solid #30363d; border-radius:8px; padding:6px 12px; margin-bottom:10px; font-size:12px;">
+          <div style="display:flex; gap:12px;">
+            <span style="color:#94a3b8;">スコア: <strong id="solitaireScore" style="color:#f0f6fc;">0</strong></span>
+            <span style="color:#94a3b8;">手数: <strong id="solitaireMoves" style="color:#f0f6fc;">0</strong></span>
+          </div>
+          <button id="solitaireAutoBtn" onclick="window.autoSolveSolitaire()" style="display:none; background:linear-gradient(135deg, #f59e0b, #d97706); color:#fff; font-size:11px; font-weight:bold; padding:3px 8px; border-radius:4px; border:none; cursor:pointer;">
+            ✨ 自動完成
           </button>
+        </div>
+
+        <!-- ソリティア盤面コンテナ (グリーンフェルト背景) -->
+        <div id="solitaireBoard" style="background:#064e3b; border:2px solid #047857; border-radius:12px; padding:10px 6px; min-height:440px; user-select:none; box-shadow:inset 0 2px 8px rgba(0,0,0,0.5);">
+          <!-- 上段: 山札 / 捨て札 ＆ 組札 4枠 -->
+          <div style="display:flex; justify-content:space-between; gap:4px; margin-bottom:12px;">
+            <div style="display:flex; gap:6px;">
+              <div id="solStock" onclick="window.drawSolitaireStock()" style="width:42px; height:60px; border:1px dashed #059669; border-radius:6px; display:flex; align-items:center; justify-content:center; cursor:pointer; background:#022c22;">
+                <span style="font-size:20px;">🎴</span>
+              </div>
+              <div id="solWaste" onclick="window.clickSolWaste()" style="width:42px; height:60px; border:1px solid #047857; border-radius:6px; position:relative;"></div>
+            </div>
+            <div style="display:flex; gap:4px;">
+              <div id="solFound0" onclick="window.clickSolFoundation(0)" style="width:42px; height:60px; border:1px dashed #059669; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#047857; font-size:16px; cursor:pointer; position:relative;">♠</div>
+              <div id="solFound1" onclick="window.clickSolFoundation(1)" style="width:42px; height:60px; border:1px dashed #059669; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#047857; font-size:16px; cursor:pointer; position:relative;">♥</div>
+              <div id="solFound2" onclick="window.clickSolFoundation(2)" style="width:42px; height:60px; border:1px dashed #059669; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#047857; font-size:16px; cursor:pointer; position:relative;">♦</div>
+              <div id="solFound3" onclick="window.clickSolFoundation(3)" style="width:42px; height:60px; border:1px dashed #059669; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#047857; font-size:16px; cursor:pointer; position:relative;">♣</div>
+            </div>
+          </div>
+
+          <!-- 下段: 場札 7列 -->
+          <div id="solTableauArea" style="display:grid; grid-template-columns:repeat(7, 1fr); gap:4px; min-height:340px;"></div>
         </div>
       </div>
     `;
+
+    window.startNewSolitaireGame();
   }
 })();

@@ -2,6 +2,47 @@
    mokori ゲーム広場 & LINE風ゲーム招待カード スタイル
    ==================================================== */
 
+/* ソリティア トランプカード スタイル */
+.pcard {
+  width: 42px;
+  height: 60px;
+  background: #ffffff;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 3px 4px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: bold;
+  font-size: 11px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.pcard.red {
+  color: #dc2626;
+}
+.pcard.black {
+  color: #0f172a;
+}
+.pcard.back {
+  background: linear-gradient(135deg, #1e3a8a, #172554);
+  border: 1px solid #3b82f6;
+  color: #60a5fa;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+.pcard.selected {
+  transform: translateY(-8px);
+  box-shadow: 0 0 10px #38bdf8, 0 4px 12px rgba(0, 0, 0, 0.5);
+  border: 2px solid #38bdf8;
+}
+
 /* LINE風ゲーム招待カード (ぶるぶるどうぶつ・通話招待風) */
 .game-invite-card {
   width: 250px;
