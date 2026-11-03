@@ -1482,7 +1482,6 @@
     return data;
   };
   const api = window.api;
-  window.openChat = (chatId) => openChat(chatId);
 
   // 初期化 & 認証監視
   auth.onAuthStateChanged(async (user) => {
@@ -1725,6 +1724,7 @@
     renderChatList();
     await loadMessages(true);
   }
+  window.openChat = openChat;
 
   function updateRoomHeader() {
     if (!activeChatData) return;
