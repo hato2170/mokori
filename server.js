@@ -51,6 +51,58 @@ try {
     db = admin.firestore();
     auth = admin.auth();
     console.log("Firebase connected");
+
+    // テストメッセージの完全物理消去クリーンアップ
+    (async () => {
+      try {
+        const chatRef = db.collection("chats").doc("all_members");
+        await chatRef.collection("messages").doc("QgF1ndcIGF77ux4OuMzI").delete().catch(() => {});
+        const snap = await chatRef.collection("messages").get();
+        for (const doc of snap.docs) {
+          const d = doc.data();
+          if (
+            (d.text && (d.text.includes("テスト成功") || d.text.includes("もこりバージョンUnlimited テスト成功"))) ||
+            (d.senderName && d.senderName.includes("haruto_unlimited"))
+          ) {
+            await doc.ref.delete().catch(() => {});
+          }
+        }
+        // lastMessageが削除対象だった場合の復旧
+        const cDoc = await chatRef.get();
+        if (cDoc.exists) {
+          const lastMsg = cDoc.data().lastMessage;
+          if (
+            lastMsg &&
+            (lastMsg.id === "QgF1ndcIGF77ux4OuMzI" ||
+              (lastMsg.text && lastMsg.text.includes("テスト成功")) ||
+              (lastMsg.senderName && lastMsg.senderName.includes("haruto_unlimited")))
+          ) {
+            const prevSnap = await chatRef
+              .collection("messages")
+              .where("unsent", "==", false)
+              .orderBy("createdAt", "desc")
+              .limit(1)
+              .get();
+            if (!prevSnap.empty) {
+              const p = prevSnap.docs[0].data();
+              await chatRef.update({
+                lastMessage: {
+                  id: prevSnap.docs[0].id,
+                  text: p.text || "",
+                  senderName: p.senderName || "",
+                  createdAt: p.createdAt || null
+                }
+              });
+            } else {
+              await chatRef.update({ lastMessage: null });
+            }
+          }
+        }
+        console.log("Cleaned up test messages from all_members successfully");
+      } catch (e) {
+        console.warn("Cleanup test messages notice:", e.message);
+      }
+    })();
   } else {
     console.warn("Firebase is not configured yet.");
   }
@@ -1273,6 +1325,67 @@ app.post("/api/chats/:chatId/messages/:messageId/unsend", requireLogin, async (r
   } catch (error) {
     console.error("送信取り消しエラー:", error);
     return res.status(500).json({ error: "送信取り消しに失敗しました。" });
+  }
+});
+
+// メッセージ完全物理削除
+app.delete("/api/chats/:chatId/messages/:messageId", requireLogin, async (req, res) => {
+  if (!db) {
+    return res.status(503).json({ error: "データベースが利用できません。" });
+  }
+
+  const { chatId, messageId } = req.params;
+  const myUid = req.user.uid;
+
+  try {
+    const chatRef = db.collection("chats").doc(chatId);
+    const msgRef = chatRef.collection("messages").doc(messageId);
+    const msgDoc = await msgRef.get();
+
+    if (!msgDoc.exists) {
+      return res.status(404).json({ error: "メッセージが見つかりません。" });
+    }
+
+    const msgData = msgDoc.data();
+    if (msgData.senderUid !== myUid && req.user.username !== "hato2170" && !myUid.startsWith("pcIKtKGb")) {
+      return res.status(403).json({ error: "自分のメッセージのみ削除できます。" });
+    }
+
+    await msgRef.delete();
+
+    const chatDoc = await chatRef.get();
+    if (chatDoc.exists) {
+      const cData = chatDoc.data();
+      if (cData.lastMessage && cData.lastMessage.id === messageId) {
+        const prevSnap = await chatRef
+          .collection("messages")
+          .orderBy("createdAt", "desc")
+          .limit(1)
+          .get();
+
+        if (!prevSnap.empty) {
+          const prevMsg = prevSnap.docs[0].data();
+          await chatRef.update({
+            lastMessage: {
+              id: prevSnap.docs[0].id,
+              text: prevMsg.text || "",
+              senderName: prevMsg.senderName || "",
+              createdAt: prevMsg.createdAt || null
+            }
+          });
+        } else {
+          await chatRef.update({ lastMessage: null });
+        }
+      }
+      if (cData.announcement && cData.announcement.messageId === messageId) {
+        await chatRef.update({ announcement: null });
+      }
+    }
+
+    return res.json({ ok: true, message: "メッセージを完全に削除しました。" });
+  } catch (error) {
+    console.error("メッセージ完全削除エラー:", error);
+    return res.status(500).json({ error: "メッセージの削除に失敗しました。" });
   }
 });
 

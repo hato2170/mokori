@@ -612,27 +612,38 @@
     const now = Date.now();
 
     // 1. プレイヤー移動 (WASD / ジョイスティック)
+    // 1. プレイヤー移動 (WASD / ジョイスティック) - 画面上の左右・前後に100%一致
     if (player && player.hp > 0) {
-      let moveX = 0, moveZ = 0;
-      if (keys["KeyW"] || keys["ArrowUp"]) moveZ += 1;
-      if (keys["KeyS"] || keys["ArrowDown"]) moveZ -= 1;
-      if (keys["KeyA"] || keys["ArrowLeft"]) moveX -= 1;
-      if (keys["KeyD"] || keys["ArrowRight"]) moveX += 1;
+      let moveForward = 0;
+      let moveRight = 0;
+
+      if (keys["KeyW"] || keys["ArrowUp"]) moveForward += 1;
+      if (keys["KeyS"] || keys["ArrowDown"]) moveForward -= 1;
+      if (keys["KeyD"] || keys["ArrowRight"]) moveRight += 1;
+      if (keys["KeyA"] || keys["ArrowLeft"]) moveRight -= 1;
 
       if (joystick.active) {
-        moveX = joystick.dx;
-        moveZ = -joystick.dy;
+        moveRight = joystick.dx;
+        moveForward = -joystick.dy;
       }
 
-      const len = Math.hypot(moveX, moveZ);
+      const len = Math.hypot(moveRight, moveForward);
       if (len > 0.05) {
-        const forwardAngle = cameraAngle.yaw;
-        const inputAngle = Math.atan2(moveX, moveZ);
-        const finalAngle = forwardAngle + inputAngle;
+        // カメラ基準のワールド移動ベクトル計算
+        // カメラ注視方向 Forward (ワールドXZ) = (sin(yaw), cos(yaw))
+        // 画面右方向 Right (ワールドXZ) = (-cos(yaw), sin(yaw))
+        const forwardX = Math.sin(cameraAngle.yaw);
+        const forwardZ = Math.cos(cameraAngle.yaw);
+        const rightX = -Math.cos(cameraAngle.yaw);
+        const rightZ = Math.sin(cameraAngle.yaw);
 
-        player.vx = Math.sin(finalAngle) * player.speed;
-        player.vz = Math.cos(finalAngle) * player.speed;
-        player.rotation = finalAngle;
+        const norm = len > 1 ? 1 / len : 1;
+        const inRight = moveRight * norm;
+        const inForward = moveForward * norm;
+
+        player.vx = (inRight * rightX + inForward * forwardX) * player.speed;
+        player.vz = (inRight * rightZ + inForward * forwardZ) * player.speed;
+        player.rotation = Math.atan2(player.vx, player.vz);
       } else {
         player.vx = 0;
         player.vz = 0;
@@ -912,16 +923,291 @@
     if (!containerEl) return;
     window.stopFortnite3DGame();
 
+    containerEl.style.position = "relative";
+    containerEl.style.width = "100%";
+    containerEl.style.height = "100%";
+    containerEl.style.minHeight = "480px";
+    containerEl.style.overflow = "hidden";
+
     containerEl.innerHTML = `
-      <div style="position:relative; width:100%; height:100%; min-height:520px; background:#0284c7; border-radius:12px; overflow:hidden; user-select:none; -webkit-user-select:none; font-family:-apple-system,BlinkMacSystemFont,sans-serif;">
-        <!-- 上部ヘッダー (生存数 & 撃破数 & ストーム) -->
-        <div style="position:absolute; top:8px; left:8px; right:8px; z-index:20; display:flex; justify-content:space-between; align-items:center; background:rgba(15,23,42,0.85); backdrop-filter:blur(8px); border:1px solid #334155; padding:8px 14px; border-radius:10px;">
-          <div style="display:flex; gap:14px; font-size:13px; font-weight:bold;">
-            <span style="color:#f8fafc;">👥 生存: <strong id="fnAlive" style="color:#38bdf8;">10</strong></span>
-            <span style="color:#f8fafc;">🎯 撃破: <strong id="fnKills" style="color:#f59e0b;">0</strong></span>
+      <style>
+        .fn-container {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          background: #0284c7;
+          overflow: hidden;
+          user-select: none;
+          -webkit-user-select: none;
+          touch-action: none;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .fn-hud-top {
+          position: absolute;
+          top: 8px;
+          left: 8px;
+          right: 8px;
+          z-index: 30;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: rgba(15, 23, 42, 0.88);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          border: 1px solid #334155;
+          padding: 6px 12px;
+          border-radius: 12px;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+          pointer-events: none;
+        }
+        .fn-stat-group {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .fn-badge {
+          background: rgba(30, 41, 59, 0.85);
+          border: 1px solid #475569;
+          padding: 3px 7px;
+          border-radius: 6px;
+          font-size: 11px;
+          font-weight: bold;
+          display: flex;
+          align-items: center;
+          gap: 3px;
+          white-space: nowrap;
+        }
+        .fn-ctrl-left {
+          position: absolute;
+          bottom: 14px;
+          left: 14px;
+          z-index: 30;
+          display: flex;
+          align-items: flex-end;
+          gap: 10px;
+          pointer-events: none;
+        }
+        #fnJoystickArea {
+          width: 92px;
+          height: 92px;
+          border-radius: 50%;
+          background: rgba(15, 23, 42, 0.7);
+          border: 2px dashed #38bdf8;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          pointer-events: auto;
+          touch-action: none;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        }
+        #fnJoystickThumb {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #38bdf8, #0284c7);
+          box-shadow: 0 0 10px #38bdf8;
+          pointer-events: none;
+        }
+        #fnJumpBtn {
+          pointer-events: auto;
+          background: rgba(15, 23, 42, 0.85);
+          color: #fff;
+          font-weight: 900;
+          border: 2px solid #38bdf8;
+          width: 48px;
+          height: 48px;
+          border-radius: 50%;
+          font-size: 15px;
+          cursor: pointer;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+          touch-action: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        #fnJumpBtn:active {
+          transform: scale(0.92);
+          background: #0284c7;
+        }
+        .fn-ctrl-center {
+          position: absolute;
+          bottom: 10px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 30;
+          display: flex;
+          gap: 4px;
+          background: rgba(15, 23, 42, 0.88);
+          backdrop-filter: blur(6px);
+          -webkit-backdrop-filter: blur(6px);
+          padding: 4px 6px;
+          border-radius: 10px;
+          border: 1px solid #334155;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+          pointer-events: auto;
+        }
+        .fn-slot-btn {
+          background: #1e293b;
+          color: #94a3b8;
+          font-weight: bold;
+          border: 1px solid transparent;
+          padding: 5px 8px;
+          border-radius: 6px;
+          font-size: 11px;
+          cursor: pointer;
+          white-space: nowrap;
+          touch-action: manipulation;
+        }
+        .fn-ctrl-right {
+          position: absolute;
+          bottom: 12px;
+          right: 12px;
+          z-index: 30;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 8px;
+          pointer-events: none;
+        }
+        .fn-build-palette {
+          display: flex;
+          gap: 4px;
+          pointer-events: auto;
+        }
+        .fn-build-btn {
+          background: #1e293b;
+          color: #cbd5e1;
+          font-weight: bold;
+          border: 1px solid #475569;
+          padding: 6px 10px;
+          border-radius: 8px;
+          font-size: 11px;
+          cursor: pointer;
+          touch-action: manipulation;
+        }
+        .fn-action-buttons {
+          display: flex;
+          gap: 8px;
+          pointer-events: auto;
+        }
+        #fnAttackBtn {
+          background: linear-gradient(135deg, #ef4444, #dc2626);
+          color: #fff;
+          font-weight: 900;
+          border: 2px solid #f87171;
+          width: 60px;
+          height: 60px;
+          border-radius: 50%;
+          font-size: 13px;
+          cursor: pointer;
+          box-shadow: 0 4px 16px rgba(239, 68, 68, 0.5);
+          touch-action: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-direction: column;
+        }
+        #fnAttackBtn:active {
+          transform: scale(0.92);
+        }
+        #fnPlaceBuildBtn {
+          background: linear-gradient(135deg, #f59e0b, #d97706);
+          color: #fff;
+          font-weight: bold;
+          border: 2px solid #fbbf24;
+          width: 50px;
+          height: 50px;
+          border-radius: 50%;
+          font-size: 11px;
+          cursor: pointer;
+          box-shadow: 0 4px 14px rgba(245, 158, 11, 0.4);
+          touch-action: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-direction: column;
+        }
+        #fnPlaceBuildBtn:active {
+          transform: scale(0.92);
+        }
+        @media (max-width: 640px) {
+          .fn-hud-top {
+            padding: 4px 8px;
+            font-size: 10px;
+          }
+          .fn-badge {
+            padding: 2px 5px;
+            font-size: 10px;
+          }
+          #fnJoystickArea {
+            width: 80px;
+            height: 80px;
+          }
+          #fnJoystickThumb {
+            width: 36px;
+            height: 36px;
+          }
+          #fnJumpBtn {
+            width: 44px;
+            height: 44px;
+            font-size: 13px;
+          }
+          .fn-ctrl-center {
+            bottom: 6px;
+            padding: 2px 4px;
+            gap: 2px;
+          }
+          .fn-slot-btn {
+            padding: 4px 6px;
+            font-size: 10px;
+          }
+          #fnAttackBtn {
+            width: 54px;
+            height: 54px;
+            font-size: 12px;
+          }
+          #fnPlaceBuildBtn {
+            width: 44px;
+            height: 44px;
+            font-size: 10px;
+          }
+          .fn-build-btn {
+            padding: 4px 7px;
+            font-size: 10px;
+          }
+        }
+      </style>
+
+      <div class="fn-container">
+        <!-- 上部ヘッダーHUD (HP / シールド / 木材 / 生存 / 撃破 / ストーム) -->
+        <div class="fn-hud-top">
+          <div class="fn-stat-group">
+            <div class="fn-badge" style="border-color:#16a34a; background:rgba(22,101,52,0.6);">
+              <span style="color:#4ade80;">❤️</span>
+              <span id="fnHp" style="color:#4ade80;">100</span>
+            </div>
+            <div class="fn-badge" style="border-color:#0284c7; background:rgba(3,105,161,0.6);">
+              <span style="color:#38bdf8;">🛡️</span>
+              <span id="fnShield" style="color:#38bdf8;">50</span>
+            </div>
+            <div class="fn-badge" style="border-color:#b45309; background:rgba(180,83,9,0.6);">
+              <span style="color:#f59e0b;">🪵</span>
+              <span id="fnWood" style="color:#f59e0b;">150</span>
+            </div>
           </div>
-          <div style="font-size:12px; font-weight:bold;">
-            <span id="fnStormTimer" style="color:#38bdf8;">🛡️ 無敵保護中: 5秒</span>
+          <div class="fn-stat-group">
+            <div class="fn-badge">
+              <span style="color:#94a3b8;">👥</span>
+              <span id="fnAlive" style="color:#38bdf8;">10</span>
+            </div>
+            <div class="fn-badge">
+              <span style="color:#94a3b8;">🎯</span>
+              <span id="fnKills" style="color:#f59e0b;">0</span>
+            </div>
+            <div class="fn-badge" style="border-color:#a855f7; background:rgba(126,34,206,0.5);">
+              <span id="fnStormTimer" style="color:#38bdf8;">🛡️ 無敵: 5秒</span>
+            </div>
           </div>
         </div>
 
@@ -931,74 +1217,45 @@
         </div>
 
         <!-- 画面中央通知バナー -->
-        <div id="fnNotice" style="display:none; position:absolute; top:70px; left:50%; transform:translateX(-50%); z-index:25; background:rgba(15,23,42,0.92); color:#facc15; font-size:13px; font-weight:bold; padding:6px 18px; border-radius:20px; border:1px solid #facc15; pointer-events:none; animation:fadeIn 0.2s;"></div>
+        <div id="fnNotice" style="display:none; position:absolute; top:65px; left:50%; transform:translateX(-50%); z-index:25; background:rgba(15,23,42,0.92); color:#facc15; font-size:12px; font-weight:bold; padding:5px 16px; border-radius:20px; border:1px solid #facc15; pointer-events:none;"></div>
 
         <!-- 3D WebGL Canvas ラッパー -->
-        <div id="fnCanvasWrap" style="width:100%; height:100%; min-height:520px; cursor:crosshair;"></div>
+        <div id="fnCanvasWrap" style="position:absolute; inset:0; width:100%; height:100%; cursor:crosshair;"></div>
 
-        <!-- 左下操作ジョイスティック (スマホ・iPad対応) -->
-        <div style="position:absolute; bottom:14px; left:14px; z-index:25; display:flex; align-items:flex-end; gap:12px; pointer-events:none;">
-          <!-- バーチャルジョイスティック -->
-          <div id="fnJoystickArea" style="width:100px; height:100px; border-radius:50%; background:rgba(15,23,42,0.7); border:2px dashed #38bdf8; display:flex; align-items:center; justify-content:center; pointer-events:auto; touch-action:none; box-shadow:0 4px 16px rgba(0,0,0,0.4);">
-            <div id="fnJoystickThumb" style="width:44px; height:44px; border-radius:50%; background:linear-gradient(135deg, #38bdf8, #0284c7); box-shadow:0 0 10px #38bdf8;"></div>
+        <!-- 左下操作ジョイスティック & ジャンプ (スマホ・iPad完全対応) -->
+        <div class="fn-ctrl-left">
+          <div id="fnJoystickArea">
+            <div id="fnJoystickThumb"></div>
           </div>
-
-          <!-- ジャンプボタン -->
-          <button id="fnJumpBtn" style="pointer-events:auto; background:rgba(15,23,42,0.85); color:#fff; font-weight:bold; border:2px solid #38bdf8; width:52px; height:52px; border-radius:50%; font-size:14px; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,0.3); touch-action:none;">
-            ⏫
-          </button>
+          <button id="fnJumpBtn" title="ジャンプ">⏫</button>
         </div>
 
-        <!-- 左下ステータス (HP / シールド / 木材) -->
-        <div style="position:absolute; bottom:126px; left:14px; z-index:20; background:rgba(15,23,42,0.88); border:1px solid #334155; padding:6px 12px; border-radius:10px; min-width:140px;">
-          <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:bold; margin-bottom:3px;">
-            <span style="color:#4ade80;">❤️ HP: <span id="fnHp">100</span></span>
-            <span style="color:#38bdf8;">🛡️ シールド: <span id="fnShield">50</span></span>
-          </div>
-          <div style="font-size:12px; font-weight:bold; color:#f59e0b;">
-            🪵 木材: <span id="fnWood">150</span>
-          </div>
+        <!-- 中央下 武器ホットバー (スロット1〜4) -->
+        <div class="fn-ctrl-center">
+          <button id="fnSlot1" class="fn-slot-btn" onclick="window.fnSelectSlot(1)">⛏️ 1</button>
+          <button id="fnSlot2" class="fn-slot-btn" style="background:#0284c7; color:#fff;" onclick="window.fnSelectSlot(2)">🔫 AR</button>
+          <button id="fnSlot3" class="fn-slot-btn" onclick="window.fnSelectSlot(3)">💥 ポンプ</button>
+          <button id="fnSlot4" class="fn-slot-btn" onclick="window.fnSelectSlot(4)">🧪 薬</button>
         </div>
 
-        <!-- 右側 建築パレット (壁・階段・床) -->
-        <div style="position:absolute; bottom:84px; right:12px; z-index:20; display:flex; flex-direction:column; gap:6px;">
-          <button id="fnBuildWallBtn" onclick="window.fnSetBuild('wall')" style="background:#b45309; color:#fff; font-weight:bold; border:1px solid #f59e0b; padding:8px 12px; border-radius:8px; font-size:12px; cursor:pointer;">
-            🧱 壁 (10)
-          </button>
-          <button id="fnBuildRampBtn" onclick="window.fnSetBuild('ramp')" style="background:#1e293b; color:#cbd5e1; font-weight:bold; border:1px solid #475569; padding:8px 12px; border-radius:8px; font-size:12px; cursor:pointer;">
-            🪜 階段 (10)
-          </button>
-          <button id="fnBuildFloorBtn" onclick="window.fnSetBuild('floor')" style="background:#1e293b; color:#cbd5e1; font-weight:bold; border:1px solid #475569; padding:8px 12px; border-radius:8px; font-size:12px; cursor:pointer;">
-            🪵 床 (10)
-          </button>
-        </div>
-
-        <!-- 下部 ホットバー武器スロット (1〜4) & 攻撃ボタン -->
-        <div style="position:absolute; bottom:12px; right:12px; z-index:20; display:flex; gap:10px; align-items:center;">
-          <!-- 武器スロット -->
-          <div style="display:flex; gap:5px; background:rgba(15,23,42,0.85); padding:5px; border-radius:10px; border:1px solid #334155;">
-            <button id="fnSlot1" onclick="window.fnSelectSlot(1)" style="background:#1e293b; color:#94a3b8; font-weight:bold; border:0; padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer;">⛏️ 1</button>
-            <button id="fnSlot2" onclick="window.fnSelectSlot(2)" style="background:#0284c7; color:#fff; font-weight:bold; border:0; padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer;">🔫 AR</button>
-            <button id="fnSlot3" onclick="window.fnSelectSlot(3)" style="background:#1e293b; color:#94a3b8; font-weight:bold; border:0; padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer;">💥 ポンプ</button>
-            <button id="fnSlot4" onclick="window.fnSelectSlot(4)" style="background:#1e293b; color:#94a3b8; font-weight:bold; border:0; padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer;">🧪 薬</button>
+        <!-- 右下 建築パレット & 攻撃アクション -->
+        <div class="fn-ctrl-right">
+          <div class="fn-build-palette">
+            <button id="fnBuildWallBtn" class="fn-build-btn" style="background:#b45309; border-color:#f59e0b; color:#fff;" onclick="window.fnSetBuild('wall')">🧱 壁(10)</button>
+            <button id="fnBuildRampBtn" class="fn-build-btn" onclick="window.fnSetBuild('ramp')">🪜 階段(10)</button>
+            <button id="fnBuildFloorBtn" class="fn-build-btn" onclick="window.fnSetBuild('floor')">🪵 床(10)</button>
           </div>
-
-          <!-- アクションボタン (攻撃 / 建築決定) -->
-          <div style="display:flex; gap:8px;">
-            <button id="fnAttackBtn" style="background:linear-gradient(135deg, #ef4444, #dc2626); color:#fff; font-weight:bold; border:0; padding:12px 22px; border-radius:12px; font-size:14px; cursor:pointer; box-shadow:0 4px 14px rgba(239,68,68,0.4); touch-action:none;">
-              🔥 発射
-            </button>
-            <button id="fnPlaceBuildBtn" style="background:linear-gradient(135deg, #f59e0b, #d97706); color:#fff; font-weight:bold; border:0; padding:12px 18px; border-radius:12px; font-size:14px; cursor:pointer; box-shadow:0 4px 14px rgba(245,158,11,0.4); touch-action:none;">
-              🔨 建築
-            </button>
+          <div class="fn-action-buttons">
+            <button id="fnPlaceBuildBtn" title="建築設置">🔨<span style="font-size:9px;">建築</span></button>
+            <button id="fnAttackBtn" title="射撃・攻撃">🔥<span style="font-size:9px;">発射</span></button>
           </div>
         </div>
 
         <!-- 勝利/敗北 オーバーレイ -->
         <div id="fnOverlay" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; z-index:40; background:rgba(15,23,42,0.92); flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px; box-sizing:border-box;">
-          <h1 id="fnOverlayTitle" style="color:#facc15; font-size:32px; margin:0 0 12px; font-weight:900; text-shadow:0 0 20px rgba(250,204,21,0.8);">🏆 #1 VICTORY ROYALE</h1>
-          <p id="fnOverlayMsg" style="color:#e2e8f0; font-size:15px; margin:0 0 24px; white-space:pre-wrap;"></p>
-          <button onclick="window.startFortnite3DGame(document.getElementById('fnCanvasWrap').parentElement.parentElement)" style="background:#0284c7; color:#fff; font-weight:bold; border:0; padding:12px 32px; border-radius:10px; font-size:15px; cursor:pointer; box-shadow:0 4px 16px rgba(2,132,199,0.5);">
+          <h1 id="fnOverlayTitle" style="color:#facc15; font-size:28px; margin:0 0 12px; font-weight:900; text-shadow:0 0 20px rgba(250,204,21,0.8);">🏆 #1 VICTORY ROYALE</h1>
+          <p id="fnOverlayMsg" style="color:#e2e8f0; font-size:14px; margin:0 0 20px; white-space:pre-wrap;"></p>
+          <button onclick="window.startFortnite3DGame(document.getElementById('fnCanvasWrap').parentElement.parentElement)" style="background:#0284c7; color:#fff; font-weight:bold; border:0; padding:12px 28px; border-radius:10px; font-size:14px; cursor:pointer; box-shadow:0 4px 16px rgba(2,132,199,0.5);">
             🔄 もう一度バトルバスに乗る
           </button>
         </div>
@@ -1008,8 +1265,8 @@
     const wrap = document.getElementById("fnCanvasWrap");
     if (!wrap) return;
 
-    const width = wrap.clientWidth || 400;
-    const height = wrap.clientHeight || 520;
+    let width = wrap.clientWidth || window.innerWidth || 400;
+    let height = wrap.clientHeight || window.innerHeight || 520;
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x38bdf8);
@@ -1018,10 +1275,32 @@
     camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
     camera.position.set(0, 10, 25);
 
-    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;
     wrap.appendChild(renderer.domElement);
+
+    // リサイズ・スマホ画面自動調整ハンドラー
+    function handleResize() {
+      if (!wrap || !renderer || !camera) return;
+      const w = wrap.clientWidth;
+      const h = wrap.clientHeight;
+      if (w > 0 && h > 0) {
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      }
+    }
+    window.addEventListener("resize", handleResize);
+    window._fnResizeHandler = handleResize;
+
+    if (window.ResizeObserver) {
+      window._fnResizeObserver = new ResizeObserver(handleResize);
+      window._fnResizeObserver.observe(wrap);
+    }
+    setTimeout(handleResize, 50);
+    setTimeout(handleResize, 300);
 
     const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
     scene.add(hemiLight);
@@ -1264,6 +1543,7 @@
     if (atkBtn) {
       atkBtn.onpointerdown = (e) => {
         e.preventDefault();
+        e.stopPropagation();
         attackCurrentWeapon();
       };
     }
@@ -1273,6 +1553,7 @@
     if (buildBtn) {
       buildBtn.onpointerdown = (e) => {
         e.preventDefault();
+        e.stopPropagation();
         placeStructure(buildType);
       };
     }
@@ -1286,6 +1567,15 @@
     stormInterval = null;
     window.onkeydown = null;
     window.onkeyup = null;
+
+    if (window._fnResizeHandler) {
+      window.removeEventListener("resize", window._fnResizeHandler);
+      window._fnResizeHandler = null;
+    }
+    if (window._fnResizeObserver) {
+      window._fnResizeObserver.disconnect();
+      window._fnResizeObserver = null;
+    }
 
     if (renderer && renderer.domElement && renderer.domElement.parentElement) {
       renderer.domElement.parentElement.removeChild(renderer.domElement);
