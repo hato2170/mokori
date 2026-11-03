@@ -956,9 +956,19 @@
 
     container.innerHTML = `
       <div style="padding:16px; max-width:440px; margin:0 auto; text-align:center;">
+        <!-- モード切替タブ: CPU vs オンライン -->
+        <div style="display:flex; gap:8px; margin-bottom:12px;">
+          <button id="dfModeCpuBtn" style="flex:1; background:${isOnline ? '#1e293b' : '#0284c7'}; color:${isOnline ? '#94a3b8' : '#fff'}; border:1px solid ${isOnline ? '#334155' : '#0284c7'}; padding:8px; border-radius:8px; font-weight:bold; font-size:12px; cursor:pointer;">
+            🤖 4人CPU対戦 (即開始)
+          </button>
+          <button id="dfModeOnlineBtn" style="flex:1; background:${isOnline ? '#06c755' : '#1e293b'}; color:${isOnline ? '#fff' : '#94a3b8'}; border:1px solid ${isOnline ? '#06c755' : '#334155'}; padding:8px; border-radius:8px; font-weight:bold; font-size:12px; cursor:pointer;">
+            👥 オンライン友達対戦
+          </button>
+        </div>
+
         <div style="background:#1e293b; padding:10px 14px; border-radius:10px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
           <div style="font-size:13px; color:#94a3b8;">
-            <strong id="dfModeBadge" style="color:#f59e0b;">👥 オンライン対戦</strong>
+            <strong id="dfModeBadge" style="color:#f59e0b;">${isOnline ? '👥 オンライン対戦' : '🤖 ソロ4人CPU戦'}</strong>
             <span style="margin-left:6px; color:#64748b; font-size:11px;">(${roomCode || "ソロ"})</span>
           </div>
           <button onclick="window.openGameForwardDialog()" style="background:#06c755; color:#fff; font-size:11px; font-weight:bold; padding:4px 10px; border-radius:6px; border:0; cursor:pointer;">
@@ -1013,6 +1023,40 @@
     let pHand = deck.slice(0, 13).sort((a,b) => a.num - b.num);
     let selectedIdx = null;
     let field = [];
+
+    const cpuBtn = document.getElementById("dfModeCpuBtn");
+    const onlineBtn = document.getElementById("dfModeOnlineBtn");
+    if (cpuBtn) {
+      cpuBtn.onclick = () => {
+        isOnline = false;
+        if (window._dfPollTimer) clearInterval(window._dfPollTimer);
+        document.getElementById("dfModeBadge").textContent = "🤖 ソロ4人CPU戦";
+        document.getElementById("dfModeBadge").style.color = "#38bdf8";
+        cpuBtn.style.background = "#0284c7";
+        cpuBtn.style.color = "#fff";
+        if (onlineBtn) {
+          onlineBtn.style.background = "#1e293b";
+          onlineBtn.style.color = "#94a3b8";
+        }
+        const w = document.getElementById("dfWaitAlert");
+        if (w) w.style.display = "none";
+        renderHand();
+      };
+    }
+    if (onlineBtn) {
+      onlineBtn.onclick = () => {
+        isOnline = true;
+        document.getElementById("dfModeBadge").textContent = "👥 オンライン対戦";
+        document.getElementById("dfModeBadge").style.color = "#f59e0b";
+        onlineBtn.style.background = "#06c755";
+        onlineBtn.style.color = "#fff";
+        if (cpuBtn) {
+          cpuBtn.style.background = "#1e293b";
+          cpuBtn.style.color = "#94a3b8";
+        }
+        initOnlineDaifugo();
+      };
+    }
 
     function isMyTurn() {
       return isOnline ? (turnRole === myRole) : (turnRole === 1);

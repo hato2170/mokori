@@ -1,5 +1,5 @@
 // ====================================================
-// 🏆 Fortnite 3D (フォートナイト 3D バトルロイヤル)
+// 🏆 Fortnite 3D (フォートナイト 3D バトルロイヤル) - 改修完全版
 // Three.js完全自前内蔵・外部通信不要・完全独立3Dゲームエンジン
 // 建築 (壁・階段・床) + 射撃 (ツルハシ・AR・ショットガン) + ストーム + ボット + ビクロイ
 // ====================================================
@@ -19,29 +19,29 @@
   let trees = [];
   let rocks = [];
   let chests = [];
-  let lootItems = [];
   let particles = [];
+  let damageNumbers = [];
   let stormCylinder = null;
 
   let aliveCount = 10;
   let killCount = 0;
-  let woodCount = 120;
-  let currentSlot = 1; // 1: Pickaxe, 2: AR, 3: Shotgun, 4: Shield
-  let buildMode = false;
+  let woodCount = 150;
+  let currentSlot = 2; // デフォルトでAR (アサルトライフル) 装備！
   let buildType = "wall"; // "wall", "ramp", "floor"
+  let spawnProtectionTimer = 5; // スポーン直後5秒無敵保護
 
-  // ストーム
-  let stormRadius = 90;
+  // ストーム (嵐)
+  let stormRadius = 110;
   let stormTargetRadius = 45;
   let stormCenter = { x: 0, z: 0 };
-  let stormTimer = 45;
+  let stormTimer = 60;
   let stormInterval = null;
   let stormShrinking = false;
 
   // 操作
   let keys = {};
   let mouse = { x: 0, y: 0, down: false };
-  let cameraAngle = { yaw: 0, pitch: 0.25 };
+  let cameraAngle = { yaw: 0, pitch: 0.22 };
   let joystick = { active: false, startX: 0, startY: 0, dx: 0, dy: 0 };
   let lookTouch = { active: false, id: null, lastX: 0, lastY: 0 };
 
@@ -60,32 +60,32 @@
 
       if (type === "ar") {
         osc.type = "sawtooth";
-        osc.frequency.setValueAtTime(440, now);
-        osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
+        osc.frequency.setValueAtTime(460, now);
+        osc.frequency.exponentialRampToValueAtTime(110, now + 0.1);
         gain.gain.setValueAtTime(0.3, now);
         gain.gain.linearRampToValueAtTime(0.01, now + 0.1);
         osc.start(now);
         osc.stop(now + 0.1);
       } else if (type === "shotgun") {
         osc.type = "square";
-        osc.frequency.setValueAtTime(220, now);
-        osc.frequency.exponentialRampToValueAtTime(40, now + 0.25);
-        gain.gain.setValueAtTime(0.45, now);
-        gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+        osc.frequency.setValueAtTime(240, now);
+        osc.frequency.exponentialRampToValueAtTime(45, now + 0.22);
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.22);
         osc.start(now);
-        osc.stop(now + 0.25);
+        osc.stop(now + 0.22);
       } else if (type === "pickaxe") {
         osc.type = "triangle";
-        osc.frequency.setValueAtTime(320, now);
-        osc.frequency.exponentialRampToValueAtTime(140, now + 0.08);
+        osc.frequency.setValueAtTime(340, now);
+        osc.frequency.exponentialRampToValueAtTime(140, now + 0.1);
         gain.gain.setValueAtTime(0.25, now);
-        gain.gain.linearRampToValueAtTime(0.01, now + 0.08);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.1);
         osc.start(now);
-        osc.stop(now + 0.08);
+        osc.stop(now + 0.1);
       } else if (type === "build") {
         osc.type = "sine";
-        osc.frequency.setValueAtTime(260, now);
-        osc.frequency.setValueAtTime(520, now + 0.06);
+        osc.frequency.setValueAtTime(280, now);
+        osc.frequency.setValueAtTime(560, now + 0.08);
         gain.gain.setValueAtTime(0.3, now);
         gain.gain.linearRampToValueAtTime(0.01, now + 0.12);
         osc.start(now);
@@ -98,6 +98,13 @@
         gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
         osc.start(now);
         osc.stop(now + 0.3);
+      } else if (type === "hit") {
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(880, now);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.05);
+        osc.start(now);
+        osc.stop(now + 0.05);
       } else if (type === "chest") {
         [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
           const o = audioCtx.createOscillator();
@@ -132,7 +139,7 @@
   // 島・マップ環境の生成
   function initFortniteMap() {
     // 地形 (緑の芝生アイランド)
-    const islandGeo = new THREE.CylinderGeometry(100, 110, 4, 32);
+    const islandGeo = new THREE.CylinderGeometry(110, 120, 4, 32);
     const islandMat = new THREE.MeshLambertMaterial({ color: 0x4ade80 });
     const island = new THREE.Mesh(islandGeo, islandMat);
     island.position.y = -2;
@@ -154,7 +161,7 @@
 
     for (let i = 0; i < 35; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const dist = Math.random() * 80 + 8;
+      const dist = Math.random() * 85 + 10;
       const x = Math.cos(angle) * dist;
       const z = Math.sin(angle) * dist;
 
@@ -179,7 +186,7 @@
     const rockMat = new THREE.MeshLambertMaterial({ color: 0x64748b });
     for (let i = 0; i < 18; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const dist = Math.random() * 75 + 10;
+      const dist = Math.random() * 80 + 12;
       const x = Math.cos(angle) * dist;
       const z = Math.sin(angle) * dist;
 
@@ -195,14 +202,14 @@
     const chestMat = new THREE.MeshLambertMaterial({ color: 0xf59e0b, emissive: 0x78350f });
     const chestPositions = [
       { x: 0, z: 0 },
-      { x: -20, z: -15 },
-      { x: 22, z: -18 },
-      { x: -18, z: 24 },
-      { x: 25, z: 20 },
-      { x: 0, z: -35 },
-      { x: 0, z: 35 },
-      { x: -40, z: 0 },
-      { x: 40, z: 0 }
+      { x: -15, z: -12 },
+      { x: 18, z: -15 },
+      { x: -14, z: 18 },
+      { x: 20, z: 15 },
+      { x: 0, z: -30 },
+      { x: 0, z: 30 },
+      { x: -35, z: 0 },
+      { x: 35, z: 0 }
     ];
 
     chestPositions.forEach(pos => {
@@ -212,7 +219,6 @@
       base.castShadow = true;
       group.add(base);
 
-      // チェストの金色ライト
       const pLight = new THREE.PointLight(0xfacc15, 1.5, 6);
       pLight.position.set(0, 1.2, 0);
       group.add(pLight);
@@ -278,20 +284,30 @@
     rightArm.rotation.x = -Math.PI / 4;
     group.add(rightArm);
 
-    // 武器メッシュ (ツルハシ・AR・SG)
-    const weaponGroup = new THREE.Group();
-    weaponGroup.position.set(0.65, 1.0, 0.6);
-    group.add(weaponGroup);
+    // 銃身
+    const gunGeo = new THREE.BoxGeometry(0.2, 0.2, 1.2);
+    const gunMat = new THREE.MeshLambertMaterial({ color: 0x1e293b });
+    const gun = new THREE.Mesh(gunGeo, gunMat);
+    gun.position.set(0.65, 1.1, 0.6);
+    group.add(gun);
 
-    group.position.set(0, 0, 15);
+    // スポーン保護バブル (青い球体)
+    const shieldBubbleGeo = new THREE.SphereGeometry(1.6, 16, 16);
+    const shieldBubbleMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.35, wireframe: true });
+    const shieldBubble = new THREE.Mesh(shieldBubbleGeo, shieldBubbleMat);
+    shieldBubble.position.y = 1.5;
+    group.add(shieldBubble);
+
+    group.position.set(0, 0, 10);
     scene.add(group);
 
     return {
       group,
-      weaponGroup,
+      shieldBubble,
+      gun,
       x: 0,
       y: 0,
-      z: 15,
+      z: 10,
       vx: 0,
       vy: 0,
       vz: 0,
@@ -300,13 +316,13 @@
       maxHp: 100,
       shield: 50,
       maxShield: 100,
-      speed: 0.28,
+      speed: 0.32,
       isGrounded: true,
       lastShotTime: 0
     };
   }
 
-  // ボット対戦相手の生成
+  // ボット対戦相手の生成 (遠隔配置 & バトルロイヤルAI)
   function createBot(id, startPos, name) {
     const group = new THREE.Group();
 
@@ -318,8 +334,7 @@
     shadow.position.y = 0.05;
     group.add(shadow);
 
-    // ボットのスキン色
-    const colors = [0xd97706, 0x2563eb, 0xdc2626, 0x7c3aed, 0x0891b2];
+    const colors = [0xd97706, 0x2563eb, 0xdc2626, 0x7c3aed, 0x0891b2, 0x059669];
     const skinColor = colors[id % colors.length];
 
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.2, 0.55), new THREE.MeshLambertMaterial({ color: skinColor }));
@@ -339,7 +354,7 @@
     nctx.fillStyle = "rgba(0,0,0,0.6)";
     nctx.fillRect(0, 0, 128, 32);
     nctx.fillStyle = "#ffffff";
-    nctx.font = "bold 16px sans-serif";
+    nctx.font = "bold 15px sans-serif";
     nctx.textAlign = "center";
     nctx.fillText(name, 64, 22);
     const nameTex = new THREE.CanvasTexture(nameCanvas);
@@ -357,13 +372,13 @@
       x: startPos.x,
       y: 0,
       z: startPos.z,
-      hp: 100,
+      hp: 80,
       shield: 25,
       alive: true,
-      speed: 0.2,
+      speed: 0.18,
       lastShotTime: 0,
-      aiCooldown: Math.random() * 1000 + 500,
-      aiState: "roam"
+      aiCooldown: Math.random() * 1500 + 1200,
+      targetBot: null
     };
   }
 
@@ -376,7 +391,6 @@
     woodCount -= 10;
     playSound("build");
 
-    // プレイヤーの向いているグリッド位置にスナップ配置
     const snapGrid = 4;
     const forwardX = Math.sin(player.rotation) * 4;
     const forwardZ = Math.cos(player.rotation) * 4;
@@ -394,10 +408,8 @@
     });
 
     let mesh = null;
-    let boundingBox = null;
 
     if (type === "wall") {
-      // 壁: 幅4, 高さ3.5, 厚み0.3
       const geo = new THREE.BoxGeometry(4.0, 3.5, 0.3);
       mesh = new THREE.Mesh(geo, woodMat);
       mesh.position.set(snapX, snapY + 1.75, snapZ);
@@ -406,7 +418,6 @@
       mesh.receiveShadow = true;
       scene.add(mesh);
     } else if (type === "ramp") {
-      // 階段/スロープ: 45度傾いた坂
       const geo = new THREE.BoxGeometry(4.0, 0.25, 4.8);
       mesh = new THREE.Mesh(geo, woodMat);
       mesh.position.set(snapX, snapY + 1.75, snapZ);
@@ -416,7 +427,6 @@
       mesh.receiveShadow = true;
       scene.add(mesh);
     } else if (type === "floor") {
-      // 床: 幅4, 奥行き4, 厚み0.25
       const geo = new THREE.BoxGeometry(4.0, 0.25, 4.0);
       mesh = new THREE.Mesh(geo, woodMat);
       mesh.position.set(snapX, snapY + 3.5, snapZ);
@@ -444,23 +454,31 @@
 
     // 1: ツルハシ
     if (currentSlot === 1) {
-      if (now - player.lastShotTime < 450) return;
+      if (now - player.lastShotTime < 350) return;
       player.lastShotTime = now;
       playSound("pickaxe");
 
-      // 前方の木・岩・敵を採取/攻撃
-      const hitDist = 3.5;
+      // スイング視覚効果 (前方にスラッシュパーティクル)
+      const slashX = player.x + Math.sin(player.rotation) * 2.0;
+      const slashZ = player.z + Math.cos(player.rotation) * 2.0;
+      createHitParticles(slashX, player.y + 1.5, slashZ, 0xfacc15);
+
+      const hitDist = 4.2;
+      let hitSomething = false;
+
       trees.forEach(t => {
         if (!t.alive) return;
         if (Math.hypot(t.x - player.x, t.z - player.z) < hitDist) {
           t.hp -= 35;
-          woodCount += 20;
+          woodCount += 25;
+          hitSomething = true;
           createHitParticles(t.x, 2.0, t.z, 0x78350f);
+          showOnScreenNotice("🪵 木材 +25！");
           if (t.hp <= 0) {
             t.alive = false;
             scene.remove(t.group);
-            showOnScreenNotice("🪵 木材 +50！");
-            woodCount += 30;
+            woodCount += 35;
+            showOnScreenNotice("🌲 木を伐採！木材 +35！");
           }
         }
       });
@@ -469,26 +487,28 @@
         if (!r.alive) return;
         if (Math.hypot(r.x - player.x, r.z - player.z) < hitDist) {
           r.hp -= 40;
-          woodCount += 15;
+          woodCount += 20;
+          hitSomething = true;
           createHitParticles(r.x, 1.2, r.z, 0x64748b);
+          showOnScreenNotice("🧱 石材 +20！");
           if (r.hp <= 0) {
             r.alive = false;
             scene.remove(r.mesh);
-            woodCount += 25;
+            woodCount += 30;
           }
         }
       });
 
-      // 宝箱オープン
       chests.forEach(c => {
         if (c.opened) return;
         if (Math.hypot(c.x - player.x, c.z - player.z) < hitDist) {
           c.opened = true;
+          hitSomething = true;
           playSound("chest");
           scene.remove(c.group);
-          woodCount += 60;
+          woodCount += 80;
           player.shield = Math.min(player.maxShield, player.shield + 50);
-          showOnScreenNotice("✨ 宝箱オープン！木材+60 & シールド+50！");
+          showOnScreenNotice("✨ 宝箱オープン！木材+80 & シールド+50！");
         }
       });
       return;
@@ -496,23 +516,22 @@
 
     // 2: アサルトライフル (AR)
     if (currentSlot === 2) {
-      if (now - player.lastShotTime < 180) return;
+      if (now - player.lastShotTime < 160) return;
       player.lastShotTime = now;
       playSound("ar");
 
-      spawnBullet(player, 32, 1.2, 0xfacc15, 0.05);
+      spawnBullet(player, 34, 1.4, 0xfacc15, (Math.random() - 0.5) * 0.04);
       return;
     }
 
     // 3: ポンプショットガン
     if (currentSlot === 3) {
-      if (now - player.lastShotTime < 850) return;
+      if (now - player.lastShotTime < 750) return;
       player.lastShotTime = now;
       playSound("shotgun");
 
-      // 5発同時散弾
       for (let i = -2; i <= 2; i++) {
-        spawnBullet(player, 24, 1.0, 0xef4444, i * 0.06);
+        spawnBullet(player, 22, 1.2, 0xef4444, i * 0.07);
       }
       return;
     }
@@ -526,7 +545,7 @@
       playSound("shield");
       player.shield = Math.min(player.maxShield, player.shield + 25);
       showOnScreenNotice("🧪 ミニポーション使用！シールド+25！");
-      currentSlot = 2; // ARに戻す
+      window.fnSelectSlot(2); // 自動でARに戻す
       return;
     }
   }
@@ -537,7 +556,7 @@
     const vx = Math.sin(angle) * speed;
     const vz = Math.cos(angle) * speed;
 
-    const geo = new THREE.SphereGeometry(0.18, 6, 6);
+    const geo = new THREE.SphereGeometry(0.2, 6, 6);
     const mat = new THREE.MeshBasicMaterial({ color });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(shooter.x, (shooter.y || 0) + 1.4, shooter.z);
@@ -553,23 +572,23 @@
       vz,
       damage,
       dist: 0,
-      maxDist: 65
+      maxDist: 70
     });
   }
 
   // ヒットパーティクル
   function createHitParticles(x, y, z, color) {
     for (let i = 0; i < 5; i++) {
-      const geo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+      const geo = new THREE.BoxGeometry(0.25, 0.25, 0.25);
       const mat = new THREE.MeshBasicMaterial({ color });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, y, z);
       scene.add(mesh);
       particles.push({
         mesh,
-        vx: (Math.random() - 0.5) * 0.2,
-        vy: Math.random() * 0.2 + 0.1,
-        vz: (Math.random() - 0.5) * 0.2,
+        vx: (Math.random() - 0.5) * 0.25,
+        vy: Math.random() * 0.25 + 0.1,
+        vz: (Math.random() - 0.5) * 0.25,
         life: 25
       });
     }
@@ -607,7 +626,6 @@
 
       const len = Math.hypot(moveX, moveZ);
       if (len > 0.05) {
-        // カメラ向きを基準に移動
         const forwardAngle = cameraAngle.yaw;
         const inputAngle = Math.atan2(moveX, moveZ);
         const finalAngle = forwardAngle + inputAngle;
@@ -620,9 +638,9 @@
         player.vz = 0;
       }
 
-      // 重力 & ジャンプ
+      // ジャンプ
       if (keys["Space"] && player.isGrounded) {
-        player.vy = 0.38;
+        player.vy = 0.42;
         player.isGrounded = false;
       }
 
@@ -642,50 +660,57 @@
       player.group.rotation.y = player.rotation;
 
       // カメラのTPS追従 (プレイヤーの肩越し)
-      const camDist = 7.5;
-      const camHeight = 3.2;
+      const camDist = 7.0;
+      const camHeight = 3.0;
       const targetCamX = player.x - Math.sin(cameraAngle.yaw) * camDist;
       const targetCamZ = player.z - Math.cos(cameraAngle.yaw) * camDist;
-      const targetCamY = player.y + camHeight + Math.sin(cameraAngle.pitch) * 3;
+      const targetCamY = player.y + camHeight + Math.sin(cameraAngle.pitch) * 2.5;
 
-      camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, 0.15);
-      camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, 0.15);
-      camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, 0.15);
+      camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, 0.18);
+      camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, 0.18);
+      camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, 0.18);
       camera.lookAt(player.x, player.y + 1.8, player.z);
     }
 
-    // 2. ボットAI (移動 & 射撃 & 建築)
+    // 2. ボットAI (移動 & バトルロイヤル交戦)
     bots.forEach(bot => {
       if (!bot.alive) return;
 
       const distToPlayer = Math.hypot(player.x - bot.x, player.z - bot.z);
 
-      // プレイヤーが射程内にいれば攻撃
-      if (distToPlayer < 45 && player.hp > 0) {
+      // スポーン保護中または遠距離ではプレイヤーを襲わない
+      if (spawnProtectionTimer <= 0 && distToPlayer < 30 && player.hp > 0) {
         bot.rotation = Math.atan2(player.x - bot.x, player.z - bot.z);
         bot.group.rotation.y = bot.rotation;
 
         if (now - bot.lastShotTime > bot.aiCooldown) {
           bot.lastShotTime = now;
-          spawnBullet(bot, 16, 0.9, 0xef4444);
-          bot.aiCooldown = Math.random() * 800 + 600;
+          // 命中率を少し散らして理不尽な瞬殺を防止
+          const spread = (Math.random() - 0.5) * 0.25;
+          spawnBullet(bot, 14, 0.85, 0xef4444, spread);
+          bot.aiCooldown = Math.random() * 1200 + 1000;
         }
 
-        // 近づく or 距離を取る
-        if (distToPlayer > 18) {
+        if (distToPlayer > 14) {
           bot.x += Math.sin(bot.rotation) * bot.speed;
           bot.z += Math.cos(bot.rotation) * bot.speed;
         }
       } else {
-        // ストームの中心へ向かって移動
+        // ボット同士で戦うか、ストームの中心へ歩く
         const toCenterX = stormCenter.x - bot.x;
         const toCenterZ = stormCenter.z - bot.z;
         const d = Math.hypot(toCenterX, toCenterZ);
-        if (d > 5) {
+        if (d > 6) {
           bot.rotation = Math.atan2(toCenterX, toCenterZ);
           bot.group.rotation.y = bot.rotation;
           bot.x += (toCenterX / d) * (bot.speed * 0.7);
           bot.z += (toCenterZ / d) * (bot.speed * 0.7);
+        }
+
+        // たまにボット同士で発砲して撃破しあう
+        if (Math.random() < 0.001) {
+          bot.hp -= 20;
+          if (bot.hp <= 0) eliminateBot(bot);
         }
       }
 
@@ -721,8 +746,9 @@
       if (!removed && b.owner === player) {
         for (const bot of bots) {
           if (!bot.alive) continue;
-          if (Math.hypot(bot.x - b.x, bot.z - b.z) < 1.2 && Math.abs(b.y - 1.2) < 1.5) {
+          if (Math.hypot(bot.x - b.x, bot.z - b.z) < 1.4 && Math.abs(b.y - 1.2) < 1.6) {
             damageEntity(bot, b.damage);
+            playSound("hit");
             createHitParticles(b.x, b.y, b.z, 0xef4444);
             removed = true;
             if (bot.hp <= 0) {
@@ -735,7 +761,11 @@
 
       // プレイヤーへの着弾 (ボットが撃った弾)
       if (!removed && b.owner !== player && player && player.hp > 0) {
-        if (Math.hypot(player.x - b.x, player.z - b.z) < 1.2 && Math.abs(b.y - 1.2) < 1.5) {
+        if (spawnProtectionTimer > 0) {
+          // スポーン保護中は弾を弾く
+          createHitParticles(b.x, b.y, b.z, 0x38bdf8);
+          removed = true;
+        } else if (Math.hypot(player.x - b.x, player.z - b.z) < 1.3 && Math.abs(b.y - 1.2) < 1.6) {
           damageEntity(player, b.damage);
           createHitParticles(b.x, b.y, b.z, 0x38bdf8);
           removed = true;
@@ -753,33 +783,23 @@
 
     // 4. ストームの縮小 & ダメージ判定
     if (stormShrinking && stormRadius > stormTargetRadius) {
-      stormRadius -= 0.05;
+      stormRadius -= 0.04;
       if (stormCylinder) {
-        stormCylinder.scale.set(stormRadius / 90, 1, stormRadius / 90);
+        stormCylinder.scale.set(stormRadius / 110, 1, stormRadius / 110);
       }
     }
 
     // ストーム圏外ダメージ (毎秒)
-    if (player && player.hp > 0) {
+    if (player && player.hp > 0 && spawnProtectionTimer <= 0) {
       const distFromCenter = Math.hypot(player.x - stormCenter.x, player.z - stormCenter.z);
       if (distFromCenter > stormRadius) {
-        if (Math.random() < 0.03) {
+        if (Math.random() < 0.02) {
           player.hp -= 2;
-          showOnScreenNotice("⚡ ストームのダメージを受けています！");
+          showOnScreenNotice("⚡ ストームのダメージ！安全地帯へ！");
           if (player.hp <= 0) eliminatePlayer();
         }
       }
     }
-
-    // ボットのストームダメージ
-    bots.forEach(bot => {
-      if (!bot.alive) return;
-      const d = Math.hypot(bot.x - stormCenter.x, bot.z - stormCenter.z);
-      if (d > stormRadius) {
-        bot.hp -= 0.1;
-        if (bot.hp <= 0) eliminateBot(bot);
-      }
-    });
 
     // 5. パーティクルの更新
     for (let i = particles.length - 1; i >= 0; i--) {
@@ -822,7 +842,6 @@
     woodCount += 50;
     showOnScreenNotice(`🎯 ${bot.name} を撃破！ (+50 木材)`);
 
-    // 最後の1人ならビクトリーロイヤル！
     if (aliveCount === 1 && player.hp > 0) {
       triggerVictoryRoyale();
     }
@@ -877,7 +896,15 @@
     if (woodEl) woodEl.textContent = woodCount;
     if (aliveEl) aliveEl.textContent = aliveCount;
     if (killsEl) killsEl.textContent = killCount;
-    if (timerEl) timerEl.textContent = `${stormTimer}秒`;
+    if (timerEl) {
+      if (spawnProtectionTimer > 0) {
+        timerEl.textContent = `🛡️ 無敵保護中: ${spawnProtectionTimer}秒`;
+        timerEl.style.color = "#38bdf8";
+      } else {
+        timerEl.textContent = `${stormTimer}秒`;
+        timerEl.style.color = "#c084fc";
+      }
+    }
   }
 
   // ゲームの開始
@@ -893,30 +920,43 @@
             <span style="color:#f8fafc;">👥 生存: <strong id="fnAlive" style="color:#38bdf8;">10</strong></span>
             <span style="color:#f8fafc;">🎯 撃破: <strong id="fnKills" style="color:#f59e0b;">0</strong></span>
           </div>
-          <div style="font-size:12px; color:#c084fc; font-weight:bold;">
-            ⚡ 嵐縮小まで: <span id="fnStormTimer">45秒</span>
+          <div style="font-size:12px; font-weight:bold;">
+            <span id="fnStormTimer" style="color:#38bdf8;">🛡️ 無敵保護中: 5秒</span>
           </div>
         </div>
 
         <!-- 画面中央クロスヘア -->
-        <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:15; pointer-events:none; font-size:18px; color:rgba(255,255,255,0.85); font-weight:bold;">
+        <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:15; pointer-events:none; font-size:22px; color:rgba(255,255,255,0.9); font-weight:bold; text-shadow:0 0 4px #000;">
           +
         </div>
 
         <!-- 画面中央通知バナー -->
-        <div id="fnNotice" style="display:none; position:absolute; top:70px; left:50%; transform:translateX(-50%); z-index:25; background:rgba(15,23,42,0.9); color:#facc15; font-size:13px; font-weight:bold; padding:6px 16px; border-radius:20px; border:1px solid #facc15; pointer-events:none; animation:fadeIn 0.2s;"></div>
+        <div id="fnNotice" style="display:none; position:absolute; top:70px; left:50%; transform:translateX(-50%); z-index:25; background:rgba(15,23,42,0.92); color:#facc15; font-size:13px; font-weight:bold; padding:6px 18px; border-radius:20px; border:1px solid #facc15; pointer-events:none; animation:fadeIn 0.2s;"></div>
 
         <!-- 3D WebGL Canvas ラッパー -->
-        <div id="fnCanvasWrap" style="width:100%; height:100%; min-height:520px;"></div>
+        <div id="fnCanvasWrap" style="width:100%; height:100%; min-height:520px; cursor:crosshair;"></div>
+
+        <!-- 左下操作ジョイスティック (スマホ・iPad対応) -->
+        <div style="position:absolute; bottom:14px; left:14px; z-index:25; display:flex; align-items:flex-end; gap:12px; pointer-events:none;">
+          <!-- バーチャルジョイスティック -->
+          <div id="fnJoystickArea" style="width:100px; height:100px; border-radius:50%; background:rgba(15,23,42,0.7); border:2px dashed #38bdf8; display:flex; align-items:center; justify-content:center; pointer-events:auto; touch-action:none; box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+            <div id="fnJoystickThumb" style="width:44px; height:44px; border-radius:50%; background:linear-gradient(135deg, #38bdf8, #0284c7); box-shadow:0 0 10px #38bdf8;"></div>
+          </div>
+
+          <!-- ジャンプボタン -->
+          <button id="fnJumpBtn" style="pointer-events:auto; background:rgba(15,23,42,0.85); color:#fff; font-weight:bold; border:2px solid #38bdf8; width:52px; height:52px; border-radius:50%; font-size:14px; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,0.3); touch-action:none;">
+            ⏫
+          </button>
+        </div>
 
         <!-- 左下ステータス (HP / シールド / 木材) -->
-        <div style="position:absolute; bottom:84px; left:12px; z-index:20; background:rgba(15,23,42,0.88); border:1px solid #334155; padding:8px 12px; border-radius:10px; min-width:150px;">
-          <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:bold; margin-bottom:4px;">
+        <div style="position:absolute; bottom:126px; left:14px; z-index:20; background:rgba(15,23,42,0.88); border:1px solid #334155; padding:6px 12px; border-radius:10px; min-width:140px;">
+          <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:bold; margin-bottom:3px;">
             <span style="color:#4ade80;">❤️ HP: <span id="fnHp">100</span></span>
             <span style="color:#38bdf8;">🛡️ シールド: <span id="fnShield">50</span></span>
           </div>
           <div style="font-size:12px; font-weight:bold; color:#f59e0b;">
-            🪵 木材: <span id="fnWood">120</span>
+            🪵 木材: <span id="fnWood">150</span>
           </div>
         </div>
 
@@ -934,21 +974,21 @@
         </div>
 
         <!-- 下部 ホットバー武器スロット (1〜4) & 攻撃ボタン -->
-        <div style="position:absolute; bottom:12px; left:12px; right:12px; z-index:20; display:flex; justify-content:space-between; align-items:center;">
+        <div style="position:absolute; bottom:12px; right:12px; z-index:20; display:flex; gap:10px; align-items:center;">
           <!-- 武器スロット -->
-          <div style="display:flex; gap:6px; background:rgba(15,23,42,0.85); padding:6px; border-radius:10px; border:1px solid #334155;">
-            <button id="fnSlot1" onclick="window.fnSelectSlot(1)" style="background:#0284c7; color:#fff; font-weight:bold; border:0; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">⛏️ ツルハシ</button>
-            <button id="fnSlot2" onclick="window.fnSelectSlot(2)" style="background:#1e293b; color:#94a3b8; font-weight:bold; border:0; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">🔫 AR</button>
-            <button id="fnSlot3" onclick="window.fnSelectSlot(3)" style="background:#1e293b; color:#94a3b8; font-weight:bold; border:0; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">💥 ポンプ</button>
-            <button id="fnSlot4" onclick="window.fnSelectSlot(4)" style="background:#1e293b; color:#94a3b8; font-weight:bold; border:0; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">🧪 シールド</button>
+          <div style="display:flex; gap:5px; background:rgba(15,23,42,0.85); padding:5px; border-radius:10px; border:1px solid #334155;">
+            <button id="fnSlot1" onclick="window.fnSelectSlot(1)" style="background:#1e293b; color:#94a3b8; font-weight:bold; border:0; padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer;">⛏️ 1</button>
+            <button id="fnSlot2" onclick="window.fnSelectSlot(2)" style="background:#0284c7; color:#fff; font-weight:bold; border:0; padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer;">🔫 AR</button>
+            <button id="fnSlot3" onclick="window.fnSelectSlot(3)" style="background:#1e293b; color:#94a3b8; font-weight:bold; border:0; padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer;">💥 ポンプ</button>
+            <button id="fnSlot4" onclick="window.fnSelectSlot(4)" style="background:#1e293b; color:#94a3b8; font-weight:bold; border:0; padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer;">🧪 薬</button>
           </div>
 
           <!-- アクションボタン (攻撃 / 建築決定) -->
           <div style="display:flex; gap:8px;">
             <button id="fnAttackBtn" style="background:linear-gradient(135deg, #ef4444, #dc2626); color:#fff; font-weight:bold; border:0; padding:12px 22px; border-radius:12px; font-size:14px; cursor:pointer; box-shadow:0 4px 14px rgba(239,68,68,0.4); touch-action:none;">
-              🔥 発射 / 採取
+              🔥 発射
             </button>
-            <button id="fnPlaceBuildBtn" style="background:linear-gradient(135deg, #f59e0b, #d97706); color:#fff; font-weight:bold; border:0; padding:12px 20px; border-radius:12px; font-size:14px; cursor:pointer; box-shadow:0 4px 14px rgba(245,158,11,0.4); touch-action:none;">
+            <button id="fnPlaceBuildBtn" style="background:linear-gradient(135deg, #f59e0b, #d97706); color:#fff; font-weight:bold; border:0; padding:12px 18px; border-radius:12px; font-size:14px; cursor:pointer; box-shadow:0 4px 14px rgba(245,158,11,0.4); touch-action:none;">
               🔨 建築
             </button>
           </div>
@@ -972,7 +1012,7 @@
     const height = wrap.clientHeight || 520;
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x38bdf8); // フォートナイト風の青空
+    scene.background = new THREE.Color(0x38bdf8);
     scene.fog = new THREE.FogExp2(0x38bdf8, 0.007);
 
     camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
@@ -983,7 +1023,6 @@
     renderer.shadowMap.enabled = true;
     wrap.appendChild(renderer.domElement);
 
-    // ライティング
     const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
     scene.add(hemiLight);
 
@@ -993,14 +1032,15 @@
     scene.add(sun);
 
     // マップ初期化
-    stormRadius = 90;
-    stormTimer = 45;
+    stormRadius = 110;
+    stormTimer = 60;
     stormShrinking = false;
     aliveCount = 10;
     killCount = 0;
-    woodCount = 120;
-    currentSlot = 1;
+    woodCount = 150;
+    currentSlot = 2; // ARが最初から選択されている
     buildType = "wall";
+    spawnProtectionTimer = 5;
     structures = [];
     bullets = [];
     particles = [];
@@ -1010,24 +1050,31 @@
     // プレイヤー作成
     player = createPlayer();
 
-    // 9人のボット作成
+    // 9人のボット作成 (プレイヤーから遠く離れた外周に配置して即死防止！)
     bots = [];
     const botNames = ["Jonesy_Bot", "Raven_99", "Peely_Fan", "DarkKnight", "Default_Pro", "Raptor", "Fishstick", "Drift_01", "Midas_Gold"];
     for (let i = 0; i < 9; i++) {
       const angle = (i / 9) * Math.PI * 2;
-      const dist = Math.random() * 50 + 20;
+      const dist = Math.random() * 30 + 55; // 距離55〜85にスポーン！
       const bPos = { x: Math.cos(angle) * dist, z: Math.sin(angle) * dist };
       bots.push(createBot(i, bPos, botNames[i]));
     }
 
-    // ストームタイマー
+    // スポーン保護カウントダウン & ストームタイマー
     if (stormInterval) clearInterval(stormInterval);
     stormInterval = setInterval(() => {
+      if (spawnProtectionTimer > 0) {
+        spawnProtectionTimer -= 1;
+        if (spawnProtectionTimer === 0 && player && player.shieldBubble) {
+          player.group.remove(player.shieldBubble);
+        }
+      }
+
       stormTimer -= 1;
       if (stormTimer <= 0) {
         stormShrinking = true;
         stormTimer = 45;
-        showOnScreenNotice("⚠️ ストームが縮小しています！安全地帯へ移動してください！");
+        showOnScreenNotice("⚠️ ストームが縮小しています！安全地帯へ！");
       }
     }, 1000);
 
@@ -1078,7 +1125,7 @@
     placeStructure(buildType);
   };
 
-  // 操作イベントバインド
+  // 操作イベントバインド (ジョイスティック + タッチ視点 + キーボード)
   function setupFortniteControls(wrap) {
     window.onkeydown = (e) => {
       keys[e.code] = true;
@@ -1095,6 +1142,60 @@
     window.onkeyup = (e) => {
       keys[e.code] = false;
     };
+
+    // タッチ ジョイスティック操作
+    const joyArea = document.getElementById("fnJoystickArea");
+    const joyThumb = document.getElementById("fnJoystickThumb");
+    if (joyArea && joyThumb) {
+      joyArea.onpointerdown = (e) => {
+        e.preventDefault();
+        joystick.active = true;
+        joystick.startX = e.clientX;
+        joystick.startY = e.clientY;
+        joystick.dx = 0;
+        joystick.dy = 0;
+        joyArea.setPointerCapture(e.pointerId);
+      };
+
+      joyArea.onpointermove = (e) => {
+        if (!joystick.active) return;
+        const diffX = e.clientX - joystick.startX;
+        const diffY = e.clientY - joystick.startY;
+        const dist = Math.hypot(diffX, diffY);
+        const maxR = 30;
+
+        if (dist > maxR) {
+          joystick.dx = diffX / dist;
+          joystick.dy = diffY / dist;
+          joyThumb.style.transform = `translate(${joystick.dx * maxR}px, ${joystick.dy * maxR}px)`;
+        } else {
+          joystick.dx = diffX / maxR;
+          joystick.dy = diffY / maxR;
+          joyThumb.style.transform = `translate(${diffX}px, ${diffY}px)`;
+        }
+      };
+
+      const resetJoy = () => {
+        joystick.active = false;
+        joystick.dx = 0;
+        joystick.dy = 0;
+        joyThumb.style.transform = "translate(0px, 0px)";
+      };
+      joyArea.onpointerup = resetJoy;
+      joyArea.onpointercancel = resetJoy;
+    }
+
+    // ジャンプボタン
+    const jmpBtn = document.getElementById("fnJumpBtn");
+    if (jmpBtn) {
+      jmpBtn.onpointerdown = (e) => {
+        e.preventDefault();
+        if (player && player.isGrounded) {
+          player.vy = 0.42;
+          player.isGrounded = false;
+        }
+      };
+    }
 
     // マウスドラッグで視点回転
     let isMouseDown = false;
@@ -1113,13 +1214,13 @@
       prevMouseX = e.clientX;
       prevMouseY = e.clientY;
 
-      cameraAngle.yaw -= dx * 0.005;
-      cameraAngle.pitch = Math.max(-0.2, Math.min(0.8, cameraAngle.pitch - dy * 0.004));
+      cameraAngle.yaw -= dx * 0.006;
+      cameraAngle.pitch = Math.max(-0.25, Math.min(0.75, cameraAngle.pitch - dy * 0.005));
     };
 
     window.onmouseup = () => { isMouseDown = false; };
 
-    // タッチによる視点回転 (右画面スワイプ)
+    // タッチによる視点回転 (画面右半分ドラッグ)
     wrap.addEventListener("touchstart", (e) => {
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
@@ -1143,7 +1244,7 @@
           lookTouch.lastY = t.clientY;
 
           cameraAngle.yaw -= dx * 0.008;
-          cameraAngle.pitch = Math.max(-0.2, Math.min(0.8, cameraAngle.pitch - dy * 0.006));
+          cameraAngle.pitch = Math.max(-0.25, Math.min(0.75, cameraAngle.pitch - dy * 0.006));
         }
       }
     }, { passive: true });

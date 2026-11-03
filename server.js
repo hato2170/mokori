@@ -589,6 +589,47 @@ app.get("/api/chats", requireLogin, async (req, res) => {
         announcement: allData.announcement || null,
         createdAt: allData.createdAt || null
       });
+
+      // Keepメモ (LINE風 自分専用プライベートメモ)
+      const keepMemoId = `keep_${myUid}`;
+      const keepRef = db.collection("chats").doc(keepMemoId);
+      let keepDoc = await keepRef.get();
+      if (!keepDoc.exists) {
+        await keepRef.set({
+          type: "keep",
+          name: "📌 Keepメモ",
+          description: "自分だけの専用メモ帳です。テキストや画像、リンクを保存できます。",
+          members: [myUid],
+          memberInfo: { [myUid]: { username: "自分", joinedAt: now } },
+          lastMessage: {
+            text: "Keepメモへようこそ！ここに入力した内容は自分だけに保存されます。",
+            type: "system",
+            senderUid: "system",
+            senderName: "Keep",
+            unsent: false,
+            createdAt: now
+          },
+          lastMessageAt: now,
+          readStatus: { [myUid]: now }
+        });
+        keepDoc = await keepRef.get();
+      }
+      const keepData = keepDoc.data();
+      chats.unshift({
+        id: keepMemoId,
+        type: "keep",
+        name: "📌 Keepメモ",
+        description: "自分だけの専用メモ帳",
+        isKeep: true,
+        members: [myUid],
+        memberInfo: keepData.memberInfo || {},
+        partnerUid: null,
+        lastMessage: keepData.lastMessage || null,
+        lastMessageAt: keepData.lastMessageAt || null,
+        unread: false,
+        announcement: null,
+        createdAt: keepData.createdAt || null
+      });
     } catch (err) {
       console.warn("全員グループ確認警告:", err.message);
     }
@@ -1445,6 +1486,318 @@ app.post("/api/chats/:chatId/leave", requireLogin, async (req, res) => {
   } catch (error) {
     console.error("グループ退会エラー:", error);
     return res.status(500).json({ error: "グループの退会に失敗しました。" });
+  }
+});
+
+
+// ====================================================
+// ⭐ LINE Unlimited 新機能 API群 (プロフィールBGM, アルバム, ノート, 投票, 日程調整, VOOM)
+// ====================================================
+
+// Apple Music (iTunes Search API) 30秒試聴・曲検索プロキシ
+app.get("/api/music/search", requireLogin, async (req, res) => {
+  const query = String(req.query.q || "").trim();
+  if (!query) return res.json({ results: [] });
+
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=jp&entity=song&limit=20`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      return res.status(response.status).json({ error: "音楽の検索に失敗しました。" });
+    }
+    const data = await response.json();
+    const songs = (data.results || []).map(item => ({
+      trackId: item.trackId,
+      trackName: item.trackName,
+      artistName: item.artistName,
+      collectionName: item.collectionName,
+      artworkUrl: item.artworkUrl100 ? item.artworkUrl100.replace("100x100bb", "300x300bb") : "",
+      previewUrl: item.previewUrl,
+      trackViewUrl: item.trackViewUrl
+    }));
+    return res.json({ results: songs });
+  } catch (err) {
+    console.error("Music search error:", err);
+    return res.status(500).json({ error: "音楽の取得に失敗しました。" });
+  }
+});
+
+// ユーザープロフィール詳細更新 (ステメ, BGM, フォント, テーマ, カバー画像)
+app.put("/api/users/profile", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const { statusMessage, bgm, font, theme, coverUrl, photoURL, username } = req.body;
+
+  try {
+    const userRef = db.collection("users").doc(myUid);
+    const updateData = {};
+    if (statusMessage !== undefined) updateData.statusMessage = String(statusMessage);
+    if (bgm !== undefined) updateData.bgm = bgm; // { trackName, artistName, previewUrl, artworkUrl }
+    if (font !== undefined) updateData.font = String(font);
+    if (theme !== undefined) updateData.theme = String(theme);
+    if (coverUrl !== undefined) updateData.coverUrl = String(coverUrl);
+    if (photoURL !== undefined) updateData.photoURL = String(photoURL);
+    if (username !== undefined) updateData.username = String(username);
+
+    updateData.updatedAt = Date.now();
+    await userRef.set(updateData, { merge: true });
+
+    return res.json({ ok: true, profile: updateData });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// アルバム一覧取得
+app.get("/api/chats/:chatId/albums", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  try {
+    const albumsRef = db.collection("chats").doc(req.params.chatId).collection("albums").orderBy("createdAt", "desc");
+    const snap = await albumsRef.get();
+    const albums = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return res.json({ albums });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// アルバム作成
+app.post("/api/chats/:chatId/albums", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const { title, photos } = req.body;
+  if (!title) return res.status(400).json({ error: "アルバム名を入力してください。" });
+
+  try {
+    const albumData = {
+      title: String(title),
+      photos: Array.isArray(photos) ? photos : [],
+      creatorUid: myUid,
+      createdAt: Date.now()
+    };
+    const docRef = await db.collection("chats").doc(req.params.chatId).collection("albums").add(albumData);
+    return res.json({ ok: true, album: { id: docRef.id, ...albumData } });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ノート一覧取得
+app.get("/api/chats/:chatId/notes", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  try {
+    const notesRef = db.collection("chats").doc(req.params.chatId).collection("notes").orderBy("createdAt", "desc");
+    const snap = await notesRef.get();
+    const notes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return res.json({ notes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ノート投稿
+app.post("/api/chats/:chatId/notes", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const { text, images } = req.body;
+  if (!text && (!images || images.length === 0)) return res.status(400).json({ error: "内容を入力してください。" });
+
+  try {
+    const userDoc = await db.collection("users").doc(myUid).get();
+    const authorName = userDoc.exists ? userDoc.data().username : "ユーザー";
+
+    const noteData = {
+      authorUid: myUid,
+      authorName,
+      text: String(text || ""),
+      images: Array.isArray(images) ? images : [],
+      likes: [],
+      comments: [],
+      createdAt: Date.now()
+    };
+    const docRef = await db.collection("chats").doc(req.params.chatId).collection("notes").add(noteData);
+    return res.json({ ok: true, note: { id: docRef.id, ...noteData } });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ノート いいねトグル
+app.post("/api/chats/:chatId/notes/:noteId/like", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  try {
+    const noteRef = db.collection("chats").doc(req.params.chatId).collection("notes").doc(req.params.noteId);
+    const snap = await noteRef.get();
+    if (!snap.exists) return res.status(404).json({ error: "ノートが見つかりません。" });
+
+    const data = snap.data();
+    let likes = Array.isArray(data.likes) ? [...data.likes] : [];
+    if (likes.includes(myUid)) {
+      likes = likes.filter(u => u !== myUid);
+    } else {
+      likes.push(myUid);
+    }
+    await noteRef.update({ likes });
+    return res.json({ ok: true, likes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 投票一覧取得 & 作成 & 投票
+app.get("/api/chats/:chatId/polls", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  try {
+    const snap = await db.collection("chats").doc(req.params.chatId).collection("polls").orderBy("createdAt", "desc").get();
+    const polls = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return res.json({ polls });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/chats/:chatId/polls", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const { title, options } = req.body;
+  if (!title || !Array.isArray(options) || options.length < 2) {
+    return res.status(400).json({ error: "質問と2つ以上の選択肢を入力してください。" });
+  }
+
+  try {
+    const pollData = {
+      title: String(title),
+      options: options.map(opt => ({ text: String(opt), votes: [] })),
+      creatorUid: myUid,
+      closed: false,
+      createdAt: Date.now()
+    };
+    const docRef = await db.collection("chats").doc(req.params.chatId).collection("polls").add(pollData);
+    return res.json({ ok: true, poll: { id: docRef.id, ...pollData } });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/chats/:chatId/polls/:pollId/vote", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const { optionIdx } = req.body;
+
+  try {
+    const pollRef = db.collection("chats").doc(req.params.chatId).collection("polls").doc(req.params.pollId);
+    const snap = await pollRef.get();
+    if (!snap.exists) return res.status(404).json({ error: "投票が見つかりません。" });
+
+    const data = snap.data();
+    const options = (data.options || []).map((opt, idx) => {
+      let votes = (opt.votes || []).filter(u => u !== myUid);
+      if (idx === optionIdx) votes.push(myUid);
+      return { ...opt, votes };
+    });
+
+    await pollRef.update({ options });
+    return res.json({ ok: true, options });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// イベント・日程調整
+app.get("/api/chats/:chatId/events", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  try {
+    const snap = await db.collection("chats").doc(req.params.chatId).collection("events").orderBy("createdAt", "desc").get();
+    const events = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return res.json({ events });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/chats/:chatId/events", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const { title, date, location } = req.body;
+  if (!title) return res.status(400).json({ error: "イベント名を入力してください。" });
+
+  try {
+    const eventData = {
+      title: String(title),
+      date: String(date || ""),
+      location: String(location || ""),
+      attendees: { [myUid]: "join" },
+      creatorUid: myUid,
+      createdAt: Date.now()
+    };
+    const docRef = await db.collection("chats").doc(req.params.chatId).collection("events").add(eventData);
+    return res.json({ ok: true, event: { id: docRef.id, ...eventData } });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// VOOM (タイムライン) 投稿一覧 & 新規投稿
+app.get("/api/voom/posts", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  try {
+    const snap = await db.collection("voom_posts").orderBy("createdAt", "desc").limit(30).get();
+    const posts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return res.json({ posts });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/voom/posts", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const { text, imageUrl } = req.body;
+  if (!text && !imageUrl) return res.status(400).json({ error: "本文または画像を入力してください。" });
+
+  try {
+    const userDoc = await db.collection("users").doc(myUid).get();
+    const userData = userDoc.exists ? userDoc.data() : {};
+    const authorName = userData.username || "ユーザー";
+    const authorAvatar = userData.photoURL || "";
+
+    const postData = {
+      authorUid: myUid,
+      authorName,
+      authorAvatar,
+      text: String(text || ""),
+      imageUrl: imageUrl ? String(imageUrl) : "",
+      likes: [],
+      comments: [],
+      createdAt: Date.now()
+    };
+    const docRef = await db.collection("voom_posts").add(postData);
+    return res.json({ ok: true, post: { id: docRef.id, ...postData } });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/voom/posts/:postId/like", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  try {
+    const postRef = db.collection("voom_posts").doc(req.params.postId);
+    const snap = await postRef.get();
+    if (!snap.exists) return res.status(404).json({ error: "投稿が見つかりません。" });
+
+    const data = snap.data();
+    let likes = Array.isArray(data.likes) ? [...data.likes] : [];
+    if (likes.includes(myUid)) {
+      likes = likes.filter(u => u !== myUid);
+    } else {
+      likes.push(myUid);
+    }
+    await postRef.update({ likes });
+    return res.json({ ok: true, likes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
