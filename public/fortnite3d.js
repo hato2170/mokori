@@ -1057,7 +1057,9 @@
           font-size: 11px;
           cursor: pointer;
           white-space: nowrap;
-          touch-action: manipulation;
+          touch-action: none !important;
+          user-select: none;
+          -webkit-user-select: none;
         }
         .fn-ctrl-right {
           position: absolute;
@@ -1084,7 +1086,9 @@
           border-radius: 8px;
           font-size: 11px;
           cursor: pointer;
-          touch-action: manipulation;
+          touch-action: none !important;
+          user-select: none;
+          -webkit-user-select: none;
         }
         .fn-action-buttons {
           display: flex;
@@ -1396,12 +1400,14 @@
       if (t === type) {
         btn.style.background = "#b45309";
         btn.style.borderColor = "#f59e0b";
+        btn.style.color = "#fff";
       } else {
         btn.style.background = "#1e293b";
         btn.style.borderColor = "#475569";
+        btn.style.color = "#cbd5e1";
       }
     });
-    placeStructure(buildType);
+    // 建築タイプの選択のみを行い、即時配置はしない（🔨建築ボタンで配置）
   };
 
   // 操作イベントバインド (ジョイスティック + タッチ視点 + キーボード)
@@ -1422,141 +1428,151 @@
       keys[e.code] = false;
     };
 
-    // タッチ ジョイスティック操作
+    // iOS Safariズーム完全防止 (ピンチ・ダブルタップ・ジェスチャーの抑制)
+    wrap.addEventListener("gesturestart", (e) => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
+    wrap.addEventListener("gesturechange", (e) => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
+    wrap.addEventListener("gestureend", (e) => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
+
+    // フローティング仮想ジョイスティック (左画面どこを触っても即座に追従)
     const joyArea = document.getElementById("fnJoystickArea");
     const joyThumb = document.getElementById("fnJoystickThumb");
-    if (joyArea && joyThumb) {
-      joyArea.onpointerdown = (e) => {
-        e.preventDefault();
-        joystick.active = true;
-        joystick.startX = e.clientX;
-        joystick.startY = e.clientY;
-        joystick.dx = 0;
-        joystick.dy = 0;
-        joyArea.setPointerCapture(e.pointerId);
-      };
 
-      joyArea.onpointermove = (e) => {
-        if (!joystick.active) return;
-        const diffX = e.clientX - joystick.startX;
-        const diffY = e.clientY - joystick.startY;
-        const dist = Math.hypot(diffX, diffY);
-        const maxR = 30;
-
-        if (dist > maxR) {
-          joystick.dx = diffX / dist;
-          joystick.dy = diffY / dist;
-          joyThumb.style.transform = `translate(${joystick.dx * maxR}px, ${joystick.dy * maxR}px)`;
-        } else {
-          joystick.dx = diffX / maxR;
-          joystick.dy = diffY / maxR;
-          joyThumb.style.transform = `translate(${diffX}px, ${diffY}px)`;
-        }
-      };
-
-      const resetJoy = () => {
-        joystick.active = false;
-        joystick.dx = 0;
-        joystick.dy = 0;
-        joyThumb.style.transform = "translate(0px, 0px)";
-      };
-      joyArea.onpointerup = resetJoy;
-      joyArea.onpointercancel = resetJoy;
+    // ボタン類のポインターイベント個別登録 (ダブルタップズーム防止・即応性向上)
+    const bindBtnPointer = (id, fn) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.onpointerdown = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          fn();
+        };
+      }
+    };
+    for (let s = 1; s <= 4; s++) {
+      bindBtnPointer("fnSlot" + s, () => window.fnSelectSlot(s));
     }
+    bindBtnPointer("fnBuildWallBtn", () => window.fnSetBuild("wall"));
+    bindBtnPointer("fnBuildRampBtn", () => window.fnSetBuild("ramp"));
+    bindBtnPointer("fnBuildFloorBtn", () => window.fnSetBuild("floor"));
+    bindBtnPointer("fnJumpBtn", () => {
+      if (player && player.isGrounded) {
+        player.vy = 0.42;
+        player.isGrounded = false;
+      }
+    });
+    bindBtnPointer("fnAttackBtn", () => attackCurrentWeapon());
+    bindBtnPointer("fnPlaceBuildBtn", () => placeStructure(buildType));
 
-    // ジャンプボタン
-    const jmpBtn = document.getElementById("fnJumpBtn");
-    if (jmpBtn) {
-      jmpBtn.onpointerdown = (e) => {
-        e.preventDefault();
-        if (player && player.isGrounded) {
-          player.vy = 0.42;
-          player.isGrounded = false;
-        }
-      };
-    }
-
-    // マウスドラッグで視点回転
+    // マウスドラッグで視点回転 (PC環境)
     let isMouseDown = false;
     let prevMouseX = 0, prevMouseY = 0;
-
     wrap.onmousedown = (e) => {
+      if (e.target && e.target.closest && (e.target.closest("button") || e.target.closest(".fn-slot-btn") || e.target.closest(".fn-build-btn"))) return;
       isMouseDown = true;
       prevMouseX = e.clientX;
       prevMouseY = e.clientY;
     };
-
     window.onmousemove = (e) => {
       if (!isMouseDown) return;
       const dx = e.clientX - prevMouseX;
       const dy = e.clientY - prevMouseY;
       prevMouseX = e.clientX;
       prevMouseY = e.clientY;
-
       cameraAngle.yaw -= dx * 0.006;
-      cameraAngle.pitch = Math.max(-0.25, Math.min(0.75, cameraAngle.pitch - dy * 0.005));
+      cameraAngle.pitch = Math.max(-0.35, Math.min(0.75, cameraAngle.pitch - dy * 0.005));
     };
-
     window.onmouseup = () => { isMouseDown = false; };
 
-    // タッチによる視点回転 (画面右半分ドラッグ)
+    // マルチタッチ操作 (左側: フローティングジョイスティック / 右側: 視点エイム)
     wrap.addEventListener("touchstart", (e) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
-        if (t.clientX > window.innerWidth / 3) {
-          lookTouch.active = true;
-          lookTouch.id = t.identifier;
-          lookTouch.lastX = t.clientX;
-          lookTouch.lastY = t.clientY;
+        const targetEl = document.elementFromPoint(t.clientX, t.clientY);
+        const isButton = targetEl && targetEl.closest && (targetEl.closest("button") || targetEl.closest(".fn-slot-btn") || targetEl.closest(".fn-build-btn"));
+        if (isButton) continue;
+
+        const isLeftZone = t.clientX <= window.innerWidth * 0.46;
+        if (isLeftZone) {
+          if (!joystick.active) {
+            e.preventDefault();
+            joystick.active = true;
+            joystick.touchId = t.identifier;
+            joystick.startX = t.clientX;
+            joystick.startY = t.clientY;
+            joystick.dx = 0;
+            joystick.dy = 0;
+            if (joyArea) {
+              const leftPx = Math.max(12, Math.min(window.innerWidth * 0.38, t.clientX - 50));
+              const bottomPx = Math.max(12, Math.min(window.innerHeight * 0.45, window.innerHeight - t.clientY - 50));
+              joyArea.style.left = leftPx + "px";
+              joyArea.style.bottom = bottomPx + "px";
+            }
+          }
+        } else {
+          if (!lookTouch.active) {
+            e.preventDefault();
+            lookTouch.active = true;
+            lookTouch.id = t.identifier;
+            lookTouch.lastX = t.clientX;
+            lookTouch.lastY = t.clientY;
+          }
         }
       }
-    }, { passive: true });
+    }, { passive: false });
 
     wrap.addEventListener("touchmove", (e) => {
-      if (!lookTouch.active) return;
+      e.preventDefault();
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
-        if (t.identifier === lookTouch.id) {
+        if (joystick.active && t.identifier === joystick.touchId) {
+          const diffX = t.clientX - joystick.startX;
+          const diffY = t.clientY - joystick.startY;
+          const dist = Math.hypot(diffX, diffY);
+          const maxR = 36;
+          if (dist > maxR) {
+            joystick.dx = diffX / dist;
+            joystick.dy = diffY / dist;
+            if (joyThumb) joyThumb.style.transform = `translate(${joystick.dx * maxR}px, ${joystick.dy * maxR}px)`;
+          } else {
+            joystick.dx = diffX / maxR;
+            joystick.dy = diffY / maxR;
+            if (joyThumb) joyThumb.style.transform = `translate(${diffX}px, ${diffY}px)`;
+          }
+        } else if (lookTouch.active && t.identifier === lookTouch.id) {
           const dx = t.clientX - lookTouch.lastX;
           const dy = t.clientY - lookTouch.lastY;
           lookTouch.lastX = t.clientX;
           lookTouch.lastY = t.clientY;
-
-          cameraAngle.yaw -= dx * 0.008;
-          cameraAngle.pitch = Math.max(-0.25, Math.min(0.75, cameraAngle.pitch - dy * 0.006));
+          cameraAngle.yaw -= dx * 0.007;
+          cameraAngle.pitch = Math.max(-0.35, Math.min(0.75, cameraAngle.pitch - dy * 0.006));
         }
       }
-    }, { passive: true });
+    }, { passive: false });
 
-    const endLook = (e) => {
+    const endMultiTouch = (e) => {
       for (let i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].identifier === lookTouch.id) {
+        const t = e.changedTouches[i];
+        if (joystick.active && t.identifier === joystick.touchId) {
+          joystick.active = false;
+          joystick.dx = 0;
+          joystick.dy = 0;
+          if (joyThumb) joyThumb.style.transform = "translate(0px, 0px)";
+          if (joyArea) {
+            joyArea.style.left = "20px";
+            joyArea.style.bottom = "20px";
+          }
+        }
+        if (lookTouch.active && t.identifier === lookTouch.id) {
           lookTouch.active = false;
         }
       }
     };
-    wrap.addEventListener("touchend", endLook, { passive: true });
-    wrap.addEventListener("touchcancel", endLook, { passive: true });
-
-    // 攻撃ボタン
-    const atkBtn = document.getElementById("fnAttackBtn");
-    if (atkBtn) {
-      atkBtn.onpointerdown = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        attackCurrentWeapon();
-      };
-    }
-
-    // 建築配置ボタン
-    const buildBtn = document.getElementById("fnPlaceBuildBtn");
-    if (buildBtn) {
-      buildBtn.onpointerdown = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        placeStructure(buildType);
-      };
-    }
+    wrap.addEventListener("touchend", endMultiTouch, { passive: false });
+    wrap.addEventListener("touchcancel", endMultiTouch, { passive: false });
   }
 
   // クリーンアップ

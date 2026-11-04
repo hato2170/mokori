@@ -1914,6 +1914,50 @@ app.post("/api/voom/posts/:postId/like", requireLogin, async (req, res) => {
   }
 });
 
+
+// ==========================================
+// AI Worker Proxy (学校iPad等のi-フィルターによるworkers.devドメイン遮断完全回避)
+// ==========================================
+app.use('/api/ai', async (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, Origin, User-Agent, X-Requested-With');
+  res.header('Access-Control-Max-Age', '86400');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
+  const targetUrl = 'https://myyajuu-ai-worker.harumei-260329.workers.dev' + req.url;
+  try {
+    const fetchHeaders = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (k.toLowerCase() !== 'host') fetchHeaders[k] = v;
+    }
+    const fetchOpts = {
+      method: req.method,
+      headers: fetchHeaders
+    };
+    if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+      fetchOpts.body = typeof req.body === 'object' ? JSON.stringify(req.body) : req.body;
+      if (!fetchHeaders['content-type']) fetchHeaders['content-type'] = 'application/json';
+    }
+
+    const workerResp = await fetch(targetUrl, fetchOpts);
+    res.status(workerResp.status);
+    for (const [hk, hv] of workerResp.headers.entries()) {
+      if (!['access-control-allow-origin', 'content-encoding', 'content-length'].includes(hk.toLowerCase())) {
+        res.setHeader(hk, hv);
+      }
+    }
+    const data = await workerResp.arrayBuffer();
+    return res.send(Buffer.from(data));
+  } catch (err) {
+    console.error('AI Proxy Error:', err);
+    return res.status(502).json({ error: 'proxy_error', message: err.message });
+  }
+});
+
 const port = process.env.PORT || 3000;
 
 app.listen(port, () => {
