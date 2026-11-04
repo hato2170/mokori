@@ -1662,15 +1662,20 @@
     });
   }
 
-  // トーク一覧の読み込み
+  // トーク一覧の読み込み (無駄なDOM破棄を防ぐ差分更新シグネチャ)
+  let lastRenderedChatsSig = "";
   async function loadChats(renderLoading = true) {
-    const container = document.getElementById("chatListContainer");
     try {
       const res = await api("/api/chats");
       allChats = res.chats || [];
       window.allChats = allChats;
-      renderChatList();
-      updateTotalUnread();
+      const searchVal = document.getElementById("searchInput") ? document.getElementById("searchInput").value : "";
+      const currentSig = allChats.map(c => c.id + "_" + (c.lastMessage ? (c.lastMessage.id || c.lastMessage.text) : "") + "_" + (c.unread ? "1" : "0") + "_" + (c.id === activeChatId ? "act" : "")).join("|") + "_" + searchVal;
+      if (currentSig !== lastRenderedChatsSig) {
+        lastRenderedChatsSig = currentSig;
+        renderChatList();
+        updateTotalUnread();
+      }
     } catch (err) {
       console.warn("Chats load failed:", err.message);
     }
@@ -1885,15 +1890,23 @@
     }
   }
 
-  // メッセージの読み込み & 描画
+  // メッセージの読み込み & 描画 (DOM破棄抑制)
+  let lastRenderedMessagesSig = "";
   async function loadMessages(forceScrollBottom = false) {
     if (!activeChatId) return;
     try {
       const res = await api(`/api/chats/${activeChatId}/messages`);
+      const msgs = res.messages || [];
+      const currentSig = activeChatId + "_" + msgs.map(m => m.id + "_" + (m.unsent ? "1" : "0") + "_" + (m.reactions ? JSON.stringify(m.reactions) : "")).join("|");
+      if (currentSig === lastRenderedMessagesSig && !forceScrollBottom) {
+        return;
+      }
+      lastRenderedMessagesSig = currentSig;
+
       const container = document.getElementById("messagesContainer");
       const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 60;
 
-      renderMessages(res.messages || []);
+      renderMessages(msgs);
 
       if (forceScrollBottom || wasAtBottom) {
         requestAnimationFrame(() => {
