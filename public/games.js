@@ -1372,9 +1372,23 @@
   // ==================================================
   // 5. 📄 paper.io（2D陣取りバトル）
   // ==================================================
+  window.switchPaperMode = function(mode) {
+    const embed = document.getElementById("gameEmbedArea");
+    if (!embed) return;
+    if (mode === "webgl") {
+      renderPaperWebglGame(embed);
+    } else {
+      renderPaperGame(embed);
+    }
+  };
+
   function renderPaperGame(container) {
     container.innerHTML = `
       <div style="padding:12px; max-width:400px; margin:0 auto; text-align:center;">
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <button id="pm2d" onclick="window.switchPaperMode('2d')" style="flex:1; background:#ec4899; color:#fff; border:0; padding:6px; border-radius:8px; font-weight:bold; font-size:12px; cursor:pointer;">👑 完全内蔵2D版 (ブロック回避)</button>
+          <button id="pmWebgl" onclick="window.switchPaperMode('webgl')" style="flex:1; background:#1e293b; color:#94a3b8; border:1px solid #475569; padding:6px; border-radius:8px; font-weight:bold; font-size:12px; cursor:pointer;">🌐 WebGLミラー版</button>
+        </div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
           <span style="font-size:13px; color:#ec4899; font-weight:bold;">📄 paper.io (2D陣取り)</span>
           <span style="font-size:12px; color:#94a3b8;">領地率: <strong id="paperScore" style="color:#ec4899;">8.4%</strong></span>
@@ -1477,7 +1491,37 @@
       if (py > 340) py = 340;
 
       trail.push({ x: px, y: py });
-      if (trail.length > 120) trail.shift();
+      if (trail.length > 200) trail.shift();
+
+      // 領地帰還 & 領土拡張判定
+      const inTerritory = territory.some(t => Math.hypot(t.x - px, t.y - py) < 12);
+      if (inTerritory && trail.length > 6) {
+        trail.forEach(t => {
+          const gx = Math.round(t.x / 10) * 10;
+          const gy = Math.round(t.y / 10) * 10;
+          if (!territory.some(existing => existing.x === gx && existing.y === gy)) {
+            territory.push({ x: gx, y: gy });
+          }
+        });
+        trail = [];
+        playTone(520, "sine", 0.08);
+        const scoreEl = document.getElementById("paperScore");
+        if (scoreEl) {
+          const pct = Math.min(100, (territory.length / (34 * 34) * 100)).toFixed(1);
+          scoreEl.textContent = pct + "%";
+        }
+      }
+
+      // 自分の軌跡への衝突判定
+      for (let i = 0; i < trail.length - 8; i++) {
+        if (Math.hypot(trail[i].x - px, trail[i].y - py) < 6) {
+          playTone(200, "sawtooth", 0.15);
+          px = 180; py = 180;
+          dir = { x: 2, y: 0 };
+          trail = [];
+          break;
+        }
+      }
 
       ctx.strokeStyle = "#ec4899";
       ctx.lineWidth = 4;

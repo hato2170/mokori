@@ -478,6 +478,73 @@
       align-items: flex-end;
     }
 
+    
+    /* 送信者表示 (誰が送ったか常時表示 & 友達追加リンク) */
+    .msg-sender-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+      padding: 2px 4px;
+      border-radius: 6px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .msg-sender-wrap:hover {
+      background: rgba(0, 0, 0, 0.05);
+      opacity: 0.85;
+    }
+    .msg-sender-avatar {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #0284c7;
+      color: #fff;
+      font-size: 11px;
+      font-weight: bold;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    .msg-sender-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .msg-sender-add-hint {
+      font-size: 10px;
+      color: #0284c7;
+      background: #e0f2fe;
+      border: 1px solid #bae6fd;
+      border-radius: 10px;
+      padding: 1px 6px;
+      font-weight: 500;
+      transition: background 0.15s, color 0.15s;
+    }
+    .msg-sender-wrap:hover .msg-sender-add-hint {
+      background: #0284c7;
+      color: #fff;
+    }
+    .avatar-preset-btn {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: #fff;
+      font-size: 20px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.1s, border-color 0.15s;
+    }
+    .avatar-preset-btn:hover {
+      transform: scale(1.1);
+      border-color: #06c755;
+    }
+
     .msg-sender {
       font-size: 11px;
       color: var(--text-muted);
@@ -834,6 +901,7 @@
         <span>mokori</span>
       </div>
       <div class="header-actions">
+        <button class="icon-btn" id="openProfileBtn" title="プロフィール設定" onclick="window.openProfileModal()" style="font-size:18px;">👤</button>
         <button class="icon-btn" id="openThemeFontBtn" title="着せ替え・フォント・BGM設定" onclick="window.openThemeFontModal()" style="font-size:18px;">🎨</button>
         <button class="icon-btn" id="openGameHubBtn" title="ゲーム広場" onclick="window.openGameHub()" style="font-size:18px;">🎮</button>
         <button class="icon-btn" id="newChatBtn" title="新しいトーク">＋</button>
@@ -1369,6 +1437,75 @@
   </div>
 </div>
 
+
+<!-- 送信者プロフィール確認 & 友達追加モーダル -->
+<div id="userProfileModal" class="modal-backdrop hidden">
+  <div class="modal-card" style="max-width:380px; text-align:center;">
+    <div class="modal-header">
+      <span>👤 ユーザー情報</span>
+      <button class="close-modal-btn" onclick="window.closeUserProfileModal()">✕</button>
+    </div>
+    <div class="modal-body" style="padding:24px 16px;">
+      <div id="upmAvatar" style="width:72px; height:72px; border-radius:50%; background:#0284c7; color:#fff; font-size:32px; font-weight:bold; display:flex; align-items:center; justify-content:center; margin:0 auto 12px; box-shadow:0 4px 12px rgba(2,132,199,0.25);">
+        <span id="upmAvatarInitial">🐐</span>
+      </div>
+      <h3 id="upmUsername" style="margin:0 0 4px; font-size:18px; color:var(--text);">ユーザー名</h3>
+      <p id="upmStatus" style="margin:0 0 20px; font-size:13px; color:var(--text-muted);">ステータスメッセージ</p>
+
+      <div id="upmActionArea" style="display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 自分のプロフィール設定モーダル -->
+<div id="profileModal" class="modal-backdrop hidden">
+  <div class="modal-card" style="max-width:440px;">
+    <div class="modal-header">
+      <span>👤 プロフィール設定</span>
+      <button class="close-modal-btn" onclick="window.closeProfileModal()">✕</button>
+    </div>
+    <div class="modal-body" style="padding:20px 16px;">
+      <div style="text-align:center; margin-bottom:16px;">
+        <div id="myProfileAvatarPreview" style="width:68px; height:68px; border-radius:50%; background:#06c755; color:#fff; font-size:30px; font-weight:bold; display:flex; align-items:center; justify-content:center; margin:0 auto 8px; box-shadow:0 4px 10px rgba(6,199,85,0.2);">
+          🐐
+        </div>
+        <div style="display:flex; justify-content:center; gap:6px; flex-wrap:wrap; margin-top:6px;">
+          <button type="button" class="avatar-preset-btn" onclick="window.setAvatarPreset('🐐')">🐐</button>
+          <button type="button" class="avatar-preset-btn" onclick="window.setAvatarPreset('🦁')">🦁</button>
+          <button type="button" class="avatar-preset-btn" onclick="window.setAvatarPreset('🐱')">🐱</button>
+          <button type="button" class="avatar-preset-btn" onclick="window.setAvatarPreset('🐶')">🐶</button>
+          <button type="button" class="avatar-preset-btn" onclick="window.setAvatarPreset('🐼')">🐼</button>
+          <button type="button" class="avatar-preset-btn" onclick="window.setAvatarPreset('🎮')">🎮</button>
+          <button type="button" class="avatar-preset-btn" onclick="window.setAvatarPreset('⚡')">⚡</button>
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="display:block; font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:4px;">ユーザー名（ログイン・検索・表示用）</label>
+        <input type="text" id="myProfileUsernameInput" placeholder="2〜20文字 (英数字, _, -)" style="width:100%; height:40px; border:1px solid var(--border); border-radius:8px; padding:0 12px; font-size:14px; box-sizing:border-box;">
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <label style="display:block; font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:4px;">ステータスメッセージ（一言）</label>
+        <input type="text" id="myProfileStatusInput" placeholder="ステータスメッセージを入力…" maxlength="100" style="width:100%; height:40px; border:1px solid var(--border); border-radius:8px; padding:0 12px; font-size:14px; box-sizing:border-box;">
+      </div>
+
+      <div style="display:flex; gap:8px; margin-bottom:20px;">
+        <button type="button" onclick="window.openMusicSearchModal()" style="flex:1; background:#f1f5f9; border:1px solid #cbd5e1; color:#1e293b; padding:9px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;">
+          🎵 BGM検索・変更
+        </button>
+        <button type="button" onclick="window.openThemeFontModal()" style="flex:1; background:#f1f5f9; border:1px solid #cbd5e1; color:#1e293b; padding:9px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;">
+          🎨 テーマ・フォント
+        </button>
+      </div>
+
+      <button type="button" id="saveProfileBtn" onclick="window.saveMyProfile()" style="width:100%; height:44px; background:#06c755; color:#fff; border:0; border-radius:10px; font-size:15px; font-weight:bold; cursor:pointer;">
+        💾 プロフィールを保存
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- 着せ替え・フォント・BGM設定モーダル -->
 <div id="themeFontModal" class="modal-backdrop hidden">
   <div class="modal-card" style="max-width:460px;">
@@ -1806,12 +1943,36 @@
       row.className = "msg-row " + (mine ? "mine" : "other");
       row.dataset.msgId = msg.id;
 
-      // 送信者名 (相手側かつグループ時)
-      if (!mine && activeChatData && activeChatData.type === "group") {
-        const sender = document.createElement("div");
-        sender.className = "msg-sender";
-        sender.textContent = msg.senderName || "ユーザー";
-        row.appendChild(sender);
+      // 送信者名とアイコン (相手側のメッセージは全員グループ・グループ・個別すべて常時表示 & タップで友達追加)
+      if (!mine) {
+        const sName = msg.senderName || "ユーザー";
+        const sUid = msg.senderUid || "";
+        const sInitial = sName.charAt(0) || "🐐";
+
+        const senderWrap = document.createElement("div");
+        senderWrap.className = "msg-sender-wrap";
+        senderWrap.title = `${sName} のプロフィール / 友達追加`;
+        senderWrap.addEventListener("click", (e) => {
+          e.stopPropagation();
+          window.openUserProfileModal(sUid, sName);
+        });
+
+        const avatarEl = document.createElement("div");
+        avatarEl.className = "msg-sender-avatar";
+        avatarEl.textContent = sInitial;
+
+        const nameEl = document.createElement("span");
+        nameEl.className = "msg-sender-name";
+        nameEl.textContent = sName;
+
+        const hintEl = document.createElement("span");
+        hintEl.className = "msg-sender-add-hint";
+        hintEl.textContent = "➕友達追加";
+
+        senderWrap.appendChild(avatarEl);
+        senderWrap.appendChild(nameEl);
+        senderWrap.appendChild(hintEl);
+        row.appendChild(senderWrap);
       }
 
       const bodyWrap = document.createElement("div");

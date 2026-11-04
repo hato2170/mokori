@@ -51,63 +51,63 @@ try {
     db = admin.firestore();
     auth = admin.auth();
     console.log("Firebase connected");
-
-    // テストメッセージの完全物理消去クリーンアップ
-    (async () => {
-      try {
-        const chatRef = db.collection("chats").doc("all_members");
-        await chatRef.collection("messages").doc("QgF1ndcIGF77ux4OuMzI").delete().catch(() => {});
-        const snap = await chatRef.collection("messages").get();
-        for (const doc of snap.docs) {
-          const d = doc.data();
-          if (
-            (d.text && (d.text.includes("テスト成功") || d.text.includes("もこりバージョンUnlimited テスト成功"))) ||
-            (d.senderName && d.senderName.includes("haruto_unlimited"))
-          ) {
-            await doc.ref.delete().catch(() => {});
-          }
-        }
-        // lastMessageが削除対象だった場合の復旧
-        const cDoc = await chatRef.get();
-        if (cDoc.exists) {
-          const lastMsg = cDoc.data().lastMessage;
-          if (
-            lastMsg &&
-            (lastMsg.id === "QgF1ndcIGF77ux4OuMzI" ||
-              (lastMsg.text && lastMsg.text.includes("テスト成功")) ||
-              (lastMsg.senderName && lastMsg.senderName.includes("haruto_unlimited")))
-          ) {
-            const prevSnap = await chatRef
-              .collection("messages")
-              .where("unsent", "==", false)
-              .orderBy("createdAt", "desc")
-              .limit(1)
-              .get();
-            if (!prevSnap.empty) {
-              const p = prevSnap.docs[0].data();
-              await chatRef.update({
-                lastMessage: {
-                  id: prevSnap.docs[0].id,
-                  text: p.text || "",
-                  senderName: p.senderName || "",
-                  createdAt: p.createdAt || null
-                }
-              });
-            } else {
-              await chatRef.update({ lastMessage: null });
-            }
-          }
-        }
-        console.log("Cleaned up test messages from all_members successfully");
-      } catch (e) {
-        console.warn("Cleanup test messages notice:", e.message);
-      }
-    })();
   } else {
     console.warn("Firebase is not configured yet.");
   }
 } catch (error) {
   console.error("Firebase setup error:", error.message);
+}
+
+// ----------------------------------------------------
+// セキュリティ & 権限ヘルパー
+// ----------------------------------------------------
+const authRateLimits = new Map();
+function checkAuthRateLimit(req, res, maxRequests = 20, windowMs = 60000) {
+  const ip = req.ip || req.headers["x-forwarded-for"] || "unknown_ip";
+  const now = Date.now();
+  const record = authRateLimits.get(ip) || { count: 0, resetAt: now + windowMs };
+  if (now > record.resetAt) {
+    record.count = 1;
+    record.resetAt = now + windowMs;
+  } else {
+    record.count++;
+  }
+  authRateLimits.set(ip, record);
+  if (record.count > maxRequests) {
+    res.status(429).json({ error: "リクエストが多すぎます。少し時間をおいて再度お試しください。" });
+    return false;
+  }
+  return true;
+}
+
+async function isUserAdmin(uid, userObj) {
+  if (!uid) return false;
+  if (userObj && (userObj.admin === true || userObj.role === "admin")) return true;
+  if (userObj && userObj.username === "hato2170") return true;
+  if (db) {
+    try {
+      const uDoc = await db.collection("users").doc(uid).get();
+      if (uDoc.exists) {
+        const d = uDoc.data();
+        if (d.role === "admin" || d.isAdmin === true) return true;
+      }
+    } catch (_) {}
+  }
+  return false;
+}
+
+async function checkChatAccess(chatId, uid) {
+  if (!chatId || !uid) return false;
+  if (chatId === "all_members") return true;
+  if (!db) return false;
+  try {
+    const chatDoc = await db.collection("chats").doc(chatId).get();
+    if (!chatDoc.exists) return false;
+    const data = chatDoc.data();
+    return Array.isArray(data.members) && data.members.includes(uid);
+  } catch (e) {
+    return false;
+  }
 }
 
 // ----------------------------------------------------
@@ -125,6 +125,7 @@ app.get("/api/health", (req, res) => {
 // 認証: 登録・ログイン
 // ----------------------------------------------------
 app.post("/api/register", async (req, res) => {
+  if (!checkAuthRateLimit(req, res)) return;
   if (!db || !auth) {
     return res.status(503).json({
       error: "Firebaseの設定がまだ完了していません。"
@@ -195,6 +196,7 @@ app.post("/api/register", async (req, res) => {
 });
 
 app.post("/api/login", async (req, res) => {
+  if (!checkAuthRateLimit(req, res)) return;
   if (!db || !auth) {
     return res.status(503).json({
       error: "Firebaseの設定がまだ完了していません。"
@@ -308,27 +310,32 @@ app.get("/api/users/search", requireLogin, async (req, res) => {
 
 app.post("/api/friends/request", requireLogin, async (req, res) => {
   try {
-    const username = String(req.body.username || "").trim();
-
-    if (!username || username.length > 20) {
-      return res.status(400).json({
-        error: "申請する相手のユーザー名を入力してください。"
-      });
-    }
-
-    const targetDoc = await db
-      .collection("usernames")
-      .doc(username.toLowerCase())
-      .get();
-
-    if (!targetDoc.exists) {
-      return res.status(404).json({
-        error: "そのユーザーは見つかりませんでした。"
-      });
-    }
-
-    const targetUid = targetDoc.data().uid;
     const myUid = req.user.uid;
+    let targetUid = req.body.targetUid ? String(req.body.targetUid).trim() : null;
+    let username = req.body.username ? String(req.body.username).trim() : "";
+
+    if (!targetUid && !username) {
+      return res.status(400).json({
+        error: "申請する相手のユーザー名またはIDを指定してください。"
+      });
+    }
+
+    if (targetUid) {
+      const targetUserDoc = await db.collection("users").doc(targetUid).get();
+      if (!targetUserDoc.exists) {
+        return res.status(404).json({ error: "そのユーザーは見つかりませんでした。" });
+      }
+      username = targetUserDoc.data().username || "ユーザー";
+    } else {
+      if (username.length > 20) {
+        return res.status(400).json({ error: "ユーザー名は20文字以内で入力してください。" });
+      }
+      const targetDoc = await db.collection("usernames").doc(username.toLowerCase()).get();
+      if (!targetDoc.exists) {
+        return res.status(404).json({ error: "そのユーザーは見つかりませんでした。" });
+      }
+      targetUid = targetDoc.data().uid;
+    }
 
     if (targetUid === myUid) {
       return res.status(400).json({
@@ -790,6 +797,11 @@ app.post("/api/chats/direct", requireLogin, async (req, res) => {
   }
 
   try {
+    // 相手が実在するか確認
+    const friendUserCheck = await db.collection("users").doc(friendUid).get();
+    if (!friendUserCheck.exists) {
+      return res.status(404).json({ error: "相手のユーザーが存在しません。" });
+    }
     const chatId = [myUid, friendUid].sort().join("_");
     const chatRef = db.collection("chats").doc(chatId);
     const chatDoc = await chatRef.get();
@@ -1169,6 +1181,9 @@ app.post("/api/chats/:chatId/read", requireLogin, async (req, res) => {
   const myUid = req.user.uid;
 
   try {
+    if (!(await checkChatAccess(chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
+    }
     const chatRef = db.collection("chats").doc(chatId);
     await chatRef.update({
       [`readStatus.${myUid}`]: admin.firestore.FieldValue.serverTimestamp()
@@ -1182,17 +1197,24 @@ app.post("/api/chats/:chatId/read", requireLogin, async (req, res) => {
 });
 
 // ----------------------------------------------------
-// ゲームセッション管理 (オセロ・UNO・大富豪などのマルチ対戦)
+// ゲームセッション管理 (オセロ・UNO・大富豪などのマルチ対戦: 権限・入力完全検証)
 // ----------------------------------------------------
 app.get("/api/games/rooms/:roomId", requireLogin, async (req, res) => {
   if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
   try {
     const roomRef = db.collection("game_rooms").doc(req.params.roomId);
     const snap = await roomRef.get();
     if (!snap.exists) {
       return res.status(404).json({ error: "ルームが見つかりません。" });
     }
-    return res.json({ room: snap.data() });
+    const data = snap.data();
+    // 参加者または待機中(参加可能状態)のみアクセス許可
+    const isPlayer = Array.isArray(data.players) && data.players.some(p => p.uid === myUid);
+    if (!isPlayer && data.status !== "waiting") {
+      return res.status(403).json({ error: "この対戦ルームへのアクセス権限がありません。" });
+    }
+    return res.json({ room: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -1201,23 +1223,28 @@ app.get("/api/games/rooms/:roomId", requireLogin, async (req, res) => {
 app.post("/api/games/rooms/:roomId/join", requireLogin, async (req, res) => {
   if (!db) return res.status(503).json({ error: "データベース未接続" });
   const myUid = req.user.uid;
-  const username = String(req.body.username || "ユーザー");
-  const gameType = String(req.body.gameType || "othello");
+  const username = String(req.body.username || req.user.username || "ユーザー").slice(0, 20);
+  const gameType = String(req.body.gameType || "othello").slice(0, 30);
+  const roomId = String(req.params.roomId || "").trim().slice(0, 50);
+
+  if (!roomId) return res.status(400).json({ error: "無効なルームIDです。" });
 
   try {
-    const roomRef = db.collection("game_rooms").doc(req.params.roomId);
+    const roomRef = db.collection("game_rooms").doc(roomId);
     const snap = await roomRef.get();
     const now = Date.now();
 
     if (!snap.exists) {
+      const rawInit = req.body.initialState;
+      const initialState = (rawInit && typeof rawInit === "object" && !Array.isArray(rawInit)) ? rawInit : {};
       const initialData = {
-        roomId: req.params.roomId,
+        roomId,
         gameType,
         hostUid: myUid,
         hostName: username,
         players: [{ uid: myUid, username, joinedAt: now }],
         status: "waiting",
-        state: req.body.initialState || {},
+        state: initialState,
         updatedAt: now
       };
       await roomRef.set(initialData);
@@ -1229,7 +1256,12 @@ app.post("/api/games/rooms/:roomId/join", requireLogin, async (req, res) => {
     const existingIdx = players.findIndex(p => p.uid === myUid);
     let role = existingIdx >= 0 ? existingIdx + 1 : players.length + 1;
 
-    if (existingIdx === -1 && players.length < 4) {
+    const maxPlayers = (data.gameType === "daifugo" || data.gameType === "uno") ? 4 : 2;
+
+    if (existingIdx === -1) {
+      if (players.length >= maxPlayers) {
+        return res.status(400).json({ error: "ルームが満員です。" });
+      }
       players.push({ uid: myUid, username, joinedAt: now });
       role = players.length;
     }
@@ -1256,12 +1288,37 @@ app.post("/api/games/rooms/:roomId/join", requireLogin, async (req, res) => {
 
 app.post("/api/games/rooms/:roomId/update", requireLogin, async (req, res) => {
   if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const roomId = String(req.params.roomId || "").trim();
+
   try {
-    const roomRef = db.collection("game_rooms").doc(req.params.roomId);
-    const updateData = {
-      ...req.body,
-      updatedAt: Date.now()
-    };
+    const roomRef = db.collection("game_rooms").doc(roomId);
+    const snap = await roomRef.get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: "ルームが見つかりません。" });
+    }
+
+    const data = snap.data();
+    const isPlayer = Array.isArray(data.players) && data.players.some(p => p.uid === myUid);
+    if (!isPlayer) {
+      return res.status(403).json({ error: "このルームの参加プレイヤーのみ更新できます。" });
+    }
+
+    // ホワイトリスト検証: 不正なフィールド書き換えを防止
+    const updateData = { updatedAt: Date.now() };
+    if (req.body.state !== undefined && typeof req.body.state === "object") {
+      updateData.state = req.body.state;
+    }
+    if (typeof req.body.status === "string" && ["waiting", "playing", "finished"].includes(req.body.status)) {
+      updateData.status = req.body.status;
+    }
+    if (req.body.winner !== undefined) {
+      updateData.winner = req.body.winner ? String(req.body.winner).slice(0, 50) : null;
+    }
+    if (req.body.turn !== undefined) {
+      updateData.turn = req.body.turn;
+    }
+
     await roomRef.update(updateData);
     return res.json({ ok: true });
   } catch (err) {
@@ -1269,7 +1326,7 @@ app.post("/api/games/rooms/:roomId/update", requireLogin, async (req, res) => {
   }
 });
 
-// 送信取り消し (LINEと同じ)
+// 送信取り消し (LINEと同じ: 権限検証)
 app.post("/api/chats/:chatId/messages/:messageId/unsend", requireLogin, async (req, res) => {
   if (!db) {
     return res.status(503).json({ error: "データベースが利用できません。" });
@@ -1279,6 +1336,9 @@ app.post("/api/chats/:chatId/messages/:messageId/unsend", requireLogin, async (r
   const myUid = req.user.uid;
 
   try {
+    if (!(await checkChatAccess(chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
+    }
     const chatRef = db.collection("chats").doc(chatId);
     const msgRef = chatRef.collection("messages").doc(messageId);
     const msgDoc = await msgRef.get();
@@ -1347,8 +1407,9 @@ app.delete("/api/chats/:chatId/messages/:messageId", requireLogin, async (req, r
     }
 
     const msgData = msgDoc.data();
-    if (msgData.senderUid !== myUid && req.user.username !== "hato2170" && !myUid.startsWith("pcIKtKGb")) {
-      return res.status(403).json({ error: "自分のメッセージのみ削除できます。" });
+    const isAdmin = await isUserAdmin(myUid, req.user);
+    if (msgData.senderUid !== myUid && !isAdmin) {
+      return res.status(403).json({ error: "自分のメッセージまたは管理者のみ削除できます。" });
     }
 
     await msgRef.delete();
@@ -1635,7 +1696,35 @@ app.get("/api/music/search", requireLogin, async (req, res) => {
   }
 });
 
-// ユーザープロフィール詳細更新 (ステメ, BGM, フォント, テーマ, カバー画像)
+// 自分のプロフィール取得
+app.get("/api/users/me", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  try {
+    const userDoc = await db.collection("users").doc(req.user.uid).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: "ユーザー情報が見つかりません。" });
+    }
+    const data = userDoc.data();
+    return res.json({
+      user: {
+        uid: req.user.uid,
+        username: data.username || "ユーザー",
+        statusMessage: data.statusMessage || "",
+        photoURL: data.photoURL || null,
+        coverUrl: data.coverUrl || null,
+        bgm: data.bgm || null,
+        theme: data.theme || "line-green",
+        font: data.font || "default",
+        role: data.role || "user",
+        createdAt: data.createdAt || null
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ユーザープロフィール詳細更新 (ユーザー名・ステメ・アイコン・BGM・フォント・テーマ)
 app.put("/api/users/profile", requireLogin, async (req, res) => {
   if (!db) return res.status(503).json({ error: "データベース未接続" });
   const myUid = req.user.uid;
@@ -1643,28 +1732,76 @@ app.put("/api/users/profile", requireLogin, async (req, res) => {
 
   try {
     const userRef = db.collection("users").doc(myUid);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) return res.status(404).json({ error: "ユーザーが見つかりません。" });
+
+    const currentData = userDoc.data();
     const updateData = {};
-    if (statusMessage !== undefined) updateData.statusMessage = String(statusMessage);
-    if (bgm !== undefined) updateData.bgm = bgm; // { trackName, artistName, previewUrl, artworkUrl }
-    if (font !== undefined) updateData.font = String(font);
-    if (theme !== undefined) updateData.theme = String(theme);
-    if (coverUrl !== undefined) updateData.coverUrl = String(coverUrl);
-    if (photoURL !== undefined) updateData.photoURL = String(photoURL);
-    if (username !== undefined) updateData.username = String(username);
+
+    // ユーザー名変更の厳格なバリデーション & 重複検証
+    if (username !== undefined) {
+      const newUsername = String(username).trim();
+      if (!/^[\p{L}\p{N}_-]{2,20}$/u.test(newUsername)) {
+        return res.status(400).json({
+          error: "ユーザー名は2〜20文字で入力してください（文字・数字・_・-が使用可能）。"
+        });
+      }
+
+      const oldUsername = currentData.username || "";
+      if (newUsername.toLowerCase() !== oldUsername.toLowerCase()) {
+        const newKey = newUsername.toLowerCase();
+        const oldKey = oldUsername.toLowerCase();
+        const newRef = db.collection("usernames").doc(newKey);
+        const oldRef = oldKey ? db.collection("usernames").doc(oldKey) : null;
+
+        await db.runTransaction(async (transaction) => {
+          const newDoc = await transaction.get(newRef);
+          if (newDoc.exists && newDoc.data().uid !== myUid) {
+            throw new Error("USERNAME_TAKEN");
+          }
+          transaction.set(newRef, {
+            uid: myUid,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+          if (oldRef) {
+            transaction.delete(oldRef);
+          }
+        });
+      }
+
+      updateData.username = newUsername;
+      if (auth) {
+        await auth.updateUser(myUid, { displayName: newUsername }).catch(() => {});
+      }
+    }
+
+    if (statusMessage !== undefined) updateData.statusMessage = String(statusMessage).slice(0, 100);
+    if (bgm !== undefined) updateData.bgm = bgm;
+    if (font !== undefined) updateData.font = String(font).slice(0, 50);
+    if (theme !== undefined) updateData.theme = String(theme).slice(0, 50);
+    if (coverUrl !== undefined) updateData.coverUrl = String(coverUrl).slice(0, 1000);
+    if (photoURL !== undefined) updateData.photoURL = String(photoURL).slice(0, 2000000);
 
     updateData.updatedAt = Date.now();
     await userRef.set(updateData, { merge: true });
 
-    return res.json({ ok: true, profile: updateData });
+    return res.json({ ok: true, profile: { ...currentData, ...updateData } });
   } catch (err) {
+    if (err.message === "USERNAME_TAKEN") {
+      return res.status(409).json({ error: "このユーザー名はすでに使われています。" });
+    }
     return res.status(500).json({ error: err.message });
   }
 });
 
-// アルバム一覧取得
+// アルバム一覧取得 (チャット参加者権限検証)
 app.get("/api/chats/:chatId/albums", requireLogin, async (req, res) => {
   if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
   try {
+    if (!(await checkChatAccess(req.params.chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへのアクセス権限がありません。" });
+    }
     const albumsRef = db.collection("chats").doc(req.params.chatId).collection("albums").orderBy("createdAt", "desc");
     const snap = await albumsRef.get();
     const albums = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -1682,9 +1819,12 @@ app.post("/api/chats/:chatId/albums", requireLogin, async (req, res) => {
   if (!title) return res.status(400).json({ error: "アルバム名を入力してください。" });
 
   try {
+    if (!(await checkChatAccess(req.params.chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへのアクセス権限がありません。" });
+    }
     const albumData = {
-      title: String(title),
-      photos: Array.isArray(photos) ? photos : [],
+      title: String(title).slice(0, 50),
+      photos: Array.isArray(photos) ? photos.slice(0, 100) : [],
       creatorUid: myUid,
       createdAt: Date.now()
     };
@@ -1698,7 +1838,11 @@ app.post("/api/chats/:chatId/albums", requireLogin, async (req, res) => {
 // ノート一覧取得
 app.get("/api/chats/:chatId/notes", requireLogin, async (req, res) => {
   if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
   try {
+    if (!(await checkChatAccess(req.params.chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへのアクセス権限がありません。" });
+    }
     const notesRef = db.collection("chats").doc(req.params.chatId).collection("notes").orderBy("createdAt", "desc");
     const snap = await notesRef.get();
     const notes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -1716,14 +1860,17 @@ app.post("/api/chats/:chatId/notes", requireLogin, async (req, res) => {
   if (!text && (!images || images.length === 0)) return res.status(400).json({ error: "内容を入力してください。" });
 
   try {
+    if (!(await checkChatAccess(req.params.chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへのアクセス権限がありません。" });
+    }
     const userDoc = await db.collection("users").doc(myUid).get();
     const authorName = userDoc.exists ? userDoc.data().username : "ユーザー";
 
     const noteData = {
       authorUid: myUid,
       authorName,
-      text: String(text || ""),
-      images: Array.isArray(images) ? images : [],
+      text: String(text || "").slice(0, 5000),
+      images: Array.isArray(images) ? images.slice(0, 20) : [],
       likes: [],
       comments: [],
       createdAt: Date.now()
@@ -1740,6 +1887,9 @@ app.post("/api/chats/:chatId/notes/:noteId/like", requireLogin, async (req, res)
   if (!db) return res.status(503).json({ error: "データベース未接続" });
   const myUid = req.user.uid;
   try {
+    if (!(await checkChatAccess(req.params.chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへのアクセス権限がありません。" });
+    }
     const noteRef = db.collection("chats").doc(req.params.chatId).collection("notes").doc(req.params.noteId);
     const snap = await noteRef.get();
     if (!snap.exists) return res.status(404).json({ error: "ノートが見つかりません。" });
@@ -1761,7 +1911,11 @@ app.post("/api/chats/:chatId/notes/:noteId/like", requireLogin, async (req, res)
 // 投票一覧取得 & 作成 & 投票
 app.get("/api/chats/:chatId/polls", requireLogin, async (req, res) => {
   if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
   try {
+    if (!(await checkChatAccess(req.params.chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへのアクセス権限がありません。" });
+    }
     const snap = await db.collection("chats").doc(req.params.chatId).collection("polls").orderBy("createdAt", "desc").get();
     const polls = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     return res.json({ polls });
@@ -1779,9 +1933,12 @@ app.post("/api/chats/:chatId/polls", requireLogin, async (req, res) => {
   }
 
   try {
+    if (!(await checkChatAccess(req.params.chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへのアクセス権限がありません。" });
+    }
     const pollData = {
-      title: String(title),
-      options: options.map(opt => ({ text: String(opt), votes: [] })),
+      title: String(title).slice(0, 100),
+      options: options.slice(0, 10).map(opt => ({ text: String(opt).slice(0, 50), votes: [] })),
       creatorUid: myUid,
       closed: false,
       createdAt: Date.now()
@@ -1799,6 +1956,9 @@ app.post("/api/chats/:chatId/polls/:pollId/vote", requireLogin, async (req, res)
   const { optionIdx } = req.body;
 
   try {
+    if (!(await checkChatAccess(req.params.chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへのアクセス権限がありません。" });
+    }
     const pollRef = db.collection("chats").doc(req.params.chatId).collection("polls").doc(req.params.pollId);
     const snap = await pollRef.get();
     if (!snap.exists) return res.status(404).json({ error: "投票が見つかりません。" });
@@ -1820,7 +1980,11 @@ app.post("/api/chats/:chatId/polls/:pollId/vote", requireLogin, async (req, res)
 // イベント・日程調整
 app.get("/api/chats/:chatId/events", requireLogin, async (req, res) => {
   if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
   try {
+    if (!(await checkChatAccess(req.params.chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへのアクセス権限がありません。" });
+    }
     const snap = await db.collection("chats").doc(req.params.chatId).collection("events").orderBy("createdAt", "desc").get();
     const events = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     return res.json({ events });
@@ -1836,10 +2000,13 @@ app.post("/api/chats/:chatId/events", requireLogin, async (req, res) => {
   if (!title) return res.status(400).json({ error: "イベント名を入力してください。" });
 
   try {
+    if (!(await checkChatAccess(req.params.chatId, myUid))) {
+      return res.status(403).json({ error: "このチャットへのアクセス権限がありません。" });
+    }
     const eventData = {
-      title: String(title),
-      date: String(date || ""),
-      location: String(location || ""),
+      title: String(title).slice(0, 100),
+      date: String(date || "").slice(0, 50),
+      location: String(location || "").slice(0, 100),
       attendees: { [myUid]: "join" },
       creatorUid: myUid,
       createdAt: Date.now()
@@ -1918,7 +2085,7 @@ app.post("/api/voom/posts/:postId/like", requireLogin, async (req, res) => {
 // ==========================================
 // AI Worker Proxy (学校iPad等のi-フィルターによるworkers.devドメイン遮断完全回避)
 // ==========================================
-app.use('/api/ai', async (req, res) => {
+app.use('/api/ai', (req, res, next) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, Origin, User-Agent, X-Requested-With');
@@ -1927,6 +2094,8 @@ app.use('/api/ai', async (req, res) => {
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
+  return requireLogin(req, res, next);
+}, async (req, res) => {
 
   const targetUrl = 'https://myyajuu-ai-worker.harumei-260329.workers.dev' + req.url;
   try {
