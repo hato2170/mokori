@@ -2772,6 +2772,164 @@
       .replace(/'/g, "&#39;");
   }
   window.escapeHtml = escapeHtml;
+
+  // ==========================================
+  // プロフィール表示・編集 & 送信者タップ友達追加
+  // ==========================================
+  let myProfileAvatarPreset = "🐐";
+
+  window.openProfileModal = async function () {
+    const modal = document.getElementById("profileModal");
+    if (!modal) return;
+    modal.classList.remove("hidden");
+
+    try {
+      const res = await api("/api/users/me");
+      if (res && res.user) {
+        const u = res.user;
+        const nameInput = document.getElementById("myProfileUsernameInput");
+        const statusInput = document.getElementById("myProfileStatusInput");
+        const preview = document.getElementById("myProfileAvatarPreview");
+
+        if (nameInput) nameInput.value = u.username || "";
+        if (statusInput) statusInput.value = u.statusMessage || "";
+        if (u.photoURL && u.photoURL.length <= 4) {
+          myProfileAvatarPreset = u.photoURL;
+        } else if (u.username) {
+          myProfileAvatarPreset = u.username.charAt(0);
+        }
+        if (preview) preview.textContent = myProfileAvatarPreset;
+      }
+    } catch (e) {
+      console.warn("Profile fetch error:", e.message);
+    }
+  };
+
+  window.closeProfileModal = function () {
+    const modal = document.getElementById("profileModal");
+    if (modal) modal.classList.add("hidden");
+  };
+
+  window.setAvatarPreset = function (emoji) {
+    myProfileAvatarPreset = emoji;
+    const preview = document.getElementById("myProfileAvatarPreview");
+    if (preview) preview.textContent = emoji;
+  };
+
+  window.saveMyProfile = async function () {
+    const nameInput = document.getElementById("myProfileUsernameInput");
+    const statusInput = document.getElementById("myProfileStatusInput");
+    const saveBtn = document.getElementById("saveProfileBtn");
+
+    const newUsername = nameInput ? nameInput.value.trim() : "";
+    const newStatus = statusInput ? statusInput.value.trim() : "";
+
+    if (!newUsername) {
+      alert("ユーザー名を入力してください。");
+      return;
+    }
+
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "保存中…";
+    }
+
+    try {
+      const res = await api("/api/users/profile", {
+        method: "PUT",
+        body: JSON.stringify({
+          username: newUsername,
+          statusMessage: newStatus,
+          photoURL: myProfileAvatarPreset
+        })
+      });
+
+      alert("🎉 プロフィールを保存しました！");
+      window.closeProfileModal();
+      if (currentUser) {
+        currentUser.displayName = newUsername;
+      }
+      await loadChats(false);
+    } catch (err) {
+      alert(err.message || "プロフィールの保存に失敗しました。");
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "💾 プロフィールを保存";
+      }
+    }
+  };
+
+  window.openUserProfileModal = async function (targetUid, targetName) {
+    if (!targetUid || (currentUser && targetUid === currentUser.uid)) {
+      window.openProfileModal();
+      return;
+    }
+
+    const modal = document.getElementById("userProfileModal");
+    const nameEl = document.getElementById("upmUsername");
+    const initialEl = document.getElementById("upmAvatarInitial");
+    const statusEl = document.getElementById("upmStatus");
+    const actionArea = document.getElementById("upmActionArea");
+
+    nameEl.textContent = targetName || "ユーザー";
+    initialEl.textContent = (targetName && targetName.charAt(0)) || "🐐";
+    statusEl.textContent = "mokori ユーザー";
+    actionArea.innerHTML = "";
+
+    modal.classList.remove("hidden");
+
+    const isFriend = Array.isArray(allFriends) && allFriends.some(f => f.uid === targetUid || f.username === targetName);
+
+    if (isFriend) {
+      statusEl.textContent = "🤝 友達登録済み";
+      actionArea.innerHTML = `
+        <button type="button" class="primary" style="background:#06c755; height:42px; font-weight:bold; margin-bottom:8px;" onclick="window.startDirectChatFromModal('${targetUid}')">💬 1対1トークを開く</button>
+        <button type="button" class="btn-sm" style="width:100%; height:36px;" onclick="window.closeUserProfileModal()">閉じる</button>
+      `;
+    } else {
+      actionArea.innerHTML = `
+        <button type="button" class="primary" id="sendFriendReqBtn" style="background:#0284c7; height:42px; font-weight:bold; margin-bottom:8px;" onclick="window.sendFriendRequestFromModal('${targetUid}', '${escapeHtml(targetName)}')">➕ 友達追加（申請を送る）</button>
+        <button type="button" class="btn-sm" style="width:100%; height:36px;" onclick="window.closeUserProfileModal()">閉じる</button>
+      `;
+    }
+  };
+
+  window.closeUserProfileModal = function () {
+    const modal = document.getElementById("userProfileModal");
+    if (modal) modal.classList.add("hidden");
+  };
+
+  window.startDirectChatFromModal = function (targetUid) {
+    window.closeUserProfileModal();
+    startDirectChat(targetUid);
+  };
+
+  window.sendFriendRequestFromModal = async function (targetUid, targetName) {
+    const btn = document.getElementById("sendFriendReqBtn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "申請送信中…";
+    }
+    try {
+      await api("/api/friends/request", {
+        method: "POST",
+        body: JSON.stringify({ targetUid, username: targetName })
+      });
+      alert(`🎉 ${targetName} さんに友達申請を送りました！`);
+      if (btn) {
+        btn.textContent = "✅ 申請済み";
+        btn.style.background = "#64748b";
+      }
+      await loadFriends();
+    } catch (err) {
+      alert(err.message || "友達申請に失敗しました。");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "➕ 友達追加（申請を送る）";
+      }
+    }
+  };
 </script>
 </body>
 </html>
