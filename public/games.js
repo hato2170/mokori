@@ -212,7 +212,8 @@
       "brawl-webgl": "⭐ ブロスタ 3D本家完全再現版",
       "brawl-crazygames": "⭐ Brawl Squad（CrazyGames版）",
       fortnite: "🏆 Fortnite 3D（バトルロイヤル）",
-      solitaire: "♠️ ソリティア（クロンダイク）"
+      solitaire: "♠️ ソリティア（クロンダイク）",
+      drawquiz: "🎨 お絵描きクイズ（リアルタイム対戦＆ソロ）"
     };
 
     currentGameTitle = titles[gameType] || "対戦ゲーム";
@@ -250,6 +251,9 @@
       case "solitaire":
         renderSolitaireGame(embed);
         break;
+      case "drawquiz":
+        renderDrawQuizGame(embed, activeRoomCode);
+        break;
     }
   }
 
@@ -271,6 +275,7 @@
 
   function stopAllGames() {
     window.onkeydown = null;
+    if (window._stopDrawQuiz) { window._stopDrawQuiz(); window._stopDrawQuiz = null; }
     if (window.stopFortnite3DGame) window.stopFortnite3DGame();
     if (window.stop3DBrawlGame) window.stop3DBrawlGame();
     if (window._stopSnowball) { window._stopSnowball(); window._stopSnowball = null; }
@@ -2232,4 +2237,544 @@ function renderSolitaireUI() {
 
     window.startNewSolitaireGame();
   }
+
+  // ====================================================
+  // 🎨 お絵描きクイズ（リアルタイム対戦 & ソロ絵心判定）
+  // ====================================================
+  const DQ_WORDS = [
+    { word: "りんご", kana: "りんご", hint: "赤い果物 🍎" },
+    { word: "バナナ", kana: "ばなな", hint: "黄色い果物 🍌" },
+    { word: "スイカ", kana: "すいか", hint: "夏の果物 🍉" },
+    { word: "ねこ", kana: "ねこ", hint: "にゃーと鳴く動物 🐱" },
+    { word: "いぬ", kana: "いぬ", hint: "わんわん鳴く動物 🐶" },
+    { word: "パンダ", kana: "ぱんだ", hint: "白黒の動物 🐼" },
+    { word: "ヤギ", kana: "やぎ", hint: "草を食べる動物 🐐" },
+    { word: "ライオン", kana: "らいおん", hint: "百獣の王 🦁" },
+    { word: "ペンギン", kana: "ぺんぎん", hint: "氷の上の鳥 🐧" },
+    { word: "オムライス", kana: "おむらいす", hint: "卵とケチャップのご飯 🍳" },
+    { word: "カレーライス", kana: "かれーらいす", hint: "みんな大好きな辛い料理 🍛" },
+    { word: "ラーメン", kana: "らーめん", hint: "麺料理 🍜" },
+    { word: "ハンバーガー", kana: "はんばーがー", hint: "パンに挟んだお肉 🍔" },
+    { word: "ピザ", kana: "ぴざ", hint: "とろけるチーズの料理 🍕" },
+    { word: "車", kana: "くるま", hint: "道路を走る乗り物 🚗" },
+    { word: "飛行機", kana: "ひこうき", hint: "空を飛ぶ乗り物 ✈️" },
+    { word: "新幹線", kana: "しんかんせん", hint: "日本の超特急 🚅" },
+    { word: "ロケット", kana: "ろけっと", hint: "宇宙へ行く乗り物 🚀" },
+    { word: "富士山", kana: "ふじさん", hint: "日本一高い山 🗻" },
+    { word: "東京タワー", kana: "とうきょうたわー", hint: "赤と白の電波塔 🗼" },
+    { word: "雪だるま", kana: "ゆきだるま", hint: "雪で作る冬の友達 ⛄" },
+    { word: "ひまわり", kana: "ひまわり", hint: "黄色い大きな夏の花 🌻" },
+    { word: "たいよう", kana: "たいよう", hint: "空で輝く恒星 ☀️" },
+    { word: "サッカーボール", kana: "さっかーぼーる", hint: "白黒の丸いボール ⚽" },
+    { word: "フォートナイト", kana: "ふぉーとないと", hint: "大人気3Dバトロワ 🎮" },
+    { word: "オセロ", kana: "おせろ", hint: "白と黒のボードゲーム ⚫⚪" },
+    { word: "ギター", kana: "ぎたー", hint: "弦を弾く楽器 🎸" },
+    { word: "ピアノ", kana: "ぴあの", hint: "鍵盤楽器 🎹" },
+    { word: "テレビ", kana: "てれび", hint: "番組を見る家電 📺" },
+    { word: "スマホ", kana: "すまほ", hint: "いつも持ってる電話 📱" },
+    { word: "パソコン", kana: "ぱそこん", hint: "キーボードで打つ電子頭脳 💻" },
+    { word: "メガネ", kana: "めがね", hint: "目にかけるもの 👓" },
+    { word: "ぼうし", kana: "ぼうし", hint: "頭にかぶるもの 🧢" },
+    { word: "スニーカー", kana: "すにーかー", hint: "足に履く靴 👟" },
+    { word: "かさ", kana: "かさ", hint: "雨の日に差すもの ☂️" }
+  ];
+
+  function kataToHira(str) {
+    return str.replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60));
+  }
+
+  function renderDrawQuizGame(container, roomCode) {
+    const isOnline = !!roomCode;
+    let strokes = []; // [ { color, size, points: [[x,y],...] } ]
+    let currentStroke = null;
+    let currentColor = "#000000";
+    let currentSize = 5;
+    let isEraser = false;
+    let isDrawing = false;
+    let myRole = 1; // 1: Drawer, 2+: Guesser
+    let drawerUid = (window.currentUser && window.currentUser.uid) || "host";
+    let drawerName = (window.currentUser && window.currentUser.displayName) || "ホスト";
+    let currentWordIndex = Math.floor(Math.random() * DQ_WORDS.length);
+    let currentWord = DQ_WORDS[currentWordIndex];
+    let guesses = []; // [ { username, text, isCorrect, time } ]
+    let scores = {}; // username -> points
+    let timeLeft = 60;
+    let timerInterval = null;
+    let pollInterval = null;
+    let isGuessedCorrectly = false;
+
+    container.innerHTML = `
+      <div style="display:flex; flex-direction:column; width:100%; height:100%; background:#0f172a; color:#f8fafc; font-family:-apple-system,BlinkMacSystemFont,sans-serif; overflow:hidden;">
+        <!-- 上部バー -->
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 16px; background:#1e293b; border-bottom:1px solid #334155; flex-shrink:0;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span id="dqModeBadge" style="background:#0284c7; color:#fff; font-size:11px; font-weight:bold; padding:3px 10px; border-radius:12px;">
+              ${isOnline ? "👥 オンライン対戦" : "🤖 ソロお絵描き"}
+            </span>
+            <span style="font-size:12px; color:#94a3b8;" id="dqRoomInfo">
+              ${isOnline ? "ルーム: " + roomCode : "自由に描いて当てよう"}
+            </span>
+          </div>
+          <div id="dqTimerDisplay" style="font-size:18px; font-weight:800; color:#f59e0b; font-variant-numeric:tabular-nums;">
+            ⏳ 60秒
+          </div>
+          <div style="display:flex; gap:8px;">
+            ${isOnline ? '<button id="dqShareBtn" style="background:#06c755; color:#fff; border:0; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:bold; cursor:pointer;">📤 トークに招待</button>' : ''}
+            <button id="dqNextWordBtn" style="background:#3b82f6; color:#fff; border:0; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:bold; cursor:pointer;">お題変更 🎲</button>
+          </div>
+        </div>
+
+        <!-- お題・役割バナー -->
+        <div id="dqBanner" style="padding:10px 16px; background:#1e293b; text-align:center; font-size:15px; font-weight:bold; color:#38bdf8; border-bottom:1px solid #334155; flex-shrink:0;">
+          🎨 あなたがお題を描いてください！ お題: 【 ${currentWord.word} 】 (${currentWord.hint})
+        </div>
+
+        <!-- メイン対戦エリア -->
+        <div style="display:flex; flex:1; min-height:0; gap:10px; padding:10px;">
+          <!-- キャンバス側 -->
+          <div style="display:flex; flex-direction:column; flex:1; min-width:0; background:#1e293b; border-radius:12px; padding:10px; border:1px solid #334155;">
+            <div style="flex:1; min-height:0; position:relative; display:flex; align-items:center; justify-content:center; background:#cbd5e1; border-radius:8px; overflow:hidden;">
+              <canvas id="dqCanvas" style="background:#ffffff; border-radius:6px; width:100%; height:100%; touch-action:none; cursor:crosshair;"></canvas>
+            </div>
+
+            <!-- お絵描きツールバー -->
+            <div id="dqToolbar" style="display:flex; justify-content:space-between; align-items:center; padding-top:10px; gap:8px; flex-wrap:wrap; flex-shrink:0;">
+              <!-- カラーパレット -->
+              <div style="display:flex; gap:6px; align-items:center;" id="dqColorPalette">
+                <div class="dq-color-dot active" data-color="#000000" style="width:24px; height:24px; border-radius:50%; background:#000000; cursor:pointer; border:2px solid #fff; box-shadow:0 0 4px rgba(0,0,0,0.5);"></div>
+                <div class="dq-color-dot" data-color="#ef4444" style="width:24px; height:24px; border-radius:50%; background:#ef4444; cursor:pointer; border:2px solid transparent;"></div>
+                <div class="dq-color-dot" data-color="#3b82f6" style="width:24px; height:24px; border-radius:50%; background:#3b82f6; cursor:pointer; border:2px solid transparent;"></div>
+                <div class="dq-color-dot" data-color="#10b981" style="width:24px; height:24px; border-radius:50%; background:#10b981; cursor:pointer; border:2px solid transparent;"></div>
+                <div class="dq-color-dot" data-color="#f59e0b" style="width:24px; height:24px; border-radius:50%; background:#f59e0b; cursor:pointer; border:2px solid transparent;"></div>
+                <div class="dq-color-dot" data-color="#8b5cf6" style="width:24px; height:24px; border-radius:50%; background:#8b5cf6; cursor:pointer; border:2px solid transparent;"></div>
+                <div class="dq-color-dot" data-color="#78350f" style="width:24px; height:24px; border-radius:50%; background:#78350f; cursor:pointer; border:2px solid transparent;"></div>
+              </div>
+
+              <!-- ブラシ太さ・消しゴム・クリア -->
+              <div style="display:flex; gap:6px; align-items:center;">
+                <button id="dqBrushSmall" class="dq-tool-btn" style="padding:4px 8px; border-radius:6px; background:#334155; border:0; color:#fff; font-size:11px; cursor:pointer;">細 (2px)</button>
+                <button id="dqBrushMed" class="dq-tool-btn active" style="padding:4px 8px; border-radius:6px; background:#0284c7; border:0; color:#fff; font-size:11px; cursor:pointer;">中 (5px)</button>
+                <button id="dqBrushLarge" class="dq-tool-btn" style="padding:4px 8px; border-radius:6px; background:#334155; border:0; color:#fff; font-size:11px; cursor:pointer;">太 (12px)</button>
+                <button id="dqEraserBtn" style="padding:4px 10px; border-radius:6px; background:#334155; border:0; color:#fff; font-size:11px; cursor:pointer;">🧹 消しゴム</button>
+                <button id="dqUndoBtn" style="padding:4px 10px; border-radius:6px; background:#334155; border:0; color:#fff; font-size:11px; cursor:pointer;">↩️ 戻す</button>
+                <button id="dqClearBtn" style="padding:4px 10px; border-radius:6px; background:#ef4444; border:0; color:#fff; font-size:11px; font-weight:bold; cursor:pointer;">🗑️ 全消去</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 回答チャット & スコアボード -->
+          <div style="width:260px; display:flex; flex-direction:column; background:#1e293b; border-radius:12px; padding:12px; border:1px solid #334155; flex-shrink:0;">
+            <div style="font-size:11px; font-weight:bold; color:#94a3b8; margin-bottom:6px; text-transform:uppercase;">🏆 プレイヤー＆スコア</div>
+            <div id="dqScoreList" style="max-height:80px; overflow-y:auto; margin-bottom:10px; font-size:12px; display:flex; flex-direction:column; gap:4px; background:#0f172a; padding:6px; border-radius:6px;">
+              <div style="display:flex; justify-content:space-between; font-weight:bold;">
+                <span>🐐 ${drawerName} (描き手)</span>
+                <span style="color:#f59e0b;">0 pt</span>
+              </div>
+            </div>
+
+            <div style="font-size:11px; font-weight:bold; color:#94a3b8; margin-bottom:6px; text-transform:uppercase;">💬 みんなの回答</div>
+            <div id="dqChatFeed" style="flex:1; overflow-y:auto; background:#0f172a; border-radius:6px; padding:8px; font-size:12px; display:flex; flex-direction:column; gap:6px; margin-bottom:10px; min-height:120px;">
+              <div style="color:#64748b; font-size:11px; text-align:center;">お題がわかったら下の入力欄から送信！</div>
+            </div>
+
+            <!-- 回答入力エリア -->
+            <div style="display:flex; gap:6px;">
+              <input type="text" id="dqGuessInput" placeholder="お題を入力して回答！" style="flex:1; min-width:0; background:#0f172a; border:1px solid #475569; border-radius:6px; color:#fff; padding:8px 10px; font-size:13px; outline:none;">
+              <button id="dqGuessBtn" style="background:#06c755; color:#fff; border:0; border-radius:6px; padding:0 14px; font-weight:bold; font-size:13px; cursor:pointer;">送信</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // キャンバス初期化
+    const canvas = document.getElementById("dqCanvas");
+    const ctx = canvas.getContext("2d");
+    let dpr = window.devicePixelRatio || 1;
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      redrawAllStrokes();
+    }
+
+    setTimeout(resizeCanvas, 50);
+    window.addEventListener("resize", resizeCanvas);
+
+    function redrawAllStrokes() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      strokes.forEach(s => {
+        if (!s.points || s.points.length < 2) return;
+        ctx.beginPath();
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = s.size * dpr;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.moveTo(s.points[0][0] * canvas.width, s.points[0][1] * canvas.height);
+        for (let i = 1; i < s.points.length; i++) {
+          ctx.lineTo(s.points[i][0] * canvas.width, s.points[i][1] * canvas.height);
+        }
+        ctx.stroke();
+      });
+    }
+
+    function getCanvasCoords(e) {
+      const rect = canvas.getBoundingClientRect();
+      let clientX = e.clientX;
+      let clientY = e.clientY;
+      if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      }
+      return [
+        Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+        Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+      ];
+    }
+
+    function isMyTurnToDraw() {
+      if (!isOnline) return true;
+      const myUid = (window.currentUser && window.currentUser.uid) || "";
+      return drawerUid === myUid || myRole === 1;
+    }
+
+    // マウス / タッチ イベント
+    function handleStart(e) {
+      if (!isMyTurnToDraw()) return;
+      isDrawing = true;
+      const [nx, ny] = getCanvasCoords(e);
+      currentStroke = {
+        color: isEraser ? "#ffffff" : currentColor,
+        size: isEraser ? currentSize * 2.5 : currentSize,
+        points: [[nx, ny]]
+      };
+      strokes.push(currentStroke);
+      playTone(260, "triangle", 0.05);
+    }
+
+    function handleMove(e) {
+      if (!isDrawing || !currentStroke) return;
+      e.preventDefault();
+      const [nx, ny] = getCanvasCoords(e);
+      currentStroke.points.push([nx, ny]);
+
+      // 部分描画
+      ctx.beginPath();
+      ctx.strokeStyle = currentStroke.color;
+      ctx.lineWidth = currentStroke.size * dpr;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      const pts = currentStroke.points;
+      const prev = pts[pts.length - 2];
+      ctx.moveTo(prev[0] * canvas.width, prev[1] * canvas.height);
+      ctx.lineTo(nx * canvas.width, ny * canvas.height);
+      ctx.stroke();
+    }
+
+    function handleEnd() {
+      if (!isDrawing) return;
+      isDrawing = false;
+      currentStroke = null;
+      syncOnlineState();
+    }
+
+    canvas.addEventListener("pointerdown", handleStart);
+    canvas.addEventListener("pointermove", handleMove);
+    canvas.addEventListener("pointerup", handleEnd);
+    canvas.addEventListener("pointercancel", handleEnd);
+
+    // ツールバー操作
+    document.querySelectorAll(".dq-color-dot").forEach(dot => {
+      dot.addEventListener("click", () => {
+        isEraser = false;
+        currentColor = dot.dataset.color;
+        document.querySelectorAll(".dq-color-dot").forEach(d => d.style.borderColor = "transparent");
+        dot.style.borderColor = "#fff";
+        document.getElementById("dqEraserBtn").style.background = "#334155";
+      });
+    });
+
+    const brushBtns = [
+      { id: "dqBrushSmall", size: 2 },
+      { id: "dqBrushMed", size: 5 },
+      { id: "dqBrushLarge", size: 12 }
+    ];
+    brushBtns.forEach(b => {
+      document.getElementById(b.id).addEventListener("click", () => {
+        currentSize = b.size;
+        brushBtns.forEach(x => document.getElementById(x.id).style.background = "#334155");
+        document.getElementById(b.id).style.background = "#0284c7";
+      });
+    });
+
+    document.getElementById("dqEraserBtn").addEventListener("click", () => {
+      isEraser = !isEraser;
+      document.getElementById("dqEraserBtn").style.background = isEraser ? "#dc2626" : "#334155";
+    });
+
+    document.getElementById("dqUndoBtn").addEventListener("click", () => {
+      if (!isMyTurnToDraw() || strokes.length === 0) return;
+      strokes.pop();
+      redrawAllStrokes();
+      syncOnlineState();
+    });
+
+    document.getElementById("dqClearBtn").addEventListener("click", () => {
+      if (!isMyTurnToDraw()) return;
+      strokes = [];
+      redrawAllStrokes();
+      syncOnlineState();
+    });
+
+    // お題変更ボタン
+    document.getElementById("dqNextWordBtn").addEventListener("click", () => {
+      if (!isMyTurnToDraw()) return;
+      currentWordIndex = (currentWordIndex + 1) % DQ_WORDS.length;
+      currentWord = DQ_WORDS[currentWordIndex];
+      strokes = [];
+      redrawAllStrokes();
+      isGuessedCorrectly = false;
+      timeLeft = 60;
+      updateBanner();
+      syncOnlineState();
+    });
+
+    // 招待ボタン
+    const shareBtn = document.getElementById("dqShareBtn");
+    if (shareBtn) {
+      shareBtn.addEventListener("click", () => {
+        window.openGameForwardDialog("drawquiz", "🎨 お絵描きクイズ", roomCode);
+      });
+    }
+
+    function updateBanner() {
+      const banner = document.getElementById("dqBanner");
+      if (!banner) return;
+      if (isMyTurnToDraw()) {
+        banner.innerHTML = `🎨 あなたがお題を描いてください！ お題: 【 <span style="color:#f59e0b;font-size:18px;">${currentWord.word}</span> 】 (${currentWord.hint})`;
+      } else {
+        banner.innerHTML = `❓ ${drawerName} さんがお題を描いています… 何の絵かわかったら当ててね！`;
+      }
+    }
+
+    function addChatMessage(uname, text, isCorrect = false) {
+      const feed = document.getElementById("dqChatFeed");
+      if (!feed) return;
+      const row = document.createElement("div");
+      row.style.padding = "4px 8px";
+      row.style.borderRadius = "6px";
+      row.style.fontSize = "12px";
+      if (isCorrect) {
+        row.style.background = "linear-gradient(135deg, #059669, #10b981)";
+        row.style.color = "#ffffff";
+        row.style.fontWeight = "bold";
+        row.textContent = `🎉 正解！ ${uname} さんが当てました！ (+100pt)`;
+      } else {
+        row.style.background = "#1e293b";
+        row.innerHTML = `<span style="font-weight:bold;color:#38bdf8;">${escapeHtml(uname)}:</span> ${escapeHtml(text)}`;
+      }
+      feed.appendChild(row);
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    // 回答判定処理
+    function submitGuess() {
+      const input = document.getElementById("dqGuessInput");
+      const text = (input ? input.value : "").trim();
+      if (!text) return;
+      input.value = "";
+
+      const myName = (window.currentUser && window.currentUser.displayName) || "自分";
+      const normalizedGuess = kataToHira(text.toLowerCase());
+      const normalizedWord = kataToHira(currentWord.word.toLowerCase());
+      const normalizedKana = kataToHira(currentWord.kana.toLowerCase());
+
+      const isMatch = (normalizedGuess === normalizedWord || normalizedGuess === normalizedKana);
+
+      if (isMatch) {
+        playTone(523.25, "triangle", 0.1);
+        setTimeout(() => playTone(659.25, "triangle", 0.1), 100);
+        setTimeout(() => playTone(783.99, "triangle", 0.2), 200);
+
+        scores[myName] = (scores[myName] || 0) + 100;
+        updateScoreBoard();
+        addChatMessage(myName, text, true);
+
+        guesses.push({ username: myName, text, isCorrect: true, time: Date.now() });
+        isGuessedCorrectly = true;
+
+        if (isMyTurnToDraw()) {
+          setTimeout(() => {
+            currentWordIndex = (currentWordIndex + 1) % DQ_WORDS.length;
+            currentWord = DQ_WORDS[currentWordIndex];
+            strokes = [];
+            redrawAllStrokes();
+            isGuessedCorrectly = false;
+            timeLeft = 60;
+            updateBanner();
+            syncOnlineState();
+          }, 3000);
+        } else {
+          syncOnlineState();
+        }
+      } else {
+        playTone(180, "sawtooth", 0.08);
+        addChatMessage(myName, text, false);
+        guesses.push({ username: myName, text, isCorrect: false, time: Date.now() });
+        syncOnlineState();
+      }
+    }
+
+    document.getElementById("dqGuessBtn").addEventListener("click", submitGuess);
+    document.getElementById("dqGuessInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submitGuess();
+    });
+
+    function updateScoreBoard() {
+      const list = document.getElementById("dqScoreList");
+      if (!list) return;
+      list.innerHTML = "";
+      Object.entries(scores).forEach(([name, pt]) => {
+        const item = document.createElement("div");
+        item.style.display = "flex";
+        item.style.justifyContent = "space-between";
+        item.style.fontWeight = "bold";
+        item.innerHTML = `<span>👤 ${escapeHtml(name)}</span><span style="color:#f59e0b;">${pt} pt</span>`;
+        list.appendChild(item);
+      });
+    }
+
+    // オンライン同期
+    async function syncOnlineState() {
+      if (!isOnline) return;
+      try {
+        await window.api(`/api/games/rooms/${roomCode}/update`, {
+          method: "POST",
+          body: JSON.stringify({
+            state: {
+              word: currentWord.word,
+              kana: currentWord.kana,
+              hint: currentWord.hint,
+              drawerUid,
+              drawerName,
+              strokes: strokes.slice(-80), // 最新ストローク
+              guesses: guesses.slice(-20),
+              scores,
+              timeLeft
+            }
+          })
+        });
+      } catch(e){}
+    }
+
+    async function initOnline() {
+      if (!isOnline) {
+        scores[drawerName] = 0;
+        updateScoreBoard();
+        updateBanner();
+        return;
+      }
+
+      try {
+        const myName = (window.currentUser && window.currentUser.displayName) || "プレイヤー";
+        const myUid = (window.currentUser && window.currentUser.uid) || "";
+        const res = await window.api(`/api/games/rooms/${roomCode}/join`, {
+          method: "POST",
+          body: JSON.stringify({
+            gameType: "drawquiz",
+            username: myName,
+            initialState: {
+              word: currentWord.word,
+              kana: currentWord.kana,
+              hint: currentWord.hint,
+              drawerUid: myUid,
+              drawerName: myName,
+              strokes: [],
+              guesses: [],
+              scores: { [myName]: 0 },
+              timeLeft: 60
+            }
+          })
+        });
+
+        if (res && res.role) {
+          myRole = res.role;
+          if (res.room && res.room.players) {
+            drawerUid = res.room.players[0].uid;
+            drawerName = res.room.players[0].username;
+          }
+        }
+        updateBanner();
+        startPolling();
+      } catch(e) {
+        console.warn("Online drawquiz join failed, solo mode:", e);
+      }
+    }
+
+    function startPolling() {
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(async () => {
+        if (!isOnline) return;
+        try {
+          const res = await window.api(`/api/games/rooms/${roomCode}`);
+          if (res && res.room && res.room.state) {
+            const st = res.room.state;
+            if (!isMyTurnToDraw()) {
+              if (st.strokes && JSON.stringify(st.strokes) !== JSON.stringify(strokes)) {
+                strokes = st.strokes || [];
+                redrawAllStrokes();
+              }
+              if (st.word && st.word !== currentWord.word) {
+                currentWord = { word: st.word, kana: st.kana || st.word, hint: st.hint || "" };
+                updateBanner();
+              }
+              if (st.drawerName && st.drawerName !== drawerName) {
+                drawerName = st.drawerName;
+                drawerUid = st.drawerUid;
+                updateBanner();
+              }
+            }
+            if (st.scores) {
+              scores = st.scores;
+              updateScoreBoard();
+            }
+          }
+        } catch(e){}
+      }, 1000);
+    }
+
+    // タイマー
+    timerInterval = setInterval(() => {
+      timeLeft = Math.max(0, timeLeft - 1);
+      const timerEl = document.getElementById("dqTimerDisplay");
+      if (timerEl) {
+        timerEl.textContent = `⏳ ${timeLeft}秒`;
+        if (timeLeft <= 10) timerEl.style.color = "#ef4444";
+      }
+      if (timeLeft === 0 && isMyTurnToDraw()) {
+        currentWordIndex = (currentWordIndex + 1) % DQ_WORDS.length;
+        currentWord = DQ_WORDS[currentWordIndex];
+        strokes = [];
+        redrawAllStrokes();
+        timeLeft = 60;
+        updateBanner();
+        syncOnlineState();
+      }
+    }, 1000);
+
+    // クリーンアップ関数
+    window._stopDrawQuiz = function () {
+      if (timerInterval) clearInterval(timerInterval);
+      if (pollInterval) clearInterval(pollInterval);
+      window.removeEventListener("resize", resizeCanvas);
+    };
+
+    initOnline();
+  }
+
 })();

@@ -34,7 +34,25 @@ async function requireLogin(req, res, next) {
   }
 }
 
-app.use(express.static("public"));
+// キャッシュ無効化ミドルウェア (Safari・iPad・学校端末での古いコード・UI残存を完全防止)
+app.use((req, res, next) => {
+  if (req.path.endsWith(".html") || req.path === "/" || req.path.endsWith(".js") || req.path.endsWith(".css")) {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+  next();
+});
+
+app.use(express.static("public", {
+  etag: false,
+  maxAge: 0,
+  setHeaders: (res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+}));
 
 let db;
 let auth;
@@ -1289,7 +1307,7 @@ app.post("/api/games/rooms/:roomId/join", requireLogin, async (req, res) => {
     const existingIdx = players.findIndex(p => p.uid === myUid);
     let role = existingIdx >= 0 ? existingIdx + 1 : players.length + 1;
 
-    const maxPlayers = (data.gameType === "daifugo" || data.gameType === "uno") ? 4 : 2;
+    const maxPlayers = (data.gameType === "daifugo" || data.gameType === "uno") ? 4 : (data.gameType === "drawquiz" ? 8 : 2);
 
     if (existingIdx === -1) {
       if (players.length >= maxPlayers) {
@@ -1357,6 +1375,170 @@ app.post("/api/games/rooms/:roomId/update", requireLogin, async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
+});
+
+
+// ----------------------------------------------------
+// 通話 (無料電話 / WebRTCシグナリング & リアルタイム通話管理)
+// ----------------------------------------------------
+const activeCalls = new Map(); // chatId -> callObject
+
+app.post("/api/calls/:chatId/start", requireLogin, async (req, res) => {
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+
+  try {
+    const userDoc = await db.collection("users").doc(myUid).get();
+    const myUsername = userDoc.exists ? (userDoc.data().username || "ユーザー") : "ユーザー";
+
+    if (chatId !== "all_members") {
+      const chatDoc = await db.collection("chats").doc(chatId).get();
+      if (!chatDoc.exists || !chatDoc.data().members || !chatDoc.data().members.includes(myUid)) {
+        return res.status(403).json({ error: "このチャットで通話を開始する権限がありません。" });
+      }
+    }
+
+    const now = Date.now();
+    const existing = activeCalls.get(chatId);
+    if (existing && existing.status !== "ended" && (now - existing.startedAt < 7200000)) {
+      if (!existing.participants.some(p => p.uid === myUid)) {
+        existing.participants.push({ uid: myUid, username: myUsername, joinedAt: now });
+      }
+      return res.json({ ok: true, call: existing, isNew: false });
+    }
+
+    const callObj = {
+      callId: "call_" + now + "_" + Math.random().toString(36).substring(2, 7),
+      chatId,
+      callerUid: myUid,
+      callerName: myUsername,
+      status: "ringing", // "ringing" | "connected" | "ended"
+      startedAt: now,
+      connectedAt: null,
+      endedAt: null,
+      participants: [{ uid: myUid, username: myUsername, joinedAt: now }],
+      signals: {} // uid -> array of signals
+    };
+
+    activeCalls.set(chatId, callObj);
+
+    // チャットに無料通話開始メッセージを自動投稿
+    const chatRef = db.collection("chats").doc(chatId);
+    await chatRef.collection("messages").add({
+      chatId,
+      senderUid: myUid,
+      senderName: myUsername,
+      type: "call_invite",
+      text: `📞 ${myUsername}が無料通話を開始しました`,
+      readBy: [myUid],
+      unsent: false,
+      callId: callObj.callId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    }).catch(e => console.warn("Call invite msg error:", e.message));
+
+    messageCache.delete(chatId);
+
+    return res.json({ ok: true, call: callObj, isNew: true });
+  } catch (err) {
+    console.error("Call start error:", err);
+    return res.status(500).json({ error: "通話の開始に失敗しました。" });
+  }
+});
+
+app.get("/api/calls/:chatId", requireLogin, (req, res) => {
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+  const call = activeCalls.get(chatId);
+  if (!call || call.status === "ended") {
+    return res.json({ ok: true, call: null });
+  }
+  const mySignals = call.signals[myUid] || [];
+  call.signals[myUid] = []; // 取得済みシグナルをクリア
+  return res.json({ ok: true, call, signals: mySignals });
+});
+
+app.post("/api/calls/:chatId/join", requireLogin, async (req, res) => {
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+  const call = activeCalls.get(chatId);
+  if (!call || call.status === "ended") {
+    return res.status(404).json({ error: "通話は終了しているか存在しません。" });
+  }
+
+  const userDoc = await db.collection("users").doc(myUid).get();
+  const myUsername = userDoc.exists ? (userDoc.data().username || "ユーザー") : "ユーザー";
+
+  if (!call.participants.some(p => p.uid === myUid)) {
+    call.participants.push({ uid: myUid, username: myUsername, joinedAt: Date.now() });
+  }
+  call.status = "connected";
+  if (!call.connectedAt) call.connectedAt = Date.now();
+
+  return res.json({ ok: true, call });
+});
+
+app.post("/api/calls/:chatId/signal", requireLogin, (req, res) => {
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+  const call = activeCalls.get(chatId);
+  if (!call || call.status === "ended") {
+    return res.status(404).json({ error: "通話が見つかりません。" });
+  }
+
+  const { toUid, signal } = req.body;
+  if (toUid && signal) {
+    if (!call.signals[toUid]) call.signals[toUid] = [];
+    call.signals[toUid].push({ fromUid: myUid, signal, timestamp: Date.now() });
+  } else if (signal) {
+    call.participants.forEach(p => {
+      if (p.uid !== myUid) {
+        if (!call.signals[p.uid]) call.signals[p.uid] = [];
+        call.signals[p.uid].push({ fromUid: myUid, signal, timestamp: Date.now() });
+      }
+    });
+  }
+  return res.json({ ok: true });
+});
+
+app.post("/api/calls/:chatId/end", requireLogin, async (req, res) => {
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+  const call = activeCalls.get(chatId);
+
+  if (!call || call.status === "ended") {
+    return res.json({ ok: true, message: "既に終了しています。" });
+  }
+
+  const now = Date.now();
+  call.status = "ended";
+  call.endedAt = now;
+  const durationSec = call.connectedAt ? Math.floor((now - call.connectedAt) / 1000) : 0;
+  const mins = String(Math.floor(durationSec / 60)).padStart(2, "0");
+  const secs = String(durationSec % 60).padStart(2, "0");
+  const durationStr = `${mins}:${secs}`;
+
+  activeCalls.delete(chatId);
+
+  try {
+    const userDoc = await db.collection("users").doc(myUid).get();
+    const myUsername = userDoc.exists ? (userDoc.data().username || "ユーザー") : "ユーザー";
+    const chatRef = db.collection("chats").doc(chatId);
+    await chatRef.collection("messages").add({
+      chatId,
+      senderUid: "system",
+      senderName: "通話",
+      type: "system",
+      text: `📞 通話が終了しました (${durationSec > 0 ? "通話時間 " + durationStr : "応答なし"})`,
+      readBy: call.participants.map(p => p.uid),
+      unsent: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    messageCache.delete(chatId);
+  } catch (e) {
+    console.warn("Call end msg error:", e.message);
+  }
+
+  return res.json({ ok: true, duration: durationStr });
 });
 
 // 送信取り消し (LINEと同じ: 権限検証)

@@ -462,56 +462,63 @@
       text-align: center;
     }
 
-    /* メッセージ行 */
+    /* メッセージ行 (LINE完全再現レイアウト: 左アバター＋太字送信者名) */
     .msg-row {
       display: flex;
-      flex-direction: column;
-      max-width: 78%;
+      max-width: 84%;
       position: relative;
+      margin-bottom: 10px;
     }
     .msg-row.other {
       align-self: flex-start;
+      flex-direction: row;
       align-items: flex-start;
+      gap: 10px;
     }
     .msg-row.mine {
       align-self: flex-end;
+      flex-direction: column;
       align-items: flex-end;
     }
-
-    
-    /* 送信者表示 (誰が送ったか常時表示 & 友達追加リンク) */
-    .msg-sender-wrap {
+    .msg-avatar-col {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+      font-size: 16px;
+      font-weight: 800;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+      cursor: pointer;
+      user-select: none;
+      transition: transform 0.15s, opacity 0.15s;
+    }
+    .msg-avatar-col:hover {
+      transform: scale(1.08);
+      opacity: 0.9;
+    }
+    .msg-content-col {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      min-width: 0;
+    }
+    .msg-sender-header {
       display: inline-flex;
       align-items: center;
       gap: 6px;
       margin-bottom: 4px;
-      padding: 2px 4px;
-      border-radius: 6px;
       cursor: pointer;
       user-select: none;
-      transition: background 0.15s, opacity 0.15s;
-    }
-    .msg-sender-wrap:hover {
-      background: rgba(0, 0, 0, 0.05);
-      opacity: 0.85;
-    }
-    .msg-sender-avatar {
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      background: #0284c7;
-      color: #fff;
-      font-size: 11px;
-      font-weight: bold;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     }
     .msg-sender-name {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      color: #1e293b;
+      letter-spacing: -0.2px;
     }
     .msg-sender-add-hint {
       font-size: 10px;
@@ -519,13 +526,17 @@
       background: #e0f2fe;
       border: 1px solid #bae6fd;
       border-radius: 10px;
-      padding: 1px 6px;
-      font-weight: 500;
+      padding: 1px 7px;
+      font-weight: 600;
       transition: background 0.15s, color 0.15s;
     }
-    .msg-sender-wrap:hover .msg-sender-add-hint {
-      background: #0284c7;
-      color: #fff;
+    .msg-sender-add-hint.is-friend {
+      color: #059669;
+      background: #d1fae5;
+      border-color: #a7f3d0;
+    }
+    .msg-sender-header:hover .msg-sender-name {
+      color: #0284c7;
     }
     .avatar-preset-btn {
       width: 38px;
@@ -1268,6 +1279,18 @@
         <span style="font-size:18px;color:#0284c7;">▶</span>
       </div>
 
+      <!-- お絵描きクイズ -->
+      <div class="game-hub-card" onclick="window.openGameHub('drawquiz')" style="border: 2px solid rgba(244, 63, 94, 0.4);">
+        <div class="left">
+          <div class="icon-circle" style="color:#f43f5e; background:rgba(244,63,94,0.15);">🎨</div>
+          <div>
+            <div class="title" style="color:#fca5a5;">🎨 お絵描きクイズ（リアルタイム対戦＆ソロ）</div>
+            <div class="desc">お題を描いてみんなで当てろ！リアルタイム描画同期＆お題当て対戦！</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:#f43f5e;">▶</span>
+      </div>
+
       <!-- ソリティア -->
       <div class="game-hub-card" onclick="window.openGameHub('solitaire')">
         <div class="left">
@@ -1349,7 +1372,7 @@
 </div>
 
 <!-- LINE風 無料通話 / ビデオ通話UIモーダル -->
-<div id="voiceCallModal" class="modal-backdrop hidden">
+<div id="voiceCallModal" class="modal-backdrop hidden" style="z-index:9990;">
   <div class="call-modal-overlay">
     <div style="text-align:center; margin-top:40px;">
       <div style="width:100px; height:100px; border-radius:50%; background:#06c755; color:#fff; font-size:42px; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; box-shadow:0 0 24px rgba(6,199,85,0.4);">
@@ -1357,21 +1380,40 @@
       </div>
       <h2 style="margin:0 0 8px; font-size:22px; font-weight:800;">もこり無料通話</h2>
       <div id="callStatusText" style="font-size:14px; color:#cbd5e1; margin-bottom:8px;">呼び出し中…</div>
-      <div id="callDurationTimer" style="font-size:18px; font-weight:700; color:#38bdf8; font-variant-numeric:tabular-nums;">00:00</div>
+      <div id="callDurationTimer" style="font-size:20px; font-weight:700; color:#38bdf8; font-variant-numeric:tabular-nums;">00:00</div>
     </div>
 
-    <div style="display:flex; gap:24px; margin-bottom:40px;">
-      <button onclick="alert('マイクをミュートにしました')" style="width:56px; height:56px; border-radius:50%; background:#374151; border:0; color:#fff; font-size:20px; cursor:pointer;">
-        🎙️
+    <div style="display:flex; gap:20px; align-items:center; margin-bottom:40px;">
+      <button id="callMuteBtn" onclick="window.toggleMuteVoiceCall()" style="width:58px; height:58px; border-radius:50%; background:#374151; border:0; color:#fff; font-size:20px; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center;" title="マイクON/OFF">
+        <span id="callMuteIcon">🎙️</span>
+        <span id="callMuteLabel" style="font-size:9px; margin-top:2px;">マイク</span>
       </button>
-      <button onclick="alert('スピーカーを切り替えました')" style="width:56px; height:56px; border-radius:50%; background:#374151; border:0; color:#fff; font-size:20px; cursor:pointer;">
-        🔊
+      <button id="callSpeakerBtn" onclick="window.toggleSpeakerVoiceCall()" style="width:58px; height:58px; border-radius:50%; background:#374151; border:0; color:#fff; font-size:20px; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center;" title="スピーカー切り替え">
+        <span>🔊</span>
+        <span style="font-size:9px; margin-top:2px;">スピーカー</span>
       </button>
-      <button onclick="alert('カメラを切り替えました')" style="width:56px; height:56px; border-radius:50%; background:#374151; border:0; color:#fff; font-size:20px; cursor:pointer;">
-        📹
+      <button onclick="window.endVoiceCall()" style="width:64px; height:64px; border-radius:50%; background:#ef4444; border:0; color:#fff; font-size:26px; cursor:pointer; box-shadow:0 4px 16px rgba(239,68,68,0.5); display:flex; flex-direction:column; align-items:center; justify-content:center;" title="通話を終了">
+        <span>🛑</span>
+        <span style="font-size:10px; font-weight:bold; margin-top:2px;">終了</span>
       </button>
-      <button onclick="window.endVoiceCall()" style="width:64px; height:64px; border-radius:50%; background:#ef4444; border:0; color:#fff; font-size:24px; cursor:pointer; box-shadow:0 4px 16px rgba(239,68,68,0.5);">
-        🛑
+    </div>
+  </div>
+</div>
+
+<!-- 着信通知ポップアップモーダル -->
+<div id="incomingCallModal" class="modal-backdrop hidden" style="z-index:9999;">
+  <div style="background:#1e293b; color:#fff; border-radius:24px; padding:32px 24px; text-align:center; max-width:340px; width:90%; box-shadow:0 16px 40px rgba(0,0,0,0.6); border:1px solid #334155;">
+    <div style="width:84px; height:84px; border-radius:50%; background:#06c755; color:#fff; font-size:40px; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; box-shadow:0 0 24px rgba(6,199,85,0.6);">
+      📞
+    </div>
+    <h3 id="incomingCallerName" style="margin:0 0 6px; font-size:20px; font-weight:800;">着信中…</h3>
+    <p style="margin:0 0 28px; font-size:13px; color:#94a3b8;">もこり無料通話のリクエストが届きました</p>
+    <div style="display:flex; justify-content:center; gap:28px;">
+      <button onclick="window.rejectIncomingCall()" style="width:62px; height:62px; border-radius:50%; background:#ef4444; border:0; color:#fff; font-size:24px; cursor:pointer; box-shadow:0 4px 16px rgba(239,68,68,0.4); display:flex; align-items:center; justify-content:center;" title="拒否">
+        ✕
+      </button>
+      <button onclick="window.answerIncomingCall()" style="width:62px; height:62px; border-radius:50%; background:#06c755; border:0; color:#fff; font-size:26px; cursor:pointer; box-shadow:0 4px 16px rgba(6,199,85,0.4); display:flex; align-items:center; justify-content:center;" title="応答">
+        📞
       </button>
     </div>
   </div>
@@ -1560,8 +1602,8 @@
 <script src="/three.min.js"></script>
 <script src="/brawl3d.js"></script>
 <script src="/fortnite3d.js"></script>
-<script src="/games.js"></script>
-<script src="/line_unlimited.js"></script>
+<script src="/games.js?v=20261105_25"></script>
+<script src="/line_unlimited.js?v=20261105_25"></script>
 
 <script>
   // Firebase 設定
@@ -1602,51 +1644,69 @@
   let replyingTo = null; // { messageId, text, senderName }
   let selectedMsgForMenu = null; // { messageId, senderUid, text, unsent }
 
-  // API 呼び出しヘルパー (トークン自動リフレッシュ & 401再試行 & 安全リダイレクト対応)
+  // API 呼び出しヘルパー (通信タイムアウト防止・多重ロック・自動リフレッシュ・絶対フリーズ防止)
   window.api = async function(path, options = {}) {
     if (!currentUser) {
       window.location.href = "/";
       throw new Error("ログインしてください。");
     }
+
     let token = await currentUser.getIdToken();
-    let res = await fetch(path, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + token,
-        ...(options.headers || {})
-      }
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-    if (res.status === 401) {
-      try {
-        token = await currentUser.getIdToken(true);
-        res = await fetch(path, {
-          ...options,
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + token,
-            ...(options.headers || {})
-          }
-        });
-      } catch (e) {
-        console.warn("Token force refresh error:", e);
-      }
-      if (res.status === 401) {
-        console.warn("Session expired, redirecting to login");
-        window.location.href = "/";
-        throw new Error("セッションの有効期限が切れました。再ログインしてください。");
-      }
-    }
-
-    let data;
     try {
-      data = await res.json();
-    } catch (_) {
-      throw new Error("サーバーからの応答を解析できませんでした。");
+      let res = await fetch(path, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + token,
+          ...(options.headers || {})
+        }
+      });
+      clearTimeout(timeoutId);
+
+      if (res.status === 401) {
+        try {
+          token = await currentUser.getIdToken(true);
+          const c2 = new AbortController();
+          const t2 = setTimeout(() => c2.abort(), 8000);
+          res = await fetch(path, {
+            ...options,
+            signal: c2.signal,
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer " + token,
+              ...(options.headers || {})
+            }
+          });
+          clearTimeout(t2);
+        } catch (e) {
+          console.warn("Token force refresh error:", e);
+        }
+        if (res.status === 401) {
+          console.warn("Session expired, redirecting to login");
+          window.location.href = "/";
+          throw new Error("セッションの有効期限が切れました。再ログインしてください。");
+        }
+      }
+
+      let data;
+      try {
+        data = await res.json();
+      } catch (_) {
+        throw new Error("サーバーからの応答を解析できませんでした。");
+      }
+      if (!res.ok) throw new Error(data.error || "リクエストに失敗しました。");
+      return data;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err.name === "AbortError") {
+        throw new Error("通信がタイムアウトしました。通信環境を確認してください。");
+      }
+      throw err;
     }
-    if (!res.ok) throw new Error(data.error || "リクエストに失敗しました。");
-    return data;
   };
   const api = window.api;
 
@@ -1664,22 +1724,61 @@
     startPolling();
   });
 
-  // ポーリング開始 (リクエスト競合・サーバー負荷・不要な再描画を最小化)
+  // ポーリング開始 (通信ロック・タブ復帰自動同期・着信自動検知・myyajuu同等超安定仕様)
+  let isPollingMessages = false;
+  let isPollingChats = false;
+
   function startPolling() {
     if (pollTimer) clearInterval(pollTimer);
     let pollTick = 0;
     pollTimer = setInterval(async () => {
       if (!currentUser) return;
+      if (document.visibilityState === "hidden") return; // バックグラウンド時は省電力・メモリ温存
+
       pollTick++;
-      if (activeChatId) {
-        await loadMessages(false);
+
+      // 着信チェック (毎秒〜2秒で通話着信を自動検知)
+      if (window.checkIncomingCallSignal && activeChatId) {
+        window.checkIncomingCallSignal(activeChatId);
       }
+
+      if (activeChatId && !isPollingMessages) {
+        isPollingMessages = true;
+        try {
+          await loadMessages(false);
+        } finally {
+          isPollingMessages = false;
+        }
+      }
+
       // チャット一覧は3回に1回 (約7.5秒間隔) にして負荷削減
-      if (pollTick % 3 === 0) {
-        await loadChats(false);
+      if (pollTick % 3 === 0 && !isPollingChats) {
+        isPollingChats = true;
+        try {
+          await loadChats(false);
+        } finally {
+          isPollingChats = false;
+        }
       }
     }, 2500);
   }
+
+  // 画面復帰 & ネットワーク再接続時の自動即時同期 (固まるのを根本防止)
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && currentUser) {
+      if (activeChatId) loadMessages(false);
+      loadChats(false);
+      startPolling();
+    }
+  });
+
+  window.addEventListener("online", () => {
+    if (currentUser) {
+      if (activeChatId) loadMessages(false);
+      loadChats(false);
+      startPolling();
+    }
+  });
 
   // スタンプドロワーの初期化
   function initStampDrawer() {
@@ -1995,36 +2094,72 @@
       row.className = "msg-row " + (mine ? "mine" : "other");
       row.dataset.msgId = msg.id;
 
-      // 送信者名とアイコン (相手側のメッセージは全員グループ・グループ・個別すべて常時表示 & タップで友達追加)
+      // LINE風レイアウト: 送信者アバター列 & コンテンツ列
+      let contentCol = null;
+
       if (!mine) {
-        const sName = msg.senderName || "ユーザー";
+        // 送信者名のフォールバック照合
+        let sName = msg.senderName;
+        if (!sName || sName === "ユーザー") {
+          if (activeChatData && activeChatData.memberInfo && activeChatData.memberInfo[msg.senderUid]) {
+            sName = activeChatData.memberInfo[msg.senderUid].username;
+          }
+        }
+        if (!sName) sName = "ユーザー";
         const sUid = msg.senderUid || "";
         const sInitial = sName.charAt(0) || "🐐";
 
-        const senderWrap = document.createElement("div");
-        senderWrap.className = "msg-sender-wrap";
-        senderWrap.title = `${sName} のプロフィール / 友達追加`;
-        senderWrap.addEventListener("click", (e) => {
+        // ユーザー名に応じた鮮やかな固有グラデーションアバター
+        const avatarColors = [
+          "linear-gradient(135deg, #f97316, #ea580c)", // Orange
+          "linear-gradient(135deg, #10b981, #059669)", // Emerald
+          "linear-gradient(135deg, #3b82f6, #2563eb)", // Blue
+          "linear-gradient(135deg, #8b5cf6, #7c3aed)", // Purple
+          "linear-gradient(135deg, #ec4899, #db2777)", // Pink
+          "linear-gradient(135deg, #06b6d4, #0891b2)", // Cyan
+          "linear-gradient(135deg, #eab308, #ca8a04)", // Yellow
+          "linear-gradient(135deg, #6366f1, #4f46e5)"  // Indigo
+        ];
+        let colorHash = 0;
+        for (let i = 0; i < sName.length; i++) colorHash = (colorHash << 5) - colorHash + sName.charCodeAt(i);
+        const avatarBg = avatarColors[Math.abs(colorHash) % avatarColors.length];
+
+        // 1. 左側アバター円
+        const avatarCol = document.createElement("div");
+        avatarCol.className = "msg-avatar-col";
+        avatarCol.style.background = avatarBg;
+        avatarCol.textContent = sInitial;
+        avatarCol.title = `${sName} のプロフィール / 友達追加`;
+        avatarCol.addEventListener("click", (e) => {
           e.stopPropagation();
           window.openUserProfileModal(sUid, sName);
         });
+        row.appendChild(avatarCol);
 
-        const avatarEl = document.createElement("div");
-        avatarEl.className = "msg-sender-avatar";
-        avatarEl.textContent = sInitial;
+        // 2. 右側コンテンツ列 (名前ヘッダー + 吹き出し)
+        contentCol = document.createElement("div");
+        contentCol.className = "msg-content-col";
+
+        const senderHeader = document.createElement("div");
+        senderHeader.className = "msg-sender-header";
+        senderHeader.title = `${sName} のプロフィール / 友達追加`;
+        senderHeader.addEventListener("click", (e) => {
+          e.stopPropagation();
+          window.openUserProfileModal(sUid, sName);
+        });
 
         const nameEl = document.createElement("span");
         nameEl.className = "msg-sender-name";
         nameEl.textContent = sName;
 
+        const isFriend = Array.isArray(allFriends) && allFriends.some(f => f.uid === sUid || f.username === sName);
         const hintEl = document.createElement("span");
-        hintEl.className = "msg-sender-add-hint";
-        hintEl.textContent = "➕友達追加";
+        hintEl.className = "msg-sender-add-hint" + (isFriend ? " is-friend" : "");
+        hintEl.textContent = isFriend ? "🤝友だち" : "➕友達追加";
 
-        senderWrap.appendChild(avatarEl);
-        senderWrap.appendChild(nameEl);
-        senderWrap.appendChild(hintEl);
-        row.appendChild(senderWrap);
+        senderHeader.appendChild(nameEl);
+        senderHeader.appendChild(hintEl);
+        contentCol.appendChild(senderHeader);
       }
 
       const bodyWrap = document.createElement("div");
@@ -2054,6 +2189,33 @@
           bubble.appendChild(quote);
         }
 
+        // 無料通話カード
+        if (msg.type === "call_invite") {
+          const callCard = document.createElement("div");
+          callCard.style.padding = "10px 14px";
+          callCard.style.background = "linear-gradient(135deg, #06c755, #059669)";
+          callCard.style.color = "#ffffff";
+          callCard.style.borderRadius = "12px";
+          callCard.style.display = "flex";
+          callCard.style.alignItems = "center";
+          callCard.style.justifyContent = "space-between";
+          callCard.style.gap = "12px";
+          callCard.style.boxShadow = "0 3px 10px rgba(6,199,85,0.3)";
+          callCard.innerHTML = `
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:24px;">📞</span>
+              <div>
+                <div style="font-weight:bold;font-size:13px;">無料通話</div>
+                <div style="font-size:11px;opacity:0.95;">${escapeHtml(msg.text || "無料通話が開始されました")}</div>
+              </div>
+            </div>
+            <button style="background:#ffffff;color:#059669;font-weight:bold;font-size:12px;border:0;padding:6px 14px;border-radius:20px;cursor:pointer;box-shadow:0 2px 5px rgba(0,0,0,0.15);" onclick="window.answerIncomingCall()">
+              参加 ▶
+            </button>
+          `;
+          bubble.appendChild(callCard);
+        }
+
         // ゲーム招待カード (LINEのぶるぶるどうぶつ・グループ通話風)
         if (msg.type === "game_invite" && msg.gameInvite) {
           const inv = msg.gameInvite;
@@ -2067,7 +2229,7 @@
 
           const icons = {
             othello: "⚫⚪", uno: "🎴", daifugo: "🃏",
-            snowball: "❄️", paper: "📄", brawl: "⭐", solitaire: "♠️"
+            snowball: "❄️", paper: "📄", brawl: "⭐", solitaire: "♠️", drawquiz: "🎨"
           };
           const gameIcon = icons[gType] || "🎮";
 
@@ -2167,7 +2329,11 @@
       meta.appendChild(timeElem);
 
       bodyWrap.appendChild(meta);
-      row.appendChild(bodyWrap);
+      if (contentCol) {
+        contentCol.appendChild(bodyWrap);
+      } else {
+        row.appendChild(bodyWrap);
+      }
 
       // リアクション一覧バー
       if (!msg.unsent && msg.reactions && Object.keys(msg.reactions).length > 0) {
@@ -2186,7 +2352,15 @@
             reactionsBar.appendChild(pill);
           }
         }
-        row.appendChild(reactionsBar);
+        if (contentCol) {
+          contentCol.appendChild(reactionsBar);
+        } else {
+          row.appendChild(reactionsBar);
+        }
+      }
+
+      if (contentCol) {
+        row.appendChild(contentCol);
       }
 
       container.appendChild(row);

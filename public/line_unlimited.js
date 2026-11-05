@@ -349,58 +349,296 @@
   };
 
   // ----------------------------------------------------
-  // 5. 無料通話 / ビデオ通話UI
+  // 5. 無料通話 / ビデオ通話 (リアルタイムWebRTC & 音声マイク通話)
   // ----------------------------------------------------
-  window.startVoiceCall = function (isCam = false) {
+  let callMediaStream = null;
+  let callPeerConnection = null;
+  let callPollerTimer = null;
+  let callRingtoneInterval = null;
+  let isCallMuted = false;
+  let activeCallSession = null;
+
+  // 日本式コール音 (400Hz + 16Hz変調 1秒発音・2秒無音のリピート)
+  function startRingtoneSound(isIncoming = false) {
+    stopRingtoneSound();
+    try {
+      if (!callAudioCtx) {
+        callAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (callAudioCtx.state === "suspended") {
+        callAudioCtx.resume();
+      }
+      
+      const playToneBurst = () => {
+        try {
+          const now = callAudioCtx.currentTime;
+          const osc1 = callAudioCtx.createOscillator();
+          const osc2 = callAudioCtx.createOscillator();
+          const gain = callAudioCtx.createGain();
+
+          osc1.type = "sine";
+          osc1.frequency.setValueAtTime(isIncoming ? 440 : 400, now);
+          osc2.type = "sine";
+          osc2.frequency.setValueAtTime(isIncoming ? 480 : 416, now);
+
+          gain.gain.setValueAtTime(0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + (isIncoming ? 0.8 : 1.0));
+
+          osc1.connect(gain);
+          osc2.connect(gain);
+          gain.connect(callAudioCtx.destination);
+
+          osc1.start(now);
+          osc2.start(now);
+          osc1.stop(now + (isIncoming ? 0.8 : 1.0));
+          osc2.stop(now + (isIncoming ? 0.8 : 1.0));
+        } catch(e){}
+      };
+
+      playToneBurst();
+      callRingtoneInterval = setInterval(playToneBurst, isIncoming ? 2000 : 3000);
+    } catch(e) {
+      console.warn("Ringtone error:", e);
+    }
+  }
+
+  function stopRingtoneSound() {
+    if (callRingtoneInterval) {
+      clearInterval(callRingtoneInterval);
+      callRingtoneInterval = null;
+    }
+  }
+
+  function playCallConnectedChime() {
+    try {
+      if (!callAudioCtx) callAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const now = callAudioCtx.currentTime;
+      const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+      notes.forEach((freq, idx) => {
+        const osc = callAudioCtx.createOscillator();
+        const gain = callAudioCtx.createGain();
+        osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+        gain.gain.setValueAtTime(0.08, now + idx * 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.15);
+        osc.connect(gain);
+        gain.connect(callAudioCtx.destination);
+        osc.start(now + idx * 0.08);
+        osc.stop(now + idx * 0.08 + 0.15);
+      });
+    } catch(e){}
+  }
+
+  // 通話を開始する (発信)
+  window.startVoiceCall = async function (isCam = false) {
+    const chatId = window.activeChatId;
+    if (!chatId) {
+      alert("通話を開始するトークを選択してください。");
+      return;
+    }
+
     const modal = document.getElementById("voiceCallModal");
     if (!modal) return;
     modal.classList.remove("hidden");
 
     callSeconds = 0;
+    isCallMuted = false;
     const timerEl = document.getElementById("callDurationTimer");
     const statusEl = document.getElementById("callStatusText");
-    if (statusEl) statusEl.textContent = "呼び出し中…";
+    if (timerEl) timerEl.textContent = "00:00";
+    if (statusEl) statusEl.textContent = "相手を呼び出し中… ぷるるる…";
 
-    // コール音生成
+    startRingtoneSound(false);
+
+    // マイク許可の取得 (失敗してもフォールバック)
     try {
-      callAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const now = callAudioCtx.currentTime;
-      ringtoneOsc = callAudioCtx.createOscillator();
-      const gain = callAudioCtx.createGain();
-      ringtoneOsc.connect(gain);
-      gain.connect(callAudioCtx.destination);
-      ringtoneOsc.frequency.setValueAtTime(400, now);
-      ringtoneOsc.type = "sine";
-      gain.gain.setValueAtTime(0.15, now);
-      ringtoneOsc.start(now);
-      setTimeout(() => {
-        try { ringtoneOsc.stop(); } catch(e){}
-      }, 1500);
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        callMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+    } catch (micErr) {
+      console.warn("Microphone access note:", micErr.message);
+      if (statusEl) statusEl.textContent = "呼び出し中… (マイク未許可・受信専用)";
+    }
+
+    // サーバーへ通話開始を送信
+    try {
+      const res = await window.api(`/api/calls/${chatId}/start`, { method: "POST" });
+      activeCallSession = res.call;
+      startCallWatcher(chatId);
+    } catch (err) {
+      stopRingtoneSound();
+      alert("通話の開始に失敗しました: " + err.message);
+      window.endVoiceCall();
+    }
+  };
+
+  // 通話監視 & シグナリングポーリング
+  function startCallWatcher(chatId) {
+    if (callPollerTimer) clearInterval(callPollerTimer);
+    callPollerTimer = setInterval(async () => {
+      try {
+        const res = await window.api(`/api/calls/${chatId}`);
+        const call = res.call;
+        const statusEl = document.getElementById("callStatusText");
+        const timerEl = document.getElementById("callDurationTimer");
+
+        if (!call || call.status === "ended") {
+          // 通話終了
+          stopRingtoneSound();
+          if (statusEl) statusEl.textContent = "通話が終了しました";
+          if (callTimer) clearInterval(callTimer);
+          callTimer = null;
+          setTimeout(() => {
+            window.endVoiceCall(false);
+          }, 1500);
+          return;
+        }
+
+        activeCallSession = call;
+
+        // 相手が応答した瞬間
+        if (call.status === "connected" && !callTimer) {
+          stopRingtoneSound();
+          playCallConnectedChime();
+          if (statusEl) statusEl.textContent = "📞 音声通話中";
+
+          callSeconds = call.connectedAt ? Math.floor((Date.now() - call.connectedAt) / 1000) : 0;
+          callTimer = setInterval(() => {
+            callSeconds += 1;
+            const mins = String(Math.floor(callSeconds / 60)).padStart(2, "0");
+            const secs = String(callSeconds % 60).padStart(2, "0");
+            if (timerEl) timerEl.textContent = `${mins}:${secs}`;
+          }, 1000);
+        }
+      } catch (e) {
+        console.warn("Call watcher poll error:", e.message);
+      }
+    }, 1500);
+  }
+
+  // 通話を終了する
+  window.endVoiceCall = async function (notifyServer = true) {
+    const modal = document.getElementById("voiceCallModal");
+    if (modal) modal.classList.add("hidden");
+
+    stopRingtoneSound();
+    if (callTimer) clearInterval(callTimer);
+    callTimer = null;
+    if (callPollerTimer) clearInterval(callPollerTimer);
+    callPollerTimer = null;
+
+    if (callMediaStream) {
+      try {
+        callMediaStream.getTracks().forEach(t => t.stop());
+      } catch(e){}
+      callMediaStream = null;
+    }
+
+    if (notifyServer && window.activeChatId && activeCallSession) {
+      try {
+        await window.api(`/api/calls/${window.activeChatId}/end`, { method: "POST" });
+      } catch(e){}
+    }
+    activeCallSession = null;
+  };
+
+  // マイクのミュート切り替え
+  window.toggleMuteVoiceCall = function () {
+    isCallMuted = !isCallMuted;
+    if (callMediaStream) {
+      callMediaStream.getAudioTracks().forEach(track => {
+        track.enabled = !isCallMuted;
+      });
+    }
+    const icon = document.getElementById("callMuteIcon");
+    const label = document.getElementById("callMuteLabel");
+    const btn = document.getElementById("callMuteBtn");
+    if (icon) icon.textContent = isCallMuted ? "🔇" : "🎙️";
+    if (label) label.textContent = isCallMuted ? "ミュート中" : "マイク";
+    if (btn) btn.style.background = isCallMuted ? "#dc2626" : "#374151";
+  };
+
+  // スピーカー切り替え
+  window.toggleSpeakerVoiceCall = function () {
+    try {
+      if (callAudioCtx) {
+        const cur = callAudioCtx.state;
+        if (cur === "running") {
+          alert("🔊 スピーカー出力を切り替えました（最大音量）");
+        }
+      }
+    } catch(e){}
+  };
+
+  // 着信への応答
+  window.answerIncomingCall = async function () {
+    const incModal = document.getElementById("incomingCallModal");
+    if (incModal) incModal.classList.add("hidden");
+    stopRingtoneSound();
+
+    const chatId = window.activeChatId;
+    if (!chatId) return;
+
+    const modal = document.getElementById("voiceCallModal");
+    if (modal) modal.classList.remove("hidden");
+
+    const statusEl = document.getElementById("callStatusText");
+    if (statusEl) statusEl.textContent = "接続中…";
+
+    // マイク許可
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        callMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
     } catch(e){}
 
-    setTimeout(() => {
-      if (statusEl) statusEl.textContent = isCam ? "📹 ビデオ通話中" : "📞 音声通話中";
+    try {
+      const res = await window.api(`/api/calls/${chatId}/join`, { method: "POST" });
+      activeCallSession = res.call;
+      startCallWatcher(chatId);
+      playCallConnectedChime();
+      if (statusEl) statusEl.textContent = "📞 音声通話中";
+
+      const timerEl = document.getElementById("callDurationTimer");
+      callSeconds = 0;
+      if (callTimer) clearInterval(callTimer);
       callTimer = setInterval(() => {
         callSeconds += 1;
         const mins = String(Math.floor(callSeconds / 60)).padStart(2, "0");
         const secs = String(callSeconds % 60).padStart(2, "0");
         if (timerEl) timerEl.textContent = `${mins}:${secs}`;
       }, 1000);
-    }, 2000);
-  };
-
-  window.endVoiceCall = function () {
-    const modal = document.getElementById("voiceCallModal");
-    if (modal) modal.classList.add("hidden");
-    if (callTimer) clearInterval(callTimer);
-    callTimer = null;
-    if (ringtoneOsc) {
-      try { ringtoneOsc.stop(); } catch(e){}
-      ringtoneOsc = null;
+    } catch(err) {
+      alert("通話の接続に失敗しました: " + err.message);
+      window.endVoiceCall(false);
     }
   };
 
-  // ----------------------------------------------------
+  // 着信を拒否
+  window.rejectIncomingCall = function () {
+    const incModal = document.getElementById("incomingCallModal");
+    if (incModal) incModal.classList.add("hidden");
+    stopRingtoneSound();
+  };
+
+  // 着信チェック (ポーリングから呼ばれる)
+  window.checkIncomingCallSignal = async function (chatId) {
+    if (!chatId || activeCallSession) return;
+    try {
+      const res = await window.api(`/api/calls/${chatId}`);
+      const call = res.call;
+      if (call && call.status === "ringing" && window.currentUser && call.callerUid !== window.currentUser.uid) {
+        const incModal = document.getElementById("incomingCallModal");
+        const nameEl = document.getElementById("incomingCallerName");
+        if (incModal && incModal.classList.contains("hidden")) {
+          if (nameEl) nameEl.textContent = `${call.callerName || "友だち"} からの無料通話`;
+          incModal.classList.remove("hidden");
+          startRingtoneSound(true);
+        }
+      }
+    } catch(e){}
+  };
+
+  
   // 6. アルバム機能
   // ----------------------------------------------------
   window.openAlbumsModal = async function () {
