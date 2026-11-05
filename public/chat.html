@@ -1602,11 +1602,14 @@
   let replyingTo = null; // { messageId, text, senderName }
   let selectedMsgForMenu = null; // { messageId, senderUid, text, unsent }
 
-  // API 呼び出しヘルパー
+  // API 呼び出しヘルパー (トークン自動リフレッシュ & 401再試行 & 安全リダイレクト対応)
   window.api = async function(path, options = {}) {
-    if (!currentUser) throw new Error("ログインしてください。");
-    const token = await currentUser.getIdToken();
-    const res = await fetch(path, {
+    if (!currentUser) {
+      window.location.href = "/";
+      throw new Error("ログインしてください。");
+    }
+    let token = await currentUser.getIdToken();
+    let res = await fetch(path, {
       ...options,
       headers: {
         "Content-Type": "application/json",
@@ -1614,7 +1617,34 @@
         ...(options.headers || {})
       }
     });
-    const data = await res.json();
+
+    if (res.status === 401) {
+      try {
+        token = await currentUser.getIdToken(true);
+        res = await fetch(path, {
+          ...options,
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token,
+            ...(options.headers || {})
+          }
+        });
+      } catch (e) {
+        console.warn("Token force refresh error:", e);
+      }
+      if (res.status === 401) {
+        console.warn("Session expired, redirecting to login");
+        window.location.href = "/";
+        throw new Error("セッションの有効期限が切れました。再ログインしてください。");
+      }
+    }
+
+    let data;
+    try {
+      data = await res.json();
+    } catch (_) {
+      throw new Error("サーバーからの応答を解析できませんでした。");
+    }
     if (!res.ok) throw new Error(data.error || "リクエストに失敗しました。");
     return data;
   };
@@ -1634,16 +1664,21 @@
     startPolling();
   });
 
-  // ポーリング開始
+  // ポーリング開始 (リクエスト競合・サーバー負荷・不要な再描画を最小化)
   function startPolling() {
     if (pollTimer) clearInterval(pollTimer);
+    let pollTick = 0;
     pollTimer = setInterval(async () => {
       if (!currentUser) return;
+      pollTick++;
       if (activeChatId) {
         await loadMessages(false);
       }
-      await loadChats(false);
-    }, 2000);
+      // チャット一覧は3回に1回 (約7.5秒間隔) にして負荷削減
+      if (pollTick % 3 === 0) {
+        await loadChats(false);
+      }
+    }, 2500);
   }
 
   // スタンプドロワーの初期化
@@ -1678,6 +1713,10 @@
       }
     } catch (err) {
       console.warn("Chats load failed:", err.message);
+      const container = document.getElementById("chatListContainer");
+      if (container && (!allChats || allChats.length === 0)) {
+        container.innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:13px;">トークの取得に失敗しました。<br><button class="btn-sm btn-secondary" onclick="loadChats()" style="margin-top:10px;">再試行</button></div>`;
+      }
     }
   }
 

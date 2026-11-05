@@ -3,6 +3,7 @@ const admin = require("firebase-admin");
 const bcrypt = require("bcryptjs");
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
@@ -62,8 +63,9 @@ try {
 // セキュリティ & 権限ヘルパー
 // ----------------------------------------------------
 const authRateLimits = new Map();
-function checkAuthRateLimit(req, res, maxRequests = 20, windowMs = 60000) {
-  const ip = req.ip || req.headers["x-forwarded-for"] || "unknown_ip";
+function checkAuthRateLimit(req, res, maxRequests = 60, windowMs = 60000) {
+  const forwarded = req.headers["x-forwarded-for"];
+  const ip = (typeof forwarded === "string" ? forwarded.split(",")[0].trim() : null) || req.ip || req.socket.remoteAddress || "unknown_ip";
   const now = Date.now();
   const record = authRateLimits.get(ip) || { count: 0, resetAt: now + windowMs };
   if (now > record.resetAt) {
@@ -73,12 +75,23 @@ function checkAuthRateLimit(req, res, maxRequests = 20, windowMs = 60000) {
     record.count++;
   }
   authRateLimits.set(ip, record);
+  if (authRateLimits.size > 1000) {
+    for (const [k, v] of authRateLimits.entries()) {
+      if (now > v.resetAt) authRateLimits.delete(k);
+    }
+  }
   if (record.count > maxRequests) {
     res.status(429).json({ error: "リクエストが多すぎます。少し時間をおいて再度お試しください。" });
     return false;
   }
   return true;
 }
+
+// ----------------------------------------------------
+// メッセージインメモリキャッシュ (Firestore読み書きクォータ爆発・競合・遅延を完全防止)
+// ----------------------------------------------------
+const messageCache = new Map();
+const CACHE_TTL_MS = 3000;
 
 async function isUserAdmin(uid, userObj) {
   if (!uid) return false;
@@ -225,6 +238,11 @@ app.post("/api/login", async (req, res) => {
     }
 
     const uid = usernameDoc.data().uid;
+    if (!uid) {
+      return res.status(401).json({
+        error: "ユーザー名またはパスワードが違います。"
+      });
+    }
     const userDoc = await db.collection("users").doc(uid).get();
 
     if (!userDoc.exists) {
@@ -233,9 +251,16 @@ app.post("/api/login", async (req, res) => {
       });
     }
 
+    const userData = userDoc.data() || {};
+    if (!userData.passwordHash) {
+      return res.status(401).json({
+        error: "ユーザー名またはパスワードが違います。"
+      });
+    }
+
     const valid = await bcrypt.compare(
       password,
-      userDoc.data().passwordHash
+      userData.passwordHash
     );
 
     if (!valid) {
@@ -1021,6 +1046,13 @@ app.get("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
       return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
     }
 
+    // キャッシュチェック (直近3秒以内の取得結果があれば即座に応答しFirestore負荷を激減)
+    const now = Date.now();
+    const cached = messageCache.get(chatId);
+    if (cached && (now - cached.cachedAt < CACHE_TTL_MS)) {
+      return res.json({ messages: cached.messages });
+    }
+
     const snapshot = await chatRef
       .collection("messages")
       .orderBy("createdAt", "asc")
@@ -1053,13 +1085,13 @@ app.get("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
 
     if (unreadUpdated) {
       await batch.commit().catch((e) => console.warn("既読バッチ更新警告:", e.message));
+      // 既読更新があった時のみチャット最終既読時刻を更新 (毎秒の無駄書き込みを排除)
+      await chatRef.update({
+        [`readStatus.${myUid}`]: admin.firestore.FieldValue.serverTimestamp()
+      }).catch(() => {});
     }
 
-    // チャットの最終既読時刻を更新
-    await chatRef.update({
-      [`readStatus.${myUid}`]: admin.firestore.FieldValue.serverTimestamp()
-    }).catch(() => {});
-
+    messageCache.set(chatId, { messages, cachedAt: now });
     return res.json({ messages });
   } catch (error) {
     console.error("メッセージ取得エラー:", error);
@@ -1141,6 +1173,7 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
     };
 
     const msgDoc = await chatRef.collection("messages").add(messageData);
+    messageCache.delete(chatId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     await chatRef.update({
@@ -1356,6 +1389,7 @@ app.post("/api/chats/:chatId/messages/:messageId/unsend", requireLogin, async (r
       return res.json({ ok: true, message: "すでに送信が取り消されています。" });
     }
 
+    messageCache.delete(chatId);
     await msgRef.update({
       unsent: true,
       text: "メッセージの送信を取り消しました",
@@ -1413,6 +1447,7 @@ app.delete("/api/chats/:chatId/messages/:messageId", requireLogin, async (req, r
     }
 
     await msgRef.delete();
+    messageCache.delete(chatId);
 
     const chatDoc = await chatRef.get();
     if (chatDoc.exists) {
@@ -1493,6 +1528,7 @@ app.post("/api/chats/:chatId/messages/:messageId/reactions", requireLogin, async
     }
 
     await msgRef.update({ reactions: currentReactions });
+    messageCache.delete(chatId);
     return res.json({ ok: true, reactions: currentReactions });
   } catch (error) {
     console.error("リアクションエラー:", error);
@@ -2094,7 +2130,8 @@ app.use('/api/ai', (req, res, next) => {
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
-  return requireLogin(req, res, next);
+  // ※ Cloudflare Worker (myyajuu-ai-worker) が自身でFirebase IDトークンの署名・有効期限を検証するため透過転送
+  next();
 }, async (req, res) => {
 
   const targetUrl = 'https://myyajuu-ai-worker.harumei-260329.workers.dev' + req.url;
@@ -2128,6 +2165,13 @@ app.use('/api/ai', (req, res, next) => {
 });
 
 const port = process.env.PORT || 3000;
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught Exception:", error);
+});
 
 app.listen(port, () => {
   console.log(`mokori server listening on port ${port}`);
