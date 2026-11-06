@@ -1952,7 +1952,7 @@ app.post("/api/chats/:chatId/leave", requireLogin, async (req, res) => {
 // ====================================================
 
 // Apple Music (iTunes Search API) 30秒試聴・曲検索プロキシ
-app.get("/api/music/search", requireLogin, async (req, res) => {
+app.get("/api/music/search", async (req, res) => {
   const query = String(req.query.q || "").trim();
   if (!query) return res.json({ results: [] });
 
