@@ -1219,6 +1219,16 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
 
     const msgDoc = await chatRef.collection("messages").add(messageData);
     messageCache.delete(chatId);
+    const liveMsg = {
+      id: msgDoc.id,
+      ...messageData,
+      createdAt: { _seconds: Math.floor(Date.now() / 1000), _nanoseconds: 0 }
+    };
+    if (memoryChatMessages.has(chatId)) {
+      memoryChatMessages.get(chatId).push(liveMsg);
+    } else {
+      memoryChatMessages.set(chatId, [liveMsg]);
+    }
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     await chatRef.update({
