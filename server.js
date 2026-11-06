@@ -732,6 +732,64 @@ app.get("/api/chats", requireLogin, async (req, res) => {
         announcement: null,
         createdAt: keepData.createdAt || null
       });
+
+      // 🤖 AIアシスタント (自分専用のAIチャットルーム)
+      const aiChatId = `ai_${myUid}`;
+      const aiRef = db.collection("chats").doc(aiChatId);
+      let aiDoc = await aiRef.get();
+      if (!aiDoc.exists) {
+        await aiRef.set({
+          type: "ai",
+          name: "🤖 AIアシスタント",
+          description: "いつでも質問や相談、雑談ができる専用AIです。",
+          isAi: true,
+          members: [myUid, "ai_assistant"],
+          memberInfo: {
+            [myUid]: { username: "あなた", joinedAt: now },
+            "ai_assistant": { username: "AIアシスタント", joinedAt: now, isAi: true }
+          },
+          lastMessage: {
+            text: "こんにちは！何でも聞いてくださいね。質問、雑談、勉強やプログラミングなど何でもお手伝いします！🤖",
+            type: "text",
+            senderUid: "ai_assistant",
+            senderName: "AIアシスタント",
+            unsent: false,
+            createdAt: now
+          },
+          lastMessageAt: now,
+          readStatus: { [myUid]: now },
+          createdAt: now
+        });
+        aiDoc = await aiRef.get();
+      }
+      const aiData = aiDoc.data();
+      const myAiRead = (aiData.readStatus && aiData.readStatus[myUid]) || null;
+      let hasAiUnread = false;
+      if (aiData.lastMessage && aiData.lastMessage.senderUid !== myUid && !aiData.lastMessage.unsent) {
+        const msgTime = aiData.lastMessage.createdAt && aiData.lastMessage.createdAt.toMillis
+          ? aiData.lastMessage.createdAt.toMillis()
+          : (typeof aiData.lastMessage.createdAt === "number" ? aiData.lastMessage.createdAt : 0);
+        const readTime = myAiRead && myAiRead.toMillis
+          ? myAiRead.toMillis()
+          : (typeof myAiRead === "number" ? myAiRead : 0);
+        if (msgTime > readTime) hasAiUnread = true;
+      }
+
+      chats.unshift({
+        id: aiChatId,
+        type: "ai",
+        name: "🤖 AIアシスタント",
+        description: "いつでも質問や相談ができる専用AI",
+        isAi: true,
+        members: [myUid, "ai_assistant"],
+        memberInfo: aiData.memberInfo || {},
+        partnerUid: "ai_assistant",
+        lastMessage: aiData.lastMessage || null,
+        lastMessageAt: aiData.lastMessageAt || null,
+        unread: hasAiUnread,
+        announcement: null,
+        createdAt: aiData.createdAt || null
+      });
     } catch (err) {
       console.warn("全員グループ確認警告:", err.message);
     }
@@ -1207,6 +1265,66 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
       lastMessageAt: now,
       [`readStatus.${myUid}`]: now
     });
+
+    // AIチャットへの投稿なら自動でAIが返答
+    if (chatId.startsWith("ai_") || chatData.isAi) {
+      setTimeout(async () => {
+        try {
+          const authHeader = req.headers.authorization || "";
+          let aiText = "";
+          try {
+            const aiResp = await fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: authHeader
+              },
+              body: JSON.stringify({ message: text, model: "@cf/meta/llama-3.2-3b-instruct" })
+            });
+            if (aiResp.ok) {
+              const aiData = await aiResp.json();
+              aiText = aiData.response || aiData.message || "";
+            }
+          } catch (e) {
+            console.warn("AI fetch fallback:", e.message);
+          }
+          if (!aiText) {
+            aiText = "こんにちは！メッセージありがとうございます。何でも気軽に質問してくださいね！";
+          }
+          const aiNow = admin.firestore.FieldValue.serverTimestamp();
+          const aiMsg = {
+            chatId,
+            senderUid: "ai_assistant",
+            senderName: "AIアシスタント",
+            type: "text",
+            text: aiText,
+            originalText: aiText,
+            imageUrl: null,
+            stampId: null,
+            reactions: {},
+            readBy: ["ai_assistant"],
+            unsent: false,
+            createdAt: aiNow
+          };
+          const aiMsgDoc = await chatRef.collection("messages").add(aiMsg);
+          await chatRef.update({
+            lastMessage: {
+              id: aiMsgDoc.id,
+              senderUid: "ai_assistant",
+              senderName: "AIアシスタント",
+              text: aiText.slice(0, 60),
+              type: "text",
+              unsent: false,
+              createdAt: aiNow
+            },
+            lastMessageAt: aiNow
+          });
+          messageCache.delete(chatId);
+        } catch (aiErr) {
+          console.error("AI reply error:", aiErr);
+        }
+      }, 300);
+    }
 
     return res.status(201).json({
       ok: true,

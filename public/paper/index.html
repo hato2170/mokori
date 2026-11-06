@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="theme-color" content="#2d3331" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>Paper.io 2</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  <link rel="stylesheet" href="style3.css?v50" />
+  <style>
+    /* Ensure clean full-bleed canvas */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #e7fff4;
+    }
+  </style>
+</head>
+<body>
+  <!-- Top bar for direct standalone tab -->
+  <div id="topNavDirect" style="display:none; position:fixed; top:10px; left:10px; z-index:999999; gap:8px;">
+    <button onclick="window.location.href='../sns.html'" style="background:#1e293b; color:#fff; border:1px solid #475569; padding:6px 14px; border-radius:8px; font-weight:bold; cursor:pointer; font-size:13px;">
+      ← チャットへ戻る
+    </button>
+    <button onclick="window.location.href='https://www.google.com/search?q=%E6%95%B0%E5%AD%A6+%E4%B8%80%E6%AC%A1%E9%96%A2%E6%95%B0'" style="background:#dc2626; color:#fff; border:none; padding:6px 14px; border-radius:8px; font-weight:bold; cursor:pointer; font-size:13px;">
+      🚨 緊急回避
+    </button>
+  </div>
+  <script>
+    if (window.self === window.top) {
+      document.getElementById('topNavDirect').style.display = 'flex';
+    }
+    window.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") {
+        window.location.href = "https://www.google.com/search?q=%E6%95%B0%E5%AD%A6+%E4%B8%80%E6%AC%A1%E9%96%A2%E6%95%B0";
+      }
+    });
+  </script>
+
+  <div id="game"></div>
+  <div id="about" style="display:none;"></div>
+  <div id="paperio-site_multisize" style="display:none;"></div>
+  <div id="preroll" style="display:none;"></div>
+  <div id="bottom" style="display:none;"></div>
+  <div id="rightbanner" style="display:none;"></div>
+
+  <script type="text/javascript">
+    window.lastTimeAds = new Date();
+    window.checktimeForAds = function() { return false; };
+    window.updateLastAdsTime = function() {};
+    function ShowAbout() {}
+    function HideAbout() {}
+    function ShowDisplayAd() {}
+    function HideAds() {
+      var rb = document.getElementById('rightbanner'); if (rb) rb.style.display = 'none';
+      var bottom = document.getElementById('bottom'); if (bottom) bottom.style.display = 'none';
+      var ads = document.getElementById('paperio-site_multisize'); if (ads) ads.style.display = 'none';
+    }
+    function ShowPreroll() {
+      StartGame();
+    }
+    function StartGame() {
+      HideAds();
+      if (window.paperio2api && typeof window.paperio2api.startGame === 'function') {
+        window.paperio2api.startGame();
+      }
+    }
+    function ShowAds() {}
+    window.ads = { showAds: ShowAds };
+
+    // Fallback if script loading stalls on older iOS/iPadOS WebKit
+    setTimeout(function() {
+      var game = document.getElementById('game');
+      if (game && game.children.length === 0 && !window.paperio2api) {
+        console.warn("Paper.io standalone engine taking long, providing mirror fallback...");
+        var fallback = document.createElement('div');
+        fallback.id = 'paperFallbackBanner';
+        fallback.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#1e293b; color:#fff; padding:12px 20px; border-radius:12px; border:2px solid #38bdf8; z-index:999999; text-align:center; box-shadow:0 4px 20px rgba(0,0,0,0.5); font-family:sans-serif; max-width:90%;';
+        fallback.innerHTML = '<div style="font-size:13px; font-weight:bold; margin-bottom:8px; color:#38bdf8;">⚡ iPad/iPhone高速起動モード</div>' +
+          '<div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">内蔵エンジンが待機中の場合は、高速ミラーで即座にプレイできます</div>' +
+          '<button onclick="window.location.href=\'https://paperio2.gitlab.io/file/\'" style="background:#0284c7; color:#fff; border:none; padding:8px 16px; border-radius:8px; font-weight:bold; font-size:12px; cursor:pointer; margin-right:8px;">🚀 高速ミラーで起動</button>' +
+          '<button onclick="window.location.href=\'../sns.html\'" style="background:#334155; color:#cbd5e1; border:none; padding:8px 14px; border-radius:8px; font-size:12px; cursor:pointer;">2D軽量版で遊ぶ</button>';
+        document.body.appendChild(fallback);
+      }
+    }, 3500);
+  </script>
+
+  <script type="text/javascript" src="app2.js?v9"></script>
+</body>
+</html>

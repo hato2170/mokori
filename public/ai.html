@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>AIスタジオ · mokori</title>
+  <link rel="stylesheet" href="ai.css">
+  <script type="module" src="ai.js"></script>
+</head>
+<body>
+  <main class="app">
+    <!-- トップバー -->
+    <header class="topbar">
+      <a class="back" href="./chat.html" aria-label="トークへ戻る">←</a>
+      <div class="title-area">
+        <strong id="sessionTitleDisplay">AIスタジオ</strong>
+        <small id="sessionSubtitle">mokori AI · 会話・画像生成・Web検索</small>
+      </div>
+      <div class="topbar-actions">
+        <button id="sessionsBtn" class="topbar-btn" type="button" title="会話一覧">📁 会話一覧</button>
+        <button id="newChatBtn" class="topbar-btn primary" type="button" title="新しいチャット">➕ 新規</button>
+      </div>
+    </header>
+
+    <!-- 会話一覧ドロワー -->
+    <div id="sessionsDrawer" class="drawer" hidden>
+      <div class="drawer-header">
+        <h3>📁 会話一覧</h3>
+        <button id="closeDrawerBtn" class="close-btn" type="button">✕</button>
+      </div>
+      <div class="drawer-body">
+        <button id="drawerNewChatBtn" class="drawer-new-btn" type="button">➕ 新しい会話を作成</button>
+        <ul id="sessionsList" class="sessions-list">
+          <li class="session-item active">読み込み中…</li>
+        </ul>
+      </div>
+    </div>
+    <div id="drawerOverlay" class="drawer-overlay" hidden></div>
+
+    <!-- ログインゲート -->
+    <section id="authGate" class="welcome" aria-live="polite">
+      <h1 id="authGateTitle">ログイン状態を確認しています…</h1>
+      <p id="authMessage">もこりのログイン状態を確認しています。</p>
+      <a href="./chat.html" class="sns-back-link">トークへ戻る</a>
+    </section>
+
+    <!-- 案内ウェルカム -->
+    <section id="welcome" class="welcome" aria-label="利用案内" hidden>
+      <div class="sparkle">🤖</div>
+      <h1>AIスタジオへようこそ</h1>
+      <p>Llama 3.2 による最新AI会話、画像生成、Web検索、添付機能が利用できます。</p>
+      <div class="quick-prompts">
+        <button class="quick-btn" type="button" data-prompt="こんにちは！今日のニュースを教えて">🌐 最新ニュース</button>
+        <button class="quick-btn" type="button" data-prompt="画像生成: ネオン街を駆けるサイバーパンクな猫">🎨 AI画像生成</button>
+        <button class="quick-btn" type="button" data-prompt="学校の宿題や勉強の計画を立ててほしい">📚 勉強・計画</button>
+        <button class="quick-btn" type="button" data-prompt="面白い雑学を3つ教えて！">💡 おもしろ雑学</button>
+      </div>
+    </section>
+
+    <!-- 会話エリア -->
+    <section id="chatArea" class="chat-area" aria-label="会話履歴" hidden>
+      <div id="messages" class="messages" role="log" aria-live="polite"></div>
+    </section>
+
+    <!-- エラー表示 -->
+    <div id="error" class="error-bar" role="alert" hidden></div>
+
+    <!-- 添付プレビューエリア -->
+    <div id="attachmentPreview" class="attachment-preview" hidden>
+      <span class="attachment-icon">📎</span>
+      <span id="attachmentName" class="attachment-name"></span>
+      <button id="removeAttachmentBtn" class="remove-attachment-btn" type="button" title="添付を解除">✕</button>
+    </div>
+
+    <!-- コントロールバー -->
+    <div class="controls-bar">
+      <div class="model-select-wrapper">
+        <label for="modelSelect" class="control-label">モデル:</label>
+        <select id="modelSelect" class="model-select"></select>
+      </div>
+      <div class="web-search-toggle-wrapper">
+        <button id="webSearchToggle" class="web-search-btn" type="button" title="Web検索">
+          <span class="search-icon">🌐</span> Web検索: <strong id="webSearchStatus">OFF</strong>
+        </button>
+      </div>
+    </div>
+
+    <!-- 入力バー -->
+    <form id="inputForm" class="input-form">
+      <input type="file" id="fileInput" style="display:none" accept="image/*,text/*,.txt,.md,.js,.json,.html,.css,.py">
+      <button id="attachBtn" class="tool-btn" type="button" title="写真やファイルを添付">📎</button>
+      <button id="genImageBtn" class="tool-btn" type="button" title="入力テキストからAI画像生成">🎨</button>
+      <textarea
+        id="prompt"
+        class="input-textarea"
+        rows="1"
+        placeholder="メッセージを入力… (/image で画像生成)"
+        aria-label="メッセージ入力"
+        maxlength="1500"
+      ></textarea>
+      <button id="sendButton" class="send-btn" type="submit" aria-label="送信">
+        <span class="send-icon">▲</span>
+      </button>
+    </form>
+    <div id="status" class="status-line" aria-live="polite"></div>
+  </main>
+</body>
+</html>

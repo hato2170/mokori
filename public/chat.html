@@ -914,6 +914,7 @@
       <div class="header-actions">
         <button class="icon-btn" id="openProfileBtn" title="プロフィール設定" onclick="window.openProfileModal()" style="font-size:18px;">👤</button>
         <button class="icon-btn" id="openThemeFontBtn" title="着せ替え・フォント・BGM設定" onclick="window.openThemeFontModal()" style="font-size:18px;">🎨</button>
+        <button class="icon-btn" id="openAiStudioBtn" title="AIスタジオ" onclick="window.location.href='./ai.html'" style="font-size:18px;">🤖</button>
         <button class="icon-btn" id="openGameHubBtn" title="ゲーム広場" onclick="window.openGameHub()" style="font-size:18px;">🎮</button>
         <button class="icon-btn" id="newChatBtn" title="新しいトーク">＋</button>
         <button class="icon-btn" id="refreshAllBtn" title="更新">🔄</button>
@@ -1161,7 +1162,7 @@
         ← トークへ戻る
       </button>
       <button onclick="window.panicEscapeGame()" style="background:#dc2626;color:#fff;padding:8px 14px;border-radius:8px;font-weight:bold;font-size:12px;">
-        🚨 緊急回避 (数学)
+        🚨 緊急回避
       </button>
     </div>
 
@@ -1301,6 +1302,30 @@
           </div>
         </div>
         <span style="font-size:18px;color:#a855f7;">▶</span>
+      </div>
+
+      <!-- 将棋 -->
+      <div class="game-hub-card" onclick="window.openGameHub('shogi')" style="border: 2px solid rgba(245, 158, 11, 0.4);">
+        <div class="left">
+          <div class="icon-circle" style="color:#f59e0b; background:rgba(245, 158, 11, 0.15);">♟️</div>
+          <div>
+            <div class="title" style="color:#fcd34d;">♟️ 将棋（本将棋・AI＆対人オンライン対戦）</div>
+            <div class="desc">本格9×9盤！成駒・持ち駒・王手・二歩防止完備！オンライン対戦＆CPU3段階（弱い・普通・強い）</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:#f59e0b;">▶</span>
+      </div>
+
+      <!-- AIスタジオ -->
+      <div class="game-hub-card" onclick="window.location.href='./ai.html'" style="border: 2px solid rgba(99, 102, 241, 0.4);">
+        <div class="left">
+          <div class="icon-circle" style="color:#818cf8; background:rgba(99, 102, 241, 0.15);">🤖</div>
+          <div>
+            <div class="title" style="color:#a5b4fc;">🤖 AIスタジオ（会話・画像生成・Web検索）</div>
+            <div class="desc">Llama 3.2による最新AI対話、AI画像生成、Web検索、添付機能完備！</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:#818cf8;">▶</span>
       </div>
     </div>
   </div>
@@ -1602,7 +1627,8 @@
 <script src="/three.min.js"></script>
 <script src="/brawl3d.js"></script>
 <script src="/fortnite3d.js"></script>
-<script src="/games.js?v=20261105_25"></script>
+<script src="/shogi.js?v=20261106_1"></script>
+<script src="/games.js?v=20261106_1"></script>
 <script src="/line_unlimited.js?v=20261105_25"></script>
 
 <script>
@@ -1852,7 +1878,7 @@
 
       const isGroup = chat.type === "group" || chat.id === "all_members";
       const memberCount = isGroup ? ` <span class="member-count">(${chat.members.length})</span>` : "";
-      const avatarIcon = chat.id === "all_members" ? "🐐" : (isGroup ? "👥" : (chat.name ? chat.name.charAt(0) : "🐐"));
+      const avatarIcon = chat.id === "all_members" ? "🐐" : (chat.type === "ai" ? "🤖" : (chat.type === "keep" ? "📌" : (isGroup ? "👥" : (chat.name ? chat.name.charAt(0) : "🐐"))));
 
       let preview = "メッセージはありません";
       let isUnsent = false;
@@ -2107,7 +2133,7 @@
         }
         if (!sName) sName = "ユーザー";
         const sUid = msg.senderUid || "";
-        const sInitial = sName.charAt(0) || "🐐";
+        let sInitial = sName.charAt(0) || "🐐";
 
         // ユーザー名に応じた鮮やかな固有グラデーションアバター
         const avatarColors = [
@@ -2122,7 +2148,13 @@
         ];
         let colorHash = 0;
         for (let i = 0; i < sName.length; i++) colorHash = (colorHash << 5) - colorHash + sName.charCodeAt(i);
-        const avatarBg = avatarColors[Math.abs(colorHash) % avatarColors.length];
+        let avatarBg = avatarColors[Math.abs(colorHash) % avatarColors.length];
+
+        if (sUid === "ai_assistant") {
+          sName = "AIアシスタント";
+          sInitial = "🤖";
+          avatarBg = "linear-gradient(135deg, #6366f1, #8b5cf6)";
+        }
 
         // 1. 左側アバター円
         const avatarCol = document.createElement("div");

@@ -64,25 +64,101 @@
     activeRoomCode = null;
   };
 
+  window.currentPanicSubject = localStorage.getItem("mokori_panic_subj") || "kokugo";
+
+  window.switchMokoriPanic = function(subj) {
+    window.currentPanicSubject = subj;
+    try { localStorage.setItem("mokori_panic_subj", subj); } catch (_) {}
+    const subjects = ["kokugo", "english", "rika"];
+    const colors = { kokugo: "#dc2626", english: "#2563eb", rika: "#059669" };
+    subjects.forEach(s => {
+      const tab = document.getElementById("mpTab" + s.charAt(0).toUpperCase() + s.slice(1));
+      const box = document.getElementById("mpBox" + s.charAt(0).toUpperCase() + s.slice(1));
+      if (tab && box) {
+        if (s === subj) {
+          tab.style.background = colors[s];
+          tab.style.color = "#fff";
+          tab.style.border = "none";
+          box.style.display = "block";
+        } else {
+          tab.style.background = "#f3f4f6";
+          tab.style.color = "#4b5563";
+          tab.style.border = "1px solid #d1d5db";
+          box.style.display = "none";
+        }
+      }
+    });
+  };
+
   window.panicEscapeGame = function () {
     stopAllGames();
     const container = document.getElementById("gameHubModal");
     if (container) {
       container.innerHTML = `
-        <div style="background:#ffffff; color:#1f2937; height:100%; padding:24px; font-family:serif; overflow-y:auto;">
-          <h2 style="margin:0 0 12px; font-size:20px; border-bottom:2px solid #333; padding-bottom:6px;">数学II·B 演習ノート (第3講)</h2>
-          <p style="font-size:14px; color:#4b5563;">【問題1】関数 $f(x) = x^3 - 3x^2 + 2$ の増減を調べ、極値を求めよ。</p>
-          <div style="background:#f9fafb; border-left:4px solid #6b7280; padding:12px; margin:14px 0; font-size:13px; line-height:1.7;">
-            導関数 $f'(x) = 3x^2 - 6x = 3x(x - 2)$<br>
-            $f'(x) = 0$ とすると $x = 0, 2$<br>
-            増減表より、<br>
-            $x = 0$ のとき 極大値 $2$<br>
-            $x = 2$ のとき 極小値 $-2$
+        <div style="background:#ffffff; color:#1f2937; height:100%; padding:20px; font-family:'Hiragino Mincho ProN', 'Yu Mincho', serif; overflow-y:auto; box-sizing:border-box;">
+          <div style="max-width:760px; margin:0 auto;">
+            <!-- 教科セレクター (国語・英語・理科) -->
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #e5e7eb; padding-bottom:12px; margin-bottom:16px; flex-wrap:wrap; gap:8px;">
+              <div style="display:flex; gap:6px;">
+                <button id="mpTabKokugo" onclick="window.switchMokoriPanic('kokugo')" style="background:#dc2626; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:bold; cursor:pointer; font-size:12px; font-family:sans-serif;">📖 国語（現代文・古典）</button>
+                <button id="mpTabEnglish" onclick="window.switchMokoriPanic('english')" style="background:#f3f4f6; color:#4b5563; border:1px solid #d1d5db; padding:8px 14px; border-radius:6px; font-weight:bold; cursor:pointer; font-size:12px; font-family:sans-serif;">📝 英語（Reading & Grammar）</button>
+                <button id="mpTabRika" onclick="window.switchMokoriPanic('rika')" style="background:#f3f4f6; color:#4b5563; border:1px solid #d1d5db; padding:8px 14px; border-radius:6px; font-weight:bold; cursor:pointer; font-size:12px; font-family:sans-serif;">🔬 理科（物理・化学基礎）</button>
+              </div>
+              <button onclick="location.reload()" style="background:#e5e7eb; color:#6b7280; border:none; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-family:sans-serif;">✕ 復帰</button>
+            </div>
+
+            <!-- 国語 -->
+            <div id="mpBoxKokugo">
+              <h2 style="font-size:19px; color:#111827; margin:0 0 8px; border-left:4px solid #dc2626; padding-left:10px;">現代文・古文 演習ノート (第4講)</h2>
+              <p style="font-size:12px; color:#6b7280; margin:0 0 14px;">単元: 近代文学の成立と人間心理の相克（芥川龍之介『羅生門』）</p>
+              <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:14px; margin-bottom:14px; font-size:13px; line-height:1.8;">
+                <strong>【読解問題】</strong>「ある日の暮方の事である。一人の下人が、羅生門の下で雨やみを待っていた。」<br>
+                下人が羅生門の下に取り残され、「盗人になるよりほかに仕方がない」と思いつめながらも踏み切れない心理の変遷について、本文中の描写に即して60字以内で説明せよ。<br>
+                <hr style="border:none; border-top:1px dashed #d1d5db; margin:10px 0;">
+                <span style="color:#b91c1c; font-weight:bold;">【解答・解説メモ】</span><br>
+                生き延びるために悪に手を染めることへの逡巡と羞恥心が残っていたが、老婆の生存の論理を目の当たりにしたことで悪の肯定へと至る。
+              </div>
+              <div style="font-size:12px; color:#4b5563; line-height:1.7;">
+                <strong>【重要古文単語】</strong><br>
+                ・「あはれなり」: しみじみと心に深く感じられるさま（情趣・哀愁）<br>
+                ・助動詞「けり」: 過去（〜した）・詠嘆（〜だなあ）
+              </div>
+            </div>
+
+            <!-- 英語 -->
+            <div id="mpBoxEnglish" style="display:none;">
+              <h2 style="font-size:19px; color:#111827; margin:0 0 8px; border-left:4px solid #2563eb; padding-left:10px;">Standard English Reading & Grammar (Lesson 5)</h2>
+              <p style="font-size:12px; color:#6b7280; margin:0 0 14px;">Topic: Technological Innovation and Society</p>
+              <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:14px; margin-bottom:14px; font-size:13px; line-height:1.8; font-family:sans-serif;">
+                <strong>【Passage】</strong><br>
+                "Artificial intelligence is rapidly transforming modern society. While machines can process vast amounts of data in seconds, human creativity and critical thinking remain essential."<br>
+                <hr style="border:none; border-top:1px dashed #d1d5db; margin:10px 0;">
+                <strong style="color:#1d4ed8;">【Key Grammar】</strong><br>
+                1. <strong>Contrastive "While":</strong> 〜である一方で (whereas)<br>
+                2. <strong>Subjunctive Past Perfect:</strong> <em>If I had studied harder, I would have passed the exam.</em> (仮定法過去完了)
+              </div>
+            </div>
+
+            <!-- 理科 -->
+            <div id="mpBoxRika" style="display:none;">
+              <h2 style="font-size:19px; color:#111827; margin:0 0 8px; border-left:4px solid #059669; padding-left:10px;">高校理科総合（物理・化学基礎）ノート</h2>
+              <p style="font-size:12px; color:#6b7280; margin:0 0 14px;">単元: 運動の法則・酸化還元反応の基礎</p>
+              <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:14px; margin-bottom:14px; font-size:13px; line-height:1.8;">
+                <strong>【物理: 等加速度直線運動】</strong><br>
+                初速 $v_0 = 4.0\\text{ m/s}$, 加速度 $a = 2.0\\text{ m/s}^2$ のとき $t = 3.0\\text{ s}$ 後の速度 $v$ と変位 $x$:<br>
+                ・$v = v_0 + at = 4.0 + 2.0 \\times 3.0 = 10.0\\text{ m/s}$<br>
+                ・$x = v_0 t + \\frac{1}{2}at^2 = 4.0 \\times 3.0 + \\frac{1}{2} \\times 2.0 \\times 9.0 = 21.0\\text{ m}$
+              </div>
+              <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:14px; font-size:13px; line-height:1.8;">
+                <strong>【化学: 酸化還元反応と電子】</strong><br>
+                $2\\text{Mg} + \\text{O}_2 \\longrightarrow 2\\text{MgO}$<br>
+                Mgは電子を失い酸化された（$\\text{Mg} \\rightarrow \\text{Mg}^{2+} + 2e^-$）。
+              </div>
+            </div>
           </div>
-          <p style="font-size:14px; color:#4b5563;">【問題2】等比数列の一般項と和の公式の導出…</p>
-          <button onclick="location.reload()" style="margin-top:20px; background:#4b5563; color:#fff; border:0; padding:8px 16px; border-radius:6px; cursor:pointer;">復帰する</button>
         </div>
       `;
+      window.switchMokoriPanic(window.currentPanicSubject || "kokugo");
     }
   };
 
@@ -213,7 +289,8 @@
       "brawl-crazygames": "⭐ Brawl Squad（CrazyGames版）",
       fortnite: "🏆 Fortnite 3D（バトルロイヤル）",
       solitaire: "♠️ ソリティア（クロンダイク）",
-      drawquiz: "🎨 お絵描きクイズ（リアルタイム対戦＆ソロ）"
+      drawquiz: "🎨 お絵描きクイズ（リアルタイム対戦＆ソロ）",
+      shogi: "♟️ 将棋（本将棋・AI＆対人オンライン対戦）"
     };
 
     currentGameTitle = titles[gameType] || "対戦ゲーム";
@@ -254,6 +331,11 @@
       case "drawquiz":
         renderDrawQuizGame(embed, activeRoomCode);
         break;
+      case "shogi":
+        if (window.renderShogiGame) {
+          window.renderShogiGame(embed, activeRoomCode);
+        }
+        break;
     }
   }
 
@@ -275,6 +357,7 @@
 
   function stopAllGames() {
     window.onkeydown = null;
+    if (window._stopShogi) { window._stopShogi(); window._stopShogi = null; }
     if (window._stopDrawQuiz) { window._stopDrawQuiz(); window._stopDrawQuiz = null; }
     if (window.stopFortnite3DGame) window.stopFortnite3DGame();
     if (window.stop3DBrawlGame) window.stop3DBrawlGame();
@@ -309,6 +392,7 @@
     let isOnline = Boolean(roomCode && window.api);
     let myRole = 1; // 1: 黒(ホスト), 2: 白(参加者)
     let opponentName = "対戦相手";
+    let othelloCpuDifficulty = "normal";
 
     container.innerHTML = `
       <div style="padding:16px; max-width:400px; margin:0 auto; text-align:center;">
@@ -324,6 +408,16 @@
 
         <div id="othWaitBanner" style="display:none; background:#0284c7; color:#fff; font-size:12px; padding:8px 12px; border-radius:8px; margin-bottom:12px; font-weight:bold;">
           ⏳ 相手の参加を待っています…上の「招待を転送」でチャットにカードを送ってください！
+        </div>
+
+        <!-- CPU強さ選択 -->
+        <div id="othCpuDiffWrap" style="${isOnline ? "display:none;" : "display:flex;"} background:#1e293b; padding:6px 12px; border-radius:8px; margin-bottom:10px; justify-content:space-between; align-items:center;">
+          <span style="font-size:11px; color:#94a3b8; font-weight:bold;">🤖 CPU強さ:</span>
+          <div style="display:flex; gap:6px;">
+            <button id="oDiffEasy" style="background:#334155; color:#cbd5e1; border:none; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:bold; cursor:pointer;">🟢 弱い</button>
+            <button id="oDiffNormal" style="background:#38bdf8; color:#fff; border:none; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:bold; cursor:pointer;">🟡 普通</button>
+            <button id="oDiffHard" style="background:#334155; color:#cbd5e1; border:none; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:bold; cursor:pointer;">🔴 強い</button>
+          </div>
         </div>
 
         <div style="display:flex; justify-content:center; gap:20px; margin-bottom:14px;">
@@ -523,10 +617,37 @@
       }
 
       const corners = ["0,0", "0,7", "7,0", "7,7"];
-      let chosen = moves.find(m => corners.includes(`${m.r},${m.c}`));
-      if (!chosen) {
-        moves.sort((a, b) => b.flips.length - a.flips.length);
+      let chosen = null;
+
+      if (othelloCpuDifficulty === "easy") {
+        moves.sort((a, b) => a.flips.length - b.flips.length);
         chosen = moves[0];
+      } else if (othelloCpuDifficulty === "normal") {
+        chosen = moves.find(m => corners.includes(`${m.r},${m.c}`));
+        if (!chosen) {
+          moves.sort((a, b) => b.flips.length - a.flips.length);
+          chosen = moves[0];
+        }
+      } else {
+        const POS_WEIGHTS = [
+          [ 100, -25,  10,   5,   5,  10, -25, 100],
+          [ -25, -50,  -2,  -2,  -2,  -2, -50, -25],
+          [  10,  -2,   2,   1,   1,   2,  -2,  10],
+          [   5,  -2,   1,   0,   0,   1,  -2,   5],
+          [   5,  -2,   1,   0,   0,   1,  -2,   5],
+          [  10,  -2,   2,   1,   1,   2,  -2,  10],
+          [ -25, -50,  -2,  -2,  -2,  -2, -50, -25],
+          [ 100, -25,  10,   5,   5,  10, -25, 100]
+        ];
+        let bestScore = -999999;
+        for (const m of moves) {
+          let score = POS_WEIGHTS[m.r][m.c] * 3 + m.flips.length * 2;
+          if (score > bestScore) {
+            bestScore = score;
+            chosen = m;
+          }
+        }
+        if (!chosen) chosen = moves[0];
       }
 
       playTone(330, "sine", 0.08);
@@ -629,10 +750,31 @@
       if (window._othelloPollTimer) clearInterval(window._othelloPollTimer);
       document.getElementById("othModeBadge").textContent = "🤖 ソロCPU対戦";
       document.getElementById("othWaitBanner").style.display = "none";
+      const diffWrap = document.getElementById("othCpuDiffWrap");
+      if (diffWrap) diffWrap.style.display = "flex";
       document.getElementById("othP1Label").textContent = "黒 (あなた)";
       document.getElementById("othP2Label").textContent = "白 (CPU)";
       renderBoard();
     }
+
+    function updateOthDiffUI() {
+      ["easy", "normal", "hard"].forEach(d => {
+        const btn = document.getElementById("oDiff" + d.charAt(0).toUpperCase() + d.slice(1));
+        if (btn) {
+          if (d === othelloCpuDifficulty) {
+            btn.style.background = "#38bdf8";
+            btn.style.color = "#fff";
+          } else {
+            btn.style.background = "#334155";
+            btn.style.color = "#cbd5e1";
+          }
+        }
+      });
+    }
+
+    document.getElementById("oDiffEasy")?.addEventListener("click", () => { othelloCpuDifficulty = "easy"; updateOthDiffUI(); });
+    document.getElementById("oDiffNormal")?.addEventListener("click", () => { othelloCpuDifficulty = "normal"; updateOthDiffUI(); });
+    document.getElementById("oDiffHard")?.addEventListener("click", () => { othelloCpuDifficulty = "hard"; updateOthDiffUI(); });
 
     document.getElementById("othSwitchCpuBtn").onclick = () => {
       switchToCpu();
@@ -1378,9 +1520,9 @@
   // 5. 📄 paper.io（2D陣取りバトル）
   // ==================================================
   window.switchPaperMode = function(mode) {
-    const embed = document.getElementById("gameEmbedArea");
+    const embed = document.getElementById("gameEmbedContainer") || document.getElementById("gameEmbedArea");
     if (!embed) return;
-    if (mode === "webgl") {
+    if (mode === "webgl" || mode === "official") {
       renderPaperWebglGame(embed);
     } else {
       renderPaperGame(embed);
@@ -1392,7 +1534,7 @@
       <div style="padding:12px; max-width:400px; margin:0 auto; text-align:center;">
         <div style="display:flex; gap:8px; margin-bottom:10px;">
           <button id="pm2d" onclick="window.switchPaperMode('2d')" style="flex:1; background:#ec4899; color:#fff; border:0; padding:6px; border-radius:8px; font-weight:bold; font-size:12px; cursor:pointer;">👑 完全内蔵2D版 (ブロック回避)</button>
-          <button id="pmWebgl" onclick="window.switchPaperMode('webgl')" style="flex:1; background:#1e293b; color:#94a3b8; border:1px solid #475569; padding:6px; border-radius:8px; font-weight:bold; font-size:12px; cursor:pointer;">🌐 WebGLミラー版</button>
+          <button id="pmWebgl" onclick="window.switchPaperMode('webgl')" style="flex:1; background:#1e293b; color:#94a3b8; border:1px solid #475569; padding:6px; border-radius:8px; font-weight:bold; font-size:12px; cursor:pointer;">🌐 本家版 (Paper.io 2)</button>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
           <span style="font-size:13px; color:#ec4899; font-weight:bold;">📄 paper.io (2D陣取り)</span>
@@ -1554,14 +1696,15 @@
   // 5-b. ⭐ paper.io WebGL版（本家完全再現 & 埋め込み）
   // ==================================================
   const PAPER_WEBGL_SERVERS = {
-    1: { name: "GitLab高速ミラー (公式版)", url: "https://paperio2.gitlab.io/file/" },
-    2: { name: "GitHub Pages公式 (Unblocked版)", url: "https://ubg17.github.io/PaperIO2/" }
+    1: { name: "⚡ サーバー1 (サイト内蔵・推奨)", url: "paper/index.html" },
+    2: { name: "🚀 サーバー2 (GitLab高速版)", url: "https://paperio2.gitlab.io/file/" },
+    3: { name: "🌐 サーバー3 (GitHub Pages公式)", url: "https://ubg17.github.io/PaperIO2/" }
   };
   let currentMokoriPaperServer = 1;
 
   window.switchMokoriPaperServer = function(num) {
     currentMokoriPaperServer = num;
-    for (let i = 1; i <= 2; i++) {
+    for (let i = 1; i <= 3; i++) {
       const btn = document.getElementById("mokoriPaperSrv" + i);
       if (!btn) continue;
       if (i === num) {
@@ -1605,14 +1748,21 @@
   function renderPaperWebglGame(container) {
     container.innerHTML = `
       <div style="padding:10px; max-width:860px; margin:0 auto; text-align:center;">
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <button id="pm2d" onclick="window.switchPaperMode('2d')" style="flex:1; background:#1e293b; color:#94a3b8; border:1px solid #475569; padding:6px; border-radius:8px; font-weight:bold; font-size:12px; cursor:pointer;">👑 完全内蔵2D版 (ブロック回避)</button>
+          <button id="pmWebgl" onclick="window.switchPaperMode('webgl')" style="flex:1; background:#ec4899; color:#fff; border:0; padding:6px; border-radius:8px; font-weight:bold; font-size:12px; cursor:pointer;">🌐 本家版 (Paper.io 2)</button>
+        </div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
           <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
             <span style="font-size:12px; color:#ec4899; font-weight:bold;">🌐 サーバー:</span>
             <button id="mokoriPaperSrv1" onclick="switchMokoriPaperServer(1)" style="background:#ec4899; color:#fff; padding:4px 10px; font-size:11px; border-radius:6px; border:none; cursor:pointer;">
-              🚀 サーバー1 (GitLab高速版)
+              ⚡ サーバー1 (サイト内蔵・推奨)
             </button>
             <button id="mokoriPaperSrv2" onclick="switchMokoriPaperServer(2)" style="background:#1e293b; color:#94a3b8; padding:4px 10px; font-size:11px; border-radius:6px; border:1px solid #475569; cursor:pointer;">
-              🌐 サーバー2 (GitHub Pages公式)
+              🚀 サーバー2 (GitLab高速版)
+            </button>
+            <button id="mokoriPaperSrv3" onclick="switchMokoriPaperServer(3)" style="background:#1e293b; color:#94a3b8; padding:4px 10px; font-size:11px; border-radius:6px; border:1px solid #475569; cursor:pointer;">
+              🌐 サーバー3 (GitHub Pages公式)
             </button>
           </div>
           <div style="display:flex; gap:6px;">
@@ -1628,7 +1778,7 @@
           </div>
         </div>
         <div id="mokoriPaperFrameWrap" style="position:relative; width:100%; height:68vh; min-height:440px; background:#000; border-radius:12px; overflow:hidden; border:2px solid #ec4899;">
-          <iframe id="mokoriPaperIframe" src="https://paperio2.gitlab.io/file/" style="width:100%; height:100%; border:none; display:block;" allow="autoplay; fullscreen; web-share; gamepad; pointer-lock" allowfullscreen></iframe>
+          <iframe id="mokoriPaperIframe" src="paper/index.html" style="width:100%; height:100%; border:none; display:block;" allow="autoplay; fullscreen; web-share; gamepad; pointer-lock" allowfullscreen></iframe>
         </div>
         <div style="font-size:11px; color:#94a3b8; margin-top:8px;">
           💡 iPhone・iPad・PC対応！学校のiPadでもブロックされず快適に動きます。
