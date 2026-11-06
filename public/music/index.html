@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#1c1c1e">
+  <title>ちゅこミュージック · Apple Music Web</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #000;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      padding-bottom: 120px;
+    }
+    header {
+      padding: 16px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(28, 28, 30, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+    .logo-badge {
+      background: #fa243c;
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+    }
+
+    .main-wrap {
+      flex: 1;
+      max-width: 900px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px 16px;
+    }
+
+    /* 検索バー */
+    .search-bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+    .search-bar input {
+      flex: 1;
+      background: #1c1c1e;
+      border: 1px solid #2c2c2e;
+      border-radius: 12px;
+      padding: 12px 16px;
+      color: #fff;
+      font-size: 15px;
+      outline: none;
+    }
+    .search-bar input:focus { border-color: #fa243c; }
+    .search-bar button {
+      background: #fa243c;
+      color: #fff;
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 20px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    /* プレイリストタブ */
+    .playlist-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+    .pl-tab-btn {
+      background: #1c1c1e;
+      color: #a1a1a6;
+      border: 1px solid #2c2c2e;
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .pl-tab-btn.active {
+      background: #fa243c;
+      color: #fff;
+      border-color: #fa243c;
+    }
+
+    /* トラックリスト */
+    .track-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .track-item {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 12px;
+      background: #121214;
+      border: 1px solid #1c1c1e;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .track-item:hover, .track-item.playing {
+      background: #1c1c1e;
+      border-color: #fa243c;
+    }
+    .track-art {
+      width: 48px;
+      height: 48px;
+      border-radius: 8px;
+      object-fit: cover;
+      background: #2c2c2e;
+    }
+    .track-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .track-title {
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 3px;
+    }
+    .track-artist {
+      font-size: 12px;
+      color: #a1a1a6;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* フッター 再生プレイヤーバー */
+    .player-dock {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(28, 28, 30, 0.92);
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 200;
+    }
+    .dock-content {
+      max-width: 900px;
+      margin: 0 auto;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .dock-art {
+      width: 46px;
+      height: 46px;
+      border-radius: 8px;
+      object-fit: cover;
+      background: #2c2c2e;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .dock-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .dock-title {
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .dock-artist {
+      font-size: 11px;
+      color: #a1a1a6;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .dock-ctrls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .play-btn {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: #fa243c;
+      color: #fff;
+      border: 0;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .dock-btn {
+      background: transparent;
+      border: 0;
+      color: #fff;
+      font-size: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 4px;
+      background: #3a3a3c;
+      border-radius: 2px;
+      cursor: pointer;
+      position: relative;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #fa243c;
+      border-radius: 2px;
+      width: 0%;
+    }
+
+    /* 緊急回避 */
+    #panicOverlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #f8fafc;
+      color: #1e293b;
+      z-index: 2147483647;
+      display: none;
+      flex-direction: column;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", sans-serif;
+    }
+    .panic-header {
+      background: #0284c7;
+      color: #fff;
+      padding: 10px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: bold;
+      font-size: 13px;
+    }
+    .panic-body {
+      flex: 1;
+      padding: 24px 20px;
+      overflow-y: auto;
+      max-width: 800px;
+      margin: 0 auto;
+      width: 100%;
+      line-height: 1.8;
+      font-size: 15px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">
+      <div class="logo-badge">🎵</div>
+      <span>ちゅこミュージック</span>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <a href="/tensai-proxy/" style="color:#f8fafc; text-decoration:none; font-size:12px; font-weight:600; padding:6px 10px; background:#1c1c1e; border-radius:8px;">⚡ 天才プロキシ</a>
+      <a href="/tube/" style="color:#f8fafc; text-decoration:none; font-size:12px; font-weight:600; padding:6px 10px; background:#1c1c1e; border-radius:8px;">📺 若雪幸せTube</a>
+      <button onclick="toggleStealth()" style="background:#dc2626; color:#fff; border:0; border-radius:8px; padding:6px 12px; font-size:12px; font-weight:bold; cursor:pointer;">
+        🚨 緊急回避
+      </button>
+    </div>
+  </header>
+
+  <main class="main-wrap">
+    <div class="search-bar">
+      <input type="text" id="musicSearchInput" placeholder="曲名・アーティスト名（STUTS, Kaneee, LEX, 安室奈美恵など）" onkeydown="if(event.key==='Enter') searchMusic()">
+      <button onclick="searchMusic()">🔍 検索</button>
+    </div>
+
+    <!-- プレイリスト選択タブ -->
+    <div class="playlist-tabs">
+      <button class="pl-tab-btn active" id="tabHatake" onclick="loadPlaylist('hatake')">🌾 プレイリスト「畑」</button>
+      <button class="pl-tab-btn" id="tabJpop" onclick="loadPlaylist('jpop')">🔥 トレンド HipHop/J-POP</button>
+      <button class="pl-tab-btn" id="tabFav" onclick="loadPlaylist('fav')">⭐ お気に入り</button>
+    </div>
+
+    <div class="track-list" id="trackList">
+      <!-- 楽曲カード挿入 -->
+    </div>
+  </main>
+
+  <!-- 再生バー -->
+  <div class="player-dock">
+    <div class="progress-bar" onclick="seekAudio(event)">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div class="dock-content">
+      <img id="dockArt" class="dock-art" src="https://via.placeholder.com/48x48/1c1c1e/ffffff?text=Music" alt="Cover">
+      <div class="dock-info">
+        <div class="dock-title" id="dockTitle">曲を選択してください</div>
+        <div class="dock-artist" id="dockArtist">ちゅこミュージック · バックグラウンド再生対応</div>
+      </div>
+      <div class="dock-ctrls">
+        <button class="dock-btn" onclick="prevTrack()">⏮️</button>
+        <button class="play-btn" id="dockPlayBtn" onclick="togglePlay()">▶</button>
+        <button class="dock-btn" onclick="nextTrack()">⏭️</button>
+        <button class="dock-btn" id="favBtn" onclick="toggleFavoriteCurrent()">🤍</button>
+      </div>
+    </div>
+  </div>
+
+  <audio id="audioEl" preload="auto"></audio>
+
+  <!-- 緊急回避オーバーレイ（理科演習ノート） -->
+  <div id="panicOverlay">
+    <div class="panic-header">
+      <span>🔬 物理基礎・化学基礎 演習ノート 第3章</span>
+      <button onclick="toggleStealth()" style="background:#0369a1; color:#fff; border:0; border-radius:4px; padding:4px 10px; cursor:pointer;">復帰</button>
+    </div>
+    <div class="panic-body">
+      <h2>等加速度直線運動の公式と酸化還元反応</h2>
+      <p><strong>問1.</strong> 初速度 5.0 m/s、加速度 2.0 m/s² で直線運動する物体の、4.0秒後の速度 v および移動距離 x を求めなさい。</p>
+      <p><strong>解答・解説:</strong> 公式 v = v₀ + at より、v = 5.0 + 2.0 × 4.0 = 13.0 m/s。<br>公式 x = v₀t + 1/2at² より、x = 5.0 × 4.0 + 0.5 × 2.0 × (4.0)² = 20.0 + 16.0 = 36.0 m。</p>
+      <p><strong>化学公式:</strong> 酸化＝酸素を得る・電子を失う・酸化数増加 / 還元＝酸素を失う・電子を得る・酸化数減少</p>
+    </div>
+  </div>
+
+  <script>
+    // 遥人さんのプレイリスト「畑」厳選トラック
+    const HATAKE_TRACKS = [
+      { id: "h1", title: "夜を使いはたして feat. PUNPEE", artist: "STUTS", album: "Pushin'", artwork: "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/bf/25/6f/bf256f61-ea3c-c6f8-4e3a-e9fa4900a0dc/4526180373414.jpg/600x600bb.jpg", previewUrl: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview115/v4/a1/38/59/a138597f-cb25-6cb3-b68a-cf2aef4a5bf4/mzaf_10915647716942461011.plus.aac.p.m4a" },
+      { id: "h2", title: "Canvas", artist: "Kaneee", album: "Canvas - Single", artwork: "https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/b8/b6/c9/b8b6c934-8b6b-4e1b-4f05-728734913c19/197188736181.jpg/600x600bb.jpg", previewUrl: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview116/v4/05/cf/4e/05cf4e88-64cb-cf2e-9a99-b1d5e3ef1cc9/mzaf_14092784796338870104.plus.aac.p.m4a" },
+      { id: "h3", title: "なんでも言っちゃって feat. JP THE WAVY", artist: "LEX", album: "LOGIC", artwork: "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/4e/3b/b1/4e3bb1ee-27c1-7a60-9dc4-839e9f16d99b/190296482163.jpg/600x600bb.jpg", previewUrl: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview125/v4/21/cf/30/21cf305d-e593-9c88-e9f0-f9de7b738c62/mzaf_11306351187427183020.plus.aac.p.m4a" },
+      { id: "h4", title: "Hero", artist: "安室奈美恵", album: "Finally", artwork: "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/c7/2b/3d/c72b3d68-de32-35bd-628d-17154fbdbf16/AVCN-99055.jpg/600x600bb.jpg", previewUrl: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview115/v4/5c/ce/90/5cce908e-fa87-432d-209c-e35f8cbe0fc9/mzaf_14647306283181829633.plus.aac.p.m4a" },
+      { id: "h5", title: "Bling-Bang-Bang-Born", artist: "Creepy Nuts", album: "二度寝 / Bling-Bang-Bang-Born", artwork: "https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/b5/aa/9c/b5aa9c60-a292-fa58-b807-6c8f94cb4c95/4547366668742.jpg/600x600bb.jpg", previewUrl: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview116/v4/28/fc/2f/28fc2f3e-8693-ee33-eef2-094183863486/mzaf_13576023773172081512.plus.aac.p.m4a" },
+      { id: "h6", title: "Mirage", artist: "STUTS", album: "Orbit", artwork: "https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/91/3c/6e/913c6e94-1dc0-5bb9-75a7-ea01bcda90c9/4526180621423.jpg/600x600bb.jpg", previewUrl: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview112/v4/31/53/78/31537873-19eb-1bf0-c350-be9575971a81/mzaf_1130663737568112108.plus.aac.p.m4a" }
+    ];
+
+    let currentPlaylist = [...HATAKE_TRACKS];
+    let currentIndex = 0;
+    const audio = document.getElementById("audioEl");
+
+    function renderTrackList(tracks) {
+      const container = document.getElementById("trackList");
+      container.innerHTML = "";
+      tracks.forEach((t, idx) => {
+        const item = document.createElement("div");
+        item.className = "track-item" + (idx === currentIndex ? " playing" : "");
+        item.onclick = () => playTrack(idx);
+        item.innerHTML = `
+          <img class="track-art" src="${t.artwork || 'https://via.placeholder.com/48'}" alt="Art" loading="lazy">
+          <div class="track-info">
+            <div class="track-title">${t.title}</div>
+            <div class="track-artist">${t.artist} ${t.album ? '· ' + t.album : ''}</div>
+          </div>
+          <div style="color:#a1a1a6; font-size:12px;">▶</div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    function playTrack(idx) {
+      if (idx < 0 || idx >= currentPlaylist.length) return;
+      currentIndex = idx;
+      const t = currentPlaylist[idx];
+      document.getElementById("dockTitle").textContent = t.title;
+      document.getElementById("dockArtist").textContent = t.artist;
+      document.getElementById("dockArt").src = t.artwork || "https://via.placeholder.com/48";
+      
+      audio.src = t.previewUrl || "";
+      audio.play().then(() => {
+        document.getElementById("dockPlayBtn").textContent = "⏸";
+      }).catch(() => {});
+
+      // MediaSession API連携 (iOSロック画面やコントロールセンターに表示)
+      if ("mediaSession" in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: t.title,
+          artist: t.artist,
+          album: t.album || "ちゅこミュージック",
+          artwork: [{ src: t.artwork, sizes: "600x600", type: "image/jpeg" }]
+        });
+        navigator.mediaSession.setActionHandler("play", () => audio.play());
+        navigator.mediaSession.setActionHandler("pause", () => audio.pause());
+        navigator.mediaSession.setActionHandler("previoustrack", () => prevTrack());
+        navigator.mediaSession.setActionHandler("nexttrack", () => nextTrack());
+      }
+
+      updateFavIcon();
+      renderTrackList(currentPlaylist);
+    }
+
+    function togglePlay() {
+      if (audio.paused) {
+        audio.play().then(() => {
+          document.getElementById("dockPlayBtn").textContent = "⏸";
+        }).catch(() => {});
+      } else {
+        audio.pause();
+        document.getElementById("dockPlayBtn").textContent = "▶";
+      }
+    }
+
+    function prevTrack() {
+      if (currentIndex > 0) playTrack(currentIndex - 1);
+      else playTrack(currentPlaylist.length - 1);
+    }
+
+    function nextTrack() {
+      if (currentIndex < currentPlaylist.length - 1) playTrack(currentIndex + 1);
+      else playTrack(0);
+    }
+
+    audio.ontimeupdate = () => {
+      if (audio.duration) {
+        const pct = (audio.currentTime / audio.duration) * 100;
+        document.getElementById("progressFill").style.width = pct + "%";
+      }
+    };
+
+    audio.onended = () => {
+      nextTrack();
+    };
+
+    function seekAudio(e) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const pos = (e.clientX - rect.left) / rect.width;
+      if (audio.duration) {
+        audio.currentTime = pos * audio.duration;
+      }
+    }
+
+    async function searchMusic() {
+      const q = document.getElementById("musicSearchInput").value.trim();
+      if (!q) return;
+      try {
+        const res = await fetch(`/api/music/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        if (data.tracks && data.tracks.length > 0) {
+          currentPlaylist = data.tracks;
+          currentIndex = 0;
+          renderTrackList(currentPlaylist);
+          document.querySelectorAll(".pl-tab-btn").forEach(b => b.classList.remove("active"));
+        } else {
+          alert("該当する楽曲が見つかりませんでした。");
+        }
+      } catch (err) {
+        console.warn("Music search error:", err);
+      }
+    }
+
+    function loadPlaylist(type) {
+      document.querySelectorAll(".pl-tab-btn").forEach(b => b.classList.remove("active"));
+      if (type === "hatake") {
+        document.getElementById("tabHatake").classList.add("active");
+        currentPlaylist = [...HATAKE_TRACKS];
+      } else if (type === "fav") {
+        document.getElementById("tabFav").classList.add("active");
+        const favs = JSON.parse(localStorage.getItem("my_music_favs") || "[]");
+        currentPlaylist = favs.length > 0 ? favs : [...HATAKE_TRACKS];
+      } else if (type === "jpop") {
+        document.getElementById("tabJpop").classList.add("active");
+        fetch("/api/music/search?q=J-POP HipHop 2026").then(r => r.json()).then(d => {
+          if (d.tracks) {
+            currentPlaylist = d.tracks;
+            renderTrackList(currentPlaylist);
+          }
+        }).catch(() => {});
+        return;
+      }
+      currentIndex = 0;
+      renderTrackList(currentPlaylist);
+    }
+
+    function toggleFavoriteCurrent() {
+      const t = currentPlaylist[currentIndex];
+      if (!t) return;
+      let favs = JSON.parse(localStorage.getItem("my_music_favs") || "[]");
+      const idx = favs.findIndex(f => f.title === t.title && f.artist === t.artist);
+      if (idx >= 0) {
+        favs.splice(idx, 1);
+      } else {
+        favs.push(t);
+      }
+      localStorage.setItem("my_music_favs", JSON.stringify(favs));
+      updateFavIcon();
+    }
+
+    function updateFavIcon() {
+      const t = currentPlaylist[currentIndex];
+      if (!t) return;
+      const favs = JSON.parse(localStorage.getItem("my_music_favs") || "[]");
+      const isFav = favs.some(f => f.title === t.title && f.artist === t.artist);
+      document.getElementById("favBtn").textContent = isFav ? "❤️" : "🤍";
+    }
+
+    function toggleStealth() {
+      const overlay = document.getElementById("panicOverlay");
+      overlay.style.display = (overlay.style.display === "flex") ? "none" : "flex";
+      if (overlay.style.display === "flex") {
+        audio.pause();
+        document.getElementById("dockPlayBtn").textContent = "▶";
+      }
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") toggleStealth();
+    });
+
+    // 初期起動: 畑プレイリスト展開
+    loadPlaylist("hatake");
+  </script>
+</body>
+</html>

@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#0f172a">
+  <title>天才プロキシ · 高速Webプロキシ</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0a0f1d;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+    header {
+      padding: 16px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 800;
+      background: linear-gradient(135deg, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: 0.5px;
+    }
+    .stealth-btn {
+      background: #dc2626;
+      color: #fff;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+    .stealth-btn:active { transform: scale(0.96); }
+
+    .main-container {
+      flex: 1;
+      max-width: 860px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 32px 16px 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .hero-title {
+      font-size: 32px;
+      font-weight: 900;
+      text-align: center;
+      margin-bottom: 12px;
+      letter-spacing: -0.5px;
+    }
+    .hero-sub {
+      color: #94a3b8;
+      font-size: 14px;
+      text-align: center;
+      margin-bottom: 30px;
+      max-width: 520px;
+      line-height: 1.5;
+    }
+
+    .search-box {
+      width: 100%;
+      max-width: 640px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 6px;
+      display: flex;
+      align-items: center;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(56, 189, 248, 0.1);
+      margin-bottom: 32px;
+      transition: border-color 0.2s;
+    }
+    .search-box:focus-within {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
+    }
+    .search-box input {
+      flex: 1;
+      background: transparent;
+      border: 0;
+      padding: 12px 16px;
+      color: #fff;
+      font-size: 15px;
+      outline: none;
+    }
+    .search-box button {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #fff;
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .search-box button:active { opacity: 0.85; }
+
+    .quick-tiles {
+      width: 100%;
+      max-width: 680px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 12px;
+      margin-bottom: 36px;
+    }
+    .tile {
+      background: #161e2e;
+      border: 1px solid #283548;
+      border-radius: 14px;
+      padding: 16px 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      text-decoration: none;
+      color: #f1f5f9;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tile:hover {
+      background: #1e293b;
+      border-color: #38bdf8;
+      transform: translateY(-2px);
+    }
+    .tile .icon { font-size: 28px; margin-bottom: 8px; }
+    .tile .name { font-size: 13px; font-weight: 600; }
+    .tile .desc { font-size: 10px; color: #94a3b8; margin-top: 4px; }
+
+    .browser-frame-container {
+      width: 100%;
+      height: 82vh;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid #334155;
+      background: #0f172a;
+      display: none;
+      flex-direction: column;
+    }
+    .browser-nav-bar {
+      height: 44px;
+      background: #1e293b;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 10px;
+      border-bottom: 1px solid #334155;
+    }
+    .browser-nav-bar button {
+      background: #334155;
+      color: #fff;
+      border: 0;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .browser-nav-url {
+      flex: 1;
+      height: 28px;
+      background: #0f172a;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      color: #cbd5e1;
+      font-size: 11px;
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .browser-iframe {
+      flex: 1;
+      width: 100%;
+      border: 0;
+      background: #fff;
+    }
+
+    /* 緊急回避オーバーレイ */
+    #panicOverlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #f8fafc;
+      color: #1e293b;
+      z-index: 2147483647;
+      display: none;
+      flex-direction: column;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", sans-serif;
+    }
+    .panic-header {
+      background: #0284c7;
+      color: #fff;
+      padding: 10px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: bold;
+      font-size: 13px;
+    }
+    .panic-body {
+      flex: 1;
+      padding: 24px 20px;
+      overflow-y: auto;
+      max-width: 800px;
+      margin: 0 auto;
+      width: 100%;
+      line-height: 1.8;
+      font-size: 15px;
+    }
+    .panic-body h2 { font-size: 20px; margin-bottom: 12px; color: #0f172a; border-bottom: 2px solid #0284c7; padding-bottom: 6px; }
+    .panic-body p { margin-bottom: 16px; color: #334155; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">
+      <span>⚡</span>
+      <span>天才プロキシ</span>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <a href="/tube/" style="color:#f8fafc; text-decoration:none; font-size:12px; font-weight:600; padding:6px 10px; background:#1e293b; border-radius:8px;">📺 若雪幸せTube</a>
+      <a href="/music/" style="color:#f8fafc; text-decoration:none; font-size:12px; font-weight:600; padding:6px 10px; background:#1e293b; border-radius:8px;">🎵 ミュージック</a>
+      <button class="stealth-btn" onclick="toggleStealth()">
+        <span>🚨</span>
+        <span>緊急回避</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="main-container">
+    <div id="homeView" style="width:100%; display:flex; flex-direction:column; align-items:center;">
+      <h1 class="hero-title">好きなWebを、自由に見よう。</h1>
+      <p class="hero-sub">学校のiPadやフィルターを完全回避。Pokiのゲームやサイトを安全・高速に中継して表示します。</p>
+
+      <div class="search-box">
+        <input type="text" id="targetUrlInput" placeholder="URLまたは検索ワード（例: poki.com, discord.com）" onkeydown="if(event.key==='Enter') openProxyUrl()">
+        <button onclick="openProxyUrl()">開く ▶</button>
+      </div>
+
+      <div class="quick-tiles">
+        <div class="tile" onclick="launchUrl('https://poki.com')">
+          <div class="icon">🎮</div>
+          <div class="name">Poki Games</div>
+          <div class="desc">人気ゲーム遊び放題</div>
+        </div>
+        <div class="tile" onclick="location.href='/tube/'">
+          <div class="icon">❄️</div>
+          <div class="name">若雪幸せTube</div>
+          <div class="desc">MP4風動画再生</div>
+        </div>
+        <div class="tile" onclick="location.href='/music/'">
+          <div class="icon">🎵</div>
+          <div class="name">ミュージック</div>
+          <div class="desc">Apple Music風</div>
+        </div>
+        <div class="tile" onclick="launchUrl('https://turbowarp.org')">
+          <div class="icon">🚀</div>
+          <div class="name">TurboWarp</div>
+          <div class="desc">高速Scratch</div>
+        </div>
+        <div class="tile" onclick="launchUrl('https://ja.wikipedia.org')">
+          <div class="icon">📖</div>
+          <div class="name">Wikipedia</div>
+          <div class="desc">百科事典</div>
+        </div>
+        <div class="tile" onclick="launchUrl('https://duckduckgo.com')">
+          <div class="icon">🦆</div>
+          <div class="name">DuckDuckGo</div>
+          <div class="desc">安全なWeb検索</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 内蔵ブラウザ枠 -->
+    <div id="browserView" class="browser-frame-container">
+      <div class="browser-nav-bar">
+        <button onclick="closeBrowserView()">✕ 閉じる</button>
+        <button onclick="reloadIframe()">🔄 更新</button>
+        <div class="browser-nav-url" id="currentLoadedUrl">読み込み中…</div>
+        <button onclick="openExternal()">⛶ 別タブ</button>
+      </div>
+      <iframe id="proxyIframe" class="browser-iframe" src="about:blank" allow="autoplay; fullscreen; gamepad"></iframe>
+    </div>
+  </main>
+
+  <!-- 緊急回避オーバーレイ（国語演習ノート） -->
+  <div id="panicOverlay">
+    <div class="panic-header">
+      <span>📖 現代文・古典 演習ノート 第4章</span>
+      <button onclick="toggleStealth()" style="background:#0369a1; color:#fff; border:0; border-radius:4px; padding:4px 10px; cursor:pointer;">復帰</button>
+    </div>
+    <div class="panic-body">
+      <h2>芥川龍之介『羅生門』の読解と構造分析</h2>
+      <p><strong>問1.</strong> 下人の心理の推移について、「途方に暮れていた状態」から「盗人になる決意」に至るまでの過程を、老婆との対話に着目して100字以内で説明しなさい。</p>
+      <p><strong>解説:</strong> 羅生門の下で雨宿りをしていた下人は、当初は行き場を失い、飢え死にするか盗人になるかの二者択一に迷っていた。しかし、死人の髪を抜く老婆の「生きるための悪」の論理を聞いたことで、自己の行為を正当化する口実を得て、老婆の着物を剥ぎ取って闇夜へ駆け去る。</p>
+      <p><strong>重要語句:</strong> 逢着（ほうちゃく）、刻限（こくげん）、侮蔑（ぶべつ）、冷淡（れいたん）</p>
+    </div>
+  </div>
+
+  <script>
+    let activeUrl = "";
+
+    function openProxyUrl() {
+      const input = document.getElementById("targetUrlInput");
+      let url = (input.value || "").trim();
+      if (!url) return;
+      if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        if (url.includes(".") && !url.includes(" ")) {
+          url = "https://" + url;
+        } else {
+          url = "https://duckduckgo.com/?q=" + encodeURIComponent(url);
+        }
+      }
+      launchUrl(url);
+    }
+
+    function launchUrl(url) {
+      activeUrl = url;
+      const proxyUrl = "/api/proxy?url=" + encodeURIComponent(url);
+      document.getElementById("homeView").style.display = "none";
+      document.getElementById("browserView").style.display = "flex";
+      document.getElementById("currentLoadedUrl").textContent = url;
+      document.getElementById("proxyIframe").src = proxyUrl;
+    }
+
+    function closeBrowserView() {
+      document.getElementById("browserView").style.display = "none";
+      document.getElementById("homeView").style.display = "flex";
+      document.getElementById("proxyIframe").src = "about:blank";
+    }
+
+    function reloadIframe() {
+      if (activeUrl) launchUrl(activeUrl);
+    }
+
+    function openExternal() {
+      if (activeUrl) {
+        window.open("/api/proxy?url=" + encodeURIComponent(activeUrl), "_blank");
+      }
+    }
+
+    function toggleStealth() {
+      const overlay = document.getElementById("panicOverlay");
+      overlay.style.display = (overlay.style.display === "flex") ? "none" : "flex";
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") toggleStealth();
+    });
+  </script>
+</body>
+</html>

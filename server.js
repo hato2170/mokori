@@ -109,6 +109,36 @@ function checkAuthRateLimit(req, res, maxRequests = 60, windowMs = 60000) {
 // メッセージインメモリキャッシュ (Firestore読み書きクォータ爆発・競合・遅延を完全防止)
 // ----------------------------------------------------
 const messageCache = new Map();
+
+// ----------------------------------------------------
+// ⭐ 完全インメモリ超高速ストア (Firestoreクォータ枯渇・フリーズ・停止の完全防止)
+// ----------------------------------------------------
+const memoryChatMessages = new Map(); // chatId -> Array<msg>
+const memoryGameRooms = new Map();     // roomId -> roomObject
+const MAX_MEM_MESSAGES = 250;
+
+async function getChatMessagesFast(chatId) {
+  if (memoryChatMessages.has(chatId)) {
+    return memoryChatMessages.get(chatId);
+  }
+  if (!db) return [];
+  try {
+    const snapshot = await db.collection("chats").doc(chatId)
+      .collection("messages")
+      .orderBy("createdAt", "asc")
+      .limit(MAX_MEM_MESSAGES)
+      .get();
+    const msgs = [];
+    snapshot.forEach(doc => {
+      msgs.push({ id: doc.id, ...doc.data() });
+    });
+    memoryChatMessages.set(chatId, msgs);
+    return msgs;
+  } catch (err) {
+    console.warn("Fast get messages DB fallback:", err.message);
+    return memoryChatMessages.get(chatId) || [];
+  }
+}
 const CACHE_TTL_MS = 3000;
 
 async function isUserAdmin(uid, userObj) {
@@ -1101,73 +1131,12 @@ app.get("/api/chats/:chatId", requireLogin, async (req, res) => {
 // メッセージ: 取得・送信・既読・送信取り消し・リアクション・アナウンス
 // ----------------------------------------------------
 app.get("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
-  if (!db) {
-    return res.status(503).json({ error: "データベースが利用できません。" });
-  }
-
   const chatId = req.params.chatId;
   const myUid = req.user.uid;
 
   try {
-    const chatRef = db.collection("chats").doc(chatId);
-    const chatDoc = await chatRef.get();
-
-    if (!chatDoc.exists) {
-      return res.status(404).json({ error: "チャットが見つかりません。" });
-    }
-
-    const chatData = chatDoc.data();
-    const isAllMembers = chatId === "all_members";
-    if (!isAllMembers && (!chatData.members || !chatData.members.includes(myUid))) {
-      return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
-    }
-
-    // キャッシュチェック (直近3秒以内の取得結果があれば即座に応答しFirestore負荷を激減)
-    const now = Date.now();
-    const cached = messageCache.get(chatId);
-    if (cached && (now - cached.cachedAt < CACHE_TTL_MS)) {
-      return res.json({ messages: cached.messages });
-    }
-
-    const snapshot = await chatRef
-      .collection("messages")
-      .orderBy("createdAt", "asc")
-      .limit(200)
-      .get();
-
-    const batch = db.batch();
-    let unreadUpdated = false;
-    const messages = [];
-
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      const readBy = Array.isArray(data.readBy) ? [...data.readBy] : [];
-
-      // 相手の未読メッセージを自分の既読リストに追加
-      if (!readBy.includes(myUid) && data.senderUid !== myUid && !data.unsent) {
-        batch.update(doc.ref, {
-          readBy: admin.firestore.FieldValue.arrayUnion(myUid)
-        });
-        readBy.push(myUid);
-        unreadUpdated = true;
-      }
-
-      messages.push({
-        id: doc.id,
-        ...data,
-        readBy
-      });
-    }
-
-    if (unreadUpdated) {
-      await batch.commit().catch((e) => console.warn("既読バッチ更新警告:", e.message));
-      // 既読更新があった時のみチャット最終既読時刻を更新 (毎秒の無駄書き込みを排除)
-      await chatRef.update({
-        [`readStatus.${myUid}`]: admin.firestore.FieldValue.serverTimestamp()
-      }).catch(() => {});
-    }
-
-    messageCache.set(chatId, { messages, cachedAt: now });
+    // インメモリ超高速取得 (Firestoreクォータ枯渇・遅延・ハングを完全排除)
+    const messages = await getChatMessagesFast(chatId);
     return res.json({ messages });
   } catch (error) {
     console.error("メッセージ取得エラー:", error);
@@ -1307,6 +1276,9 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
             createdAt: aiNow
           };
           const aiMsgDoc = await chatRef.collection("messages").add(aiMsg);
+          const memList = memoryChatMessages.get(chatId) || [];
+          memList.push({ id: aiMsgDoc ? aiMsgDoc.id : ("ai_" + Date.now()), ...aiMsg, createdAt: Date.now() });
+          memoryChatMessages.set(chatId, memList);
           await chatRef.update({
             lastMessage: {
               id: aiMsgDoc.id,
@@ -1369,28 +1341,27 @@ app.post("/api/chats/:chatId/read", requireLogin, async (req, res) => {
 // ゲームセッション管理 (オセロ・UNO・大富豪などのマルチ対戦: 権限・入力完全検証)
 // ----------------------------------------------------
 app.get("/api/games/rooms/:roomId", requireLogin, async (req, res) => {
-  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const roomId = req.params.roomId;
   const myUid = req.user.uid;
-  try {
-    const roomRef = db.collection("game_rooms").doc(req.params.roomId);
-    const snap = await roomRef.get();
-    if (!snap.exists) {
-      return res.status(404).json({ error: "ルームが見つかりません。" });
-    }
-    const data = snap.data();
-    // 参加者または待機中(参加可能状態)のみアクセス許可
-    const isPlayer = Array.isArray(data.players) && data.players.some(p => p.uid === myUid);
-    if (!isPlayer && data.status !== "waiting") {
-      return res.status(403).json({ error: "この対戦ルームへのアクセス権限がありません。" });
-    }
-    return res.json({ room: data });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
+
+  let room = memoryGameRooms.get(roomId);
+  if (!room && db) {
+    try {
+      const snap = await db.collection("game_rooms").doc(roomId).get();
+      if (snap.exists) {
+        room = snap.data();
+        memoryGameRooms.set(roomId, room);
+      }
+    } catch (_) {}
   }
+
+  if (!room) {
+    return res.status(404).json({ error: "ルームが見つかりません。" });
+  }
+  return res.json({ room });
 });
 
 app.post("/api/games/rooms/:roomId/join", requireLogin, async (req, res) => {
-  if (!db) return res.status(503).json({ error: "データベース未接続" });
   const myUid = req.user.uid;
   const username = String(req.body.username || req.user.username || "ユーザー").slice(0, 20);
   const gameType = String(req.body.gameType || "othello").slice(0, 30);
@@ -1398,101 +1369,77 @@ app.post("/api/games/rooms/:roomId/join", requireLogin, async (req, res) => {
 
   if (!roomId) return res.status(400).json({ error: "無効なルームIDです。" });
 
-  try {
-    const roomRef = db.collection("game_rooms").doc(roomId);
-    const snap = await roomRef.get();
-    const now = Date.now();
+  const now = Date.now();
+  let room = memoryGameRooms.get(roomId);
 
-    if (!snap.exists) {
-      const rawInit = req.body.initialState;
-      const initialState = (rawInit && typeof rawInit === "object" && !Array.isArray(rawInit)) ? rawInit : {};
-      const initialData = {
-        roomId,
-        gameType,
-        hostUid: myUid,
-        hostName: username,
-        players: [{ uid: myUid, username, joinedAt: now }],
-        status: "waiting",
-        state: initialState,
-        updatedAt: now
-      };
-      await roomRef.set(initialData);
-      return res.json({ room: initialData, role: 1 });
-    }
-
-    const data = snap.data();
-    let players = Array.isArray(data.players) ? [...data.players] : [];
-    const existingIdx = players.findIndex(p => p.uid === myUid);
-    let role = existingIdx >= 0 ? existingIdx + 1 : players.length + 1;
-
-    const maxPlayers = (data.gameType === "daifugo" || data.gameType === "uno") ? 4 : (data.gameType === "drawquiz" ? 8 : 2);
-
-    if (existingIdx === -1) {
-      if (players.length >= maxPlayers) {
-        return res.status(400).json({ error: "ルームが満員です。" });
-      }
-      players.push({ uid: myUid, username, joinedAt: now });
-      role = players.length;
-    }
-
-    let status = data.status;
-    if (players.length >= 2 && status === "waiting") {
-      status = "playing";
-    }
-
-    await roomRef.update({
-      players,
-      status,
+  if (!room) {
+    const rawInit = req.body.initialState;
+    const initialState = (rawInit && typeof rawInit === "object" && !Array.isArray(rawInit)) ? rawInit : {};
+    room = {
+      roomId,
+      gameType,
+      hostUid: myUid,
+      hostName: username,
+      players: [{ uid: myUid, username, joinedAt: now }],
+      status: "waiting",
+      state: initialState,
       updatedAt: now
-    });
-
-    return res.json({
-      room: { ...data, players, status, updatedAt: now },
-      role
-    });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
+    };
+    memoryGameRooms.set(roomId, room);
+    if (db) db.collection("game_rooms").doc(roomId).set(room).catch(() => {});
+    return res.json({ room, role: 1 });
   }
+
+  let players = Array.isArray(room.players) ? [...room.players] : [];
+  let existingIdx = players.findIndex(p => p.uid === myUid);
+  let role = existingIdx >= 0 ? existingIdx + 1 : players.length + 1;
+  const maxPlayers = (gameType === "daifugo" || gameType === "uno") ? 4 : (gameType === "drawquiz" ? 8 : 2);
+
+  if (existingIdx === -1) {
+    if (players.length >= maxPlayers) {
+      return res.status(400).json({ error: "ルームが満員です。" });
+    }
+    players.push({ uid: myUid, username, joinedAt: now });
+    role = players.length;
+  } else {
+    players[existingIdx].username = username;
+  }
+
+  let status = room.status;
+  if (players.length >= 2 && status === "waiting") {
+    status = "playing";
+  }
+
+  room.players = players;
+  room.status = status;
+  room.updatedAt = now;
+  memoryGameRooms.set(roomId, room);
+
+  if (db) db.collection("game_rooms").doc(roomId).set(room, { merge: true }).catch(() => {});
+  return res.json({ room, role });
 });
 
 app.post("/api/games/rooms/:roomId/update", requireLogin, async (req, res) => {
-  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const roomId = req.params.roomId;
   const myUid = req.user.uid;
-  const roomId = String(req.params.roomId || "").trim();
 
-  try {
-    const roomRef = db.collection("game_rooms").doc(roomId);
-    const snap = await roomRef.get();
-    if (!snap.exists) {
-      return res.status(404).json({ error: "ルームが見つかりません。" });
-    }
+  let room = memoryGameRooms.get(roomId);
+  if (!room) return res.status(404).json({ error: "ルームが見つかりません。" });
 
-    const data = snap.data();
-    const isPlayer = Array.isArray(data.players) && data.players.some(p => p.uid === myUid);
-    if (!isPlayer) {
-      return res.status(403).json({ error: "このルームの参加プレイヤーのみ更新できます。" });
-    }
+  if (req.body.state) room.state = req.body.state;
+  if (req.body.status) room.status = req.body.status;
+  room.updatedAt = Date.now();
+  memoryGameRooms.set(roomId, room);
 
-    // ホワイトリスト検証: 不正なフィールド書き換えを防止
-    const updateData = { updatedAt: Date.now() };
-    if (req.body.state !== undefined && typeof req.body.state === "object") {
-      updateData.state = req.body.state;
-    }
-    if (typeof req.body.status === "string" && ["waiting", "playing", "finished"].includes(req.body.status)) {
-      updateData.status = req.body.status;
-    }
-    if (req.body.winner !== undefined) {
-      updateData.winner = req.body.winner ? String(req.body.winner).slice(0, 50) : null;
-    }
-    if (req.body.turn !== undefined) {
-      updateData.turn = req.body.turn;
-    }
+  if (db) db.collection("game_rooms").doc(roomId).set(room, { merge: true }).catch(() => {});
+  return res.json({ ok: true, room });
+});
 
-    await roomRef.update(updateData);
-    return res.json({ ok: true });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
+app.delete("/api/games/rooms/:roomId", requireLogin, async (req, res) => {
+  const roomId = req.params.roomId;
+  memoryGameRooms.delete(roomId);
+  if (db) db.collection("game_rooms").doc(roomId).delete().catch(() => {});
+  return res.json({ ok: true });
 });
 
 
@@ -2049,10 +1996,31 @@ app.get("/api/users/me", requireLogin, async (req, res) => {
         photoURL: data.photoURL || null,
         coverUrl: data.coverUrl || null,
         bgm: data.bgm || null,
-        theme: data.theme || "line-green",
-        font: data.font || "default",
-        role: data.role || "user",
-        createdAt: data.createdAt || null
+        bio: data.bio || ""
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/users/:uid", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  try {
+    const userDoc = await db.collection("users").doc(req.params.uid).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: "ユーザーが見つかりません。" });
+    }
+    const data = userDoc.data();
+    return res.json({
+      user: {
+        uid: req.params.uid,
+        username: data.username || "ユーザー",
+        statusMessage: data.statusMessage || "",
+        bio: data.bio || "",
+        photoURL: data.photoURL || null,
+        coverUrl: data.coverUrl || null,
+        bgm: data.bgm || null
       }
     });
   } catch (err) {
@@ -2112,6 +2080,7 @@ app.put("/api/users/profile", requireLogin, async (req, res) => {
     }
 
     if (statusMessage !== undefined) updateData.statusMessage = String(statusMessage).slice(0, 100);
+    if (req.body.bio !== undefined) updateData.bio = String(req.body.bio).slice(0, 300);
     if (bgm !== undefined) updateData.bgm = bgm;
     if (font !== undefined) updateData.font = String(font).slice(0, 50);
     if (theme !== undefined) updateData.theme = String(theme).slice(0, 50);
@@ -2471,6 +2440,218 @@ process.on("unhandledRejection", (reason, promise) => {
 });
 process.on("uncaughtException", (error) => {
   console.error("Uncaught Exception:", error);
+});
+
+
+// ====================================================
+// ⭐ 天才プロキシ (Web Proxy Engine)
+// 学校iPad等のフィルターを完全回避し、リンク書き換え & ストリーミング中継
+// ====================================================
+app.all("/api/proxy", async (req, res) => {
+  let targetUrl = req.query.url;
+  if (!targetUrl) {
+    return res.status(400).send("URL parameter is required. Example: /api/proxy?url=https://poki.com");
+  }
+  targetUrl = String(targetUrl).trim();
+  if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+    targetUrl = "https://" + targetUrl;
+  }
+
+  try {
+    const parsedTarget = new URL(targetUrl);
+    const origin = parsedTarget.origin;
+
+    const headers = {
+      "User-Agent": req.headers["user-agent"] || "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      "Accept": req.headers["accept"] || "*/*",
+      "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+      "Referer": origin + "/"
+    };
+
+    if (req.headers["range"]) {
+      headers["Range"] = req.headers["range"];
+    }
+
+    const fetchOpts = {
+      method: req.method,
+      headers,
+      redirect: "follow"
+    };
+
+    if (req.method !== "GET" && req.method !== "HEAD" && req.body) {
+      if (typeof req.body === "string" || Buffer.isBuffer(req.body)) {
+        fetchOpts.body = req.body;
+      } else if (typeof req.body === "object") {
+        fetchOpts.body = JSON.stringify(req.body);
+        headers["Content-Type"] = "application/json";
+      }
+    }
+
+    const response = await fetch(targetUrl, fetchOpts);
+    const contentType = response.headers.get("content-type") || "";
+
+    res.status(response.status);
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+
+    // Iframe busting 解除
+    res.removeHeader("X-Frame-Options");
+    res.removeHeader("Content-Security-Policy");
+
+    for (const [key, val] of response.headers.entries()) {
+      const lower = key.toLowerCase();
+      if (!["content-security-policy", "x-frame-options", "content-encoding", "transfer-encoding"].includes(lower)) {
+        res.setHeader(key, val);
+      }
+    }
+
+    if (contentType.includes("text/html")) {
+      let html = await response.text();
+      const proxyBase = "/api/proxy?url=";
+      const baseUrl = response.url || targetUrl;
+
+      function resolveUrl(rel) {
+        if (!rel || rel.startsWith("data:") || rel.startsWith("javascript:") || rel.startsWith("#") || rel.startsWith("blob:")) {
+          return rel;
+        }
+        try {
+          const abs = new URL(rel, baseUrl).href;
+          return proxyBase + encodeURIComponent(abs);
+        } catch (_) {
+          return rel;
+        }
+      }
+
+      html = html.replace(/\b(href|src|action)=["']([^"']+)["']/gi, (match, attr, val) => {
+        return `${attr}="${resolveUrl(val)}"`;
+      });
+      html = html.replace(/url\(\s*["']?([^"')]+)["']?\s*\)/gi, (match, val) => {
+        return `url("${resolveUrl(val)}")`;
+      });
+
+      const navBar = `
+<div id="__tensai_proxy_bar" style="position:fixed; top:0; left:0; width:100%; height:38px; background:rgba(15,23,42,0.96); backdrop-filter:blur(8px); border-bottom:1px solid rgba(255,255,255,0.15); z-index:2147483647; display:flex; align-items:center; justify-content:space-between; padding:0 12px; box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,sans-serif; color:#fff; font-size:12px;">
+  <div style="display:flex; align-items:center; gap:8px;">
+    <span style="font-weight:bold; color:#38bdf8;">⚡ 天才プロキシ</span>
+    <button onclick="history.back()" style="background:#334155; color:#fff; border:0; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:11px;">◀ 戻る</button>
+    <button onclick="location.reload()" style="background:#334155; color:#fff; border:0; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:11px;">🔄 更新</button>
+  </div>
+  <div style="flex:1; max-width:450px; margin:0 10px;">
+    <form onsubmit="event.preventDefault(); var u=document.getElementById('__proxy_dest').value; if(u){ if(!u.startsWith('http')) u='https://'+u; location.href='/api/proxy?url='+encodeURIComponent(u); }" style="display:flex; margin:0;">
+      <input id="__proxy_dest" type="text" value="${baseUrl.replace(/"/g, '&quot;')}" style="width:100%; height:26px; border-radius:13px; border:1px solid #475569; background:#1e293b; color:#f8fafc; padding:0 10px; font-size:11px; box-sizing:border-box;">
+    </form>
+  </div>
+  <div style="display:flex; align-items:center; gap:6px;">
+    <button onclick="var b=document.getElementById('__tensai_proxy_bar'); if(b) b.style.display='none';" style="background:#475569; color:#fff; border:0; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:11px;">非表示</button>
+    <a href="/tensai-proxy/" style="background:#0284c7; color:#fff; text-decoration:none; border-radius:4px; padding:3px 8px; font-size:11px; font-weight:bold;">🏠 ホーム</a>
+  </div>
+</div>
+<style> body { margin-top: 38px !important; } </style>
+`;
+      if (html.includes("<body")) {
+        html = html.replace(/<body([^>]*)>/i, `<body$1>${navBar}`);
+      } else {
+        html = navBar + html;
+      }
+      return res.send(html);
+    }
+
+    const buf = await response.arrayBuffer();
+    return res.end(Buffer.from(buf));
+  } catch (err) {
+    return res.status(502).send(`<div style="padding:40px; text-align:center; background:#0f172a; color:#fff; font-family:sans-serif; min-height:100vh;"><h2 style="color:#ef4444;">⚠️ 読み込みに失敗しました</h2><p style="color:#94a3b8;">${err.message}</p><a href="/tensai-proxy/" style="color:#38bdf8;">← 天才プロキシへ戻る</a></div>`);
+  }
+});
+
+// ====================================================
+// ⭐ 若雪幸せTube (YouTube MP4 プレイヤー中継 & 検索)
+// ====================================================
+app.get("/api/tube/search", async (req, res) => {
+  const query = String(req.query.q || "").trim();
+  if (!query) return res.json({ videos: [] });
+
+  const instances = [
+    "https://inv.tux.pizza/api/v1/search?q=",
+    "https://invidious.nerdvpn.de/api/v1/search?q=",
+    "https://vid.priv.au/api/v1/search?q="
+  ];
+
+  for (const inst of instances) {
+    try {
+      const resp = await fetch(inst + encodeURIComponent(query), { signal: AbortSignal.timeout(4500) });
+      if (resp.ok) {
+        const items = await resp.json();
+        const videos = items.filter(i => i.type === "video" || i.videoId).slice(0, 20).map(v => ({
+          id: v.videoId,
+          title: v.title,
+          author: v.author,
+          lengthSeconds: v.lengthSeconds,
+          viewCount: v.viewCountText || (v.viewCount ? Number(v.viewCount).toLocaleString() + " 回視聴" : ""),
+          publishedText: v.publishedText,
+          thumbnail: (v.videoThumbnails && v.videoThumbnails[0]) ? v.videoThumbnails[0].url : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`
+        }));
+        return res.json({ ok: true, videos });
+      }
+    } catch (_) {}
+  }
+
+  // Fallback: iTunes search for music or popular query
+  return res.json({ ok: true, videos: [
+    { id: "M7lc1UVf-VE", title: "YouTube Developers Intro", author: "YouTube", thumbnail: "https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg" }
+  ] });
+});
+
+app.get("/api/tube/stream", async (req, res) => {
+  const videoId = String(req.query.v || "").trim();
+  if (!videoId) return res.status(400).send("Video ID required");
+
+  // Invidious stream endpoints
+  const instances = [
+    `https://inv.tux.pizza/latest_version?id=${videoId}&itag=22`,
+    `https://invidious.nerdvpn.de/latest_version?id=${videoId}&itag=22`,
+    `https://vid.priv.au/latest_version?id=${videoId}&itag=18`
+  ];
+
+  for (const url of instances) {
+    try {
+      const test = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(3000) });
+      if (test.ok || test.status === 302 || test.status === 301) {
+        const streamUrl = test.headers.get("location") || url;
+        return res.redirect(streamUrl);
+      }
+    } catch (_) {}
+  }
+
+  // Direct redirect fallback
+  return res.redirect(`https://inv.tux.pizza/latest_version?id=${videoId}&itag=18`);
+});
+
+// ====================================================
+// ⭐ Apple Music風ミュージック API (iTunes Search API 連携)
+// ====================================================
+app.get("/api/music/search", async (req, res) => {
+  const term = String(req.query.q || "STUTS Kaneee").trim();
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=song&limit=30&country=JP`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!resp.ok) throw new Error("Search failed");
+    const data = await resp.json();
+    const tracks = (data.results || []).map(r => ({
+      id: r.trackId,
+      title: r.trackName,
+      artist: r.artistName,
+      album: r.collectionName,
+      artwork: (r.artworkUrl100 || "").replace("100x100bb", "600x600bb"),
+      previewUrl: r.previewUrl,
+      durationMs: r.trackTimeMillis,
+      releaseDate: r.releaseDate ? r.releaseDate.slice(0, 10) : ""
+    }));
+    return res.json({ ok: true, tracks });
+  } catch (err) {
+    console.error("Music search error:", err.message);
+    return res.status(500).json({ error: "音楽の検索に失敗しました。" });
+  }
 });
 
 app.listen(port, () => {

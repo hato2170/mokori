@@ -680,7 +680,7 @@
       }
 
       try {
-        const myName = (window.currentUser && window.currentUser.displayName) || "プレイヤー";
+        const myName = (window.currentUser && (window.currentUser.displayName || window.currentUser.username)) || (document.getElementById("myProfileUsernameInput") && document.getElementById("myProfileUsernameInput").value.trim()) || "プレイヤー";
         const res = await window.api(`/api/games/rooms/${roomCode}/join`, {
           method: "POST",
           body: JSON.stringify({
@@ -1015,7 +1015,7 @@
       }
 
       try {
-        const myName = (window.currentUser && window.currentUser.displayName) || "プレイヤー";
+        const myName = (window.currentUser && (window.currentUser.displayName || window.currentUser.username)) || (document.getElementById("myProfileUsernameInput") && document.getElementById("myProfileUsernameInput").value.trim()) || "プレイヤー";
         const res = await window.api(`/api/games/rooms/${roomCode}/join`, {
           method: "POST",
           body: JSON.stringify({
@@ -1307,7 +1307,7 @@
         return;
       }
       try {
-        const myName = (window.currentUser && window.currentUser.displayName) || "プレイヤー";
+        const myName = (window.currentUser && (window.currentUser.displayName || window.currentUser.username)) || (document.getElementById("myProfileUsernameInput") && document.getElementById("myProfileUsernameInput").value.trim()) || "プレイヤー";
         const res = await window.api(`/api/games/rooms/${roomCode}/join`, {
           method: "POST",
           body: JSON.stringify({
@@ -1697,8 +1697,8 @@
   // ==================================================
   const PAPER_WEBGL_SERVERS = {
     1: { name: "⚡ サーバー1 (サイト内蔵・推奨)", url: "paper/index.html" },
-    2: { name: "🚀 サーバー2 (GitLab高速版)", url: "https://paperio2.gitlab.io/file/" },
-    3: { name: "🌐 サーバー3 (GitHub Pages公式)", url: "https://ubg17.github.io/PaperIO2/" }
+    2: { name: "🚀 サーバー2 (GitLab高速版)", url: "/api/proxy?url=" + encodeURIComponent("https://paperio2.gitlab.io/file/") },
+    3: { name: "🌐 サーバー3 (GitHub Pages公式)", url: "/api/proxy?url=" + encodeURIComponent("https://ubg17.github.io/PaperIO2/") }
   };
   let currentMokoriPaperServer = 1;
 
@@ -1791,9 +1791,9 @@
   // 6-b. ⭐ ブロスタ WebGL版（本家完全再現 & 埋め込み）
   // ==================================================
   const BRAWL_WEBGL_SERVERS = {
-    1: { name: "本家3D WebGL版 (StaticQuasar)", url: "https://staticquasar931.github.io/Brawl-Stars/" },
-    2: { name: "TurboWarp 60FPS版 (全69キャラ)", url: "https://turbowarp.org/544538470/embed?autoplay=true" },
-    3: { name: "TurboWarp最新アプデ版 (Gods vs Monsters)", url: "https://turbowarp.org/1059386427/embed?autoplay=true" }
+    1: { name: "本家3D WebGL版 (StaticQuasar)", url: "/api/proxy?url=" + encodeURIComponent("https://staticquasar931.github.io/Brawl-Stars/") },
+    2: { name: "TurboWarp 60FPS版 (全69キャラ)", url: "/api/proxy?url=" + encodeURIComponent("https://turbowarp.org/544538470/embed?autoplay=true") },
+    3: { name: "TurboWarp最新アプデ版 (Gods vs Monsters)", url: "/api/proxy?url=" + encodeURIComponent("https://turbowarp.org/1059386427/embed?autoplay=true") }
   };
   let currentMokoriBrawlServer = 1;
 
@@ -1859,7 +1859,7 @@
           </div>
         </div>
         <div id="mokoriBrawlIframeWrap" style="flex:1; width:100%; min-height:480px; height:68vh; border-radius:12px; overflow:hidden; border:2px solid #e0ded5; background:#000;">
-          <iframe id="mokoriBrawlIframe" src="https://staticquasar931.github.io/Brawl-Stars/" style="width:100%; height:100%; border:none; display:block;" allow="autoplay; fullscreen; web-share; gamepad; pointer-lock" allowfullscreen></iframe>
+          <iframe id="mokoriBrawlIframe" src="/api/proxy?url=" + encodeURIComponent("https://staticquasar931.github.io/Brawl-Stars/") style="width:100%; height:100%; border:none; display:block;" allow="autoplay; fullscreen; web-share; gamepad; pointer-lock" allowfullscreen></iframe>
         </div>
       </div>
     `;
@@ -2831,7 +2831,7 @@ function renderSolitaireUI() {
       }
 
       try {
-        const myName = (window.currentUser && window.currentUser.displayName) || "プレイヤー";
+        const myName = (window.currentUser && (window.currentUser.displayName || window.currentUser.username)) || (document.getElementById("myProfileUsernameInput") && document.getElementById("myProfileUsernameInput").value.trim()) || "プレイヤー";
         const myUid = (window.currentUser && window.currentUser.uid) || "";
         const res = await window.api(`/api/games/rooms/${roomCode}/join`, {
           method: "POST",

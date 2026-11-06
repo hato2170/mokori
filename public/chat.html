@@ -915,6 +915,9 @@
         <button class="icon-btn" id="openProfileBtn" title="プロフィール設定" onclick="window.openProfileModal()" style="font-size:18px;">👤</button>
         <button class="icon-btn" id="openThemeFontBtn" title="着せ替え・フォント・BGM設定" onclick="window.openThemeFontModal()" style="font-size:18px;">🎨</button>
         <button class="icon-btn" id="openAiStudioBtn" title="AIスタジオ" onclick="window.location.href='./ai.html'" style="font-size:18px;">🤖</button>
+        <button class="icon-btn" title="もこりプロキシ" onclick="window.location.href='/tensai-proxy/'" style="font-size:18px;">🌐</button>
+        <button class="icon-btn" title="ちゅこtube" onclick="window.location.href='/tube/'" style="font-size:18px;">📺</button>
+        <button class="icon-btn" title="ちゅこミュージック" onclick="window.location.href='/music/'" style="font-size:18px;">🎵</button>
         <button class="icon-btn" id="openGameHubBtn" title="ゲーム広場" onclick="window.openGameHub()" style="font-size:18px;">🎮</button>
         <button class="icon-btn" id="newChatBtn" title="新しいトーク">＋</button>
         <button class="icon-btn" id="refreshAllBtn" title="更新">🔄</button>
@@ -1517,7 +1520,8 @@
         <span id="upmAvatarInitial">🐐</span>
       </div>
       <h3 id="upmUsername" style="margin:0 0 4px; font-size:18px; color:var(--text);">ユーザー名</h3>
-      <p id="upmStatus" style="margin:0 0 20px; font-size:13px; color:var(--text-muted);">ステータスメッセージ</p>
+      <p id="upmStatus" style="margin:0 0 12px; font-size:13px; color:var(--text-muted);">ステータスメッセージ</p>
+      <div id="upmBio" style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:10px; padding:10px 14px; margin:0 auto 16px; font-size:12px; color:#334155; text-align:left; line-height:1.6; white-space:pre-wrap; display:none;"></div>
 
       <div id="upmActionArea" style="display:flex; flex-direction:column; gap:8px;"></div>
     </div>
@@ -1533,10 +1537,19 @@
     </div>
     <div class="modal-body" style="padding:20px 16px;">
       <div style="text-align:center; margin-bottom:16px;">
-        <div id="myProfileAvatarPreview" style="width:68px; height:68px; border-radius:50%; background:#06c755; color:#fff; font-size:30px; font-weight:bold; display:flex; align-items:center; justify-content:center; margin:0 auto 8px; box-shadow:0 4px 10px rgba(6,199,85,0.2);">
+        <div id="myProfileAvatarPreview" style="width:72px; height:72px; border-radius:50%; background:#06c755; color:#fff; font-size:32px; font-weight:bold; display:flex; align-items:center; justify-content:center; margin:0 auto 8px; box-shadow:0 4px 12px rgba(6,199,85,0.25); overflow:hidden;">
           🐐
         </div>
-        <div style="display:flex; justify-content:center; gap:6px; flex-wrap:wrap; margin-top:6px;">
+        <div style="display:flex; justify-content:center; gap:8px; margin-bottom:10px;">
+          <input type="file" id="myProfilePhotoFileInput" accept="image/*" style="display:none;" onchange="window.handleProfilePhotoUpload(event)">
+          <button type="button" onclick="document.getElementById('myProfilePhotoFileInput').click()" style="background:#f1f5f9; border:1px solid #cbd5e1; color:#1e293b; padding:6px 14px; border-radius:8px; font-size:12px; font-weight:bold; cursor:pointer;">
+            📷 写真を選択
+          </button>
+          <button type="button" onclick="window.clearProfilePhoto()" style="background:#f1f5f9; border:1px solid #cbd5e1; color:#64748b; padding:6px 10px; border-radius:8px; font-size:12px; cursor:pointer;">
+            リセット
+          </button>
+        </div>
+        <div style="display:flex; justify-content:center; gap:6px; flex-wrap:wrap; margin-top:4px;">
           <button type="button" class="avatar-preset-btn" onclick="window.setAvatarPreset('🐐')">🐐</button>
           <button type="button" class="avatar-preset-btn" onclick="window.setAvatarPreset('🦁')">🦁</button>
           <button type="button" class="avatar-preset-btn" onclick="window.setAvatarPreset('🐱')">🐱</button>
@@ -1552,9 +1565,14 @@
         <input type="text" id="myProfileUsernameInput" placeholder="2〜20文字 (英数字, _, -)" style="width:100%; height:40px; border:1px solid var(--border); border-radius:8px; padding:0 12px; font-size:14px; box-sizing:border-box;">
       </div>
 
-      <div style="margin-bottom:16px;">
+      <div style="margin-bottom:12px;">
         <label style="display:block; font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:4px;">ステータスメッセージ（一言）</label>
         <input type="text" id="myProfileStatusInput" placeholder="ステータスメッセージを入力…" maxlength="100" style="width:100%; height:40px; border:1px solid var(--border); border-radius:8px; padding:0 12px; font-size:14px; box-sizing:border-box;">
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <label style="display:block; font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:4px;">自己紹介文（プロフィール詳細）</label>
+        <textarea id="myProfileBioInput" placeholder="自己紹介を入力してください…（趣味、好きなこと、一言など）" maxlength="300" rows="3" style="width:100%; border:1px solid var(--border); border-radius:8px; padding:8px 12px; font-size:13px; box-sizing:border-box; resize:vertical; font-family:inherit;"></textarea>
       </div>
 
       <div style="display:flex; gap:8px; margin-bottom:20px;">
@@ -3098,6 +3116,7 @@
         body: JSON.stringify({
           username: newUsername,
           statusMessage: newStatus,
+          bio: document.getElementById("myProfileBioInput") ? document.getElementById("myProfileBioInput").value.trim() : "",
           photoURL: myProfileAvatarPreset
         })
       });
@@ -3134,6 +3153,28 @@
     initialEl.textContent = (targetName && targetName.charAt(0)) || "🐐";
     statusEl.textContent = "mokori ユーザー";
     actionArea.innerHTML = "";
+    const bioEl = document.getElementById("upmBio");
+    if (bioEl) { bioEl.style.display = "none"; bioEl.textContent = ""; }
+    const avEl = document.getElementById("upmAvatar");
+    if (avEl) { avEl.innerHTML = `<span id="upmAvatarInitial">${(targetName && targetName.charAt(0)) || "🐐"}</span>`; }
+
+    try {
+      const uRes = await api(`/api/users/${targetUid}`);
+      if (uRes && uRes.user) {
+        if (uRes.user.statusMessage) statusEl.textContent = uRes.user.statusMessage;
+        if (uRes.user.bio) {
+          if (bioEl) { bioEl.textContent = uRes.user.bio; bioEl.style.display = "block"; }
+        }
+        if (uRes.user.photoURL && avEl) {
+          if (uRes.user.photoURL.startsWith("data:") || uRes.user.photoURL.startsWith("http")) {
+            avEl.innerHTML = `<img src="${uRes.user.photoURL}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;">`;
+          } else {
+            avEl.innerHTML = escapeHtml(uRes.user.photoURL);
+          }
+        }
+      }
+    } catch (_) {}
+
 
     modal.classList.remove("hidden");
 
