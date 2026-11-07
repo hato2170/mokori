@@ -2677,9 +2677,40 @@ app.all("/api/proxy", async (req, res) => {
 
   if (window.XMLHttpRequest) {
     var origOpen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {
-      url = toProxy(url);
-      return origOpen.call(this, method, url, async, user, pass);
+    XMLHttpRequest.prototype.open = function(method, url) {
+      if (typeof url === 'string') {
+        arguments[1] = toProxy(url);
+      }
+      return origOpen.apply(this, arguments);
+    };
+  }
+
+  if (window.history) {
+    var origPush = history.pushState;
+    var origReplace = history.replaceState;
+    function wrapHistoryUrl(u) {
+      if (!u || typeof u !== 'string') return u;
+      try {
+        var abs = new URL(u, baseUrl).href;
+        return '/api/proxy?url=' + encodeURIComponent(abs);
+      } catch(_) {
+        return u;
+      }
+    }
+    history.pushState = function(state, title, url) {
+      if (url) arguments[2] = wrapHistoryUrl(url);
+      return origPush.apply(this, arguments);
+    };
+    history.replaceState = function(state, title, url) {
+      if (url) arguments[2] = wrapHistoryUrl(url);
+      return origReplace.apply(this, arguments);
+    };
+  }
+
+  if (window.Worker) {
+    var origWorker = window.Worker;
+    window.Worker = function(scriptURL, options) {
+      return new origWorker(toProxy(scriptURL), options);
     };
   }
 
