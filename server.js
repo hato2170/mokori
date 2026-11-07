@@ -1961,28 +1961,36 @@ app.post("/api/chats/:chatId/leave", requireLogin, async (req, res) => {
 // ⭐ LINE Unlimited 新機能 API群 (プロフィールBGM, アルバム, ノート, 投票, 日程調整, VOOM)
 // ====================================================
 
-// Apple Music (iTunes Search API) 30秒試聴・曲検索プロキシ
+// Apple Music (iTunes Search API) 30秒試聴・曲検索プロキシ (ちゅこミュージック & yaju&king & プロフィールBGM共用)
 app.get("/api/music/search", async (req, res) => {
-  const query = String(req.query.q || "").trim();
-  if (!query) return res.json({ results: [] });
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const query = String(req.query.q || req.query.term || "STUTS Kaneee").trim();
+  if (!query) return res.json({ ok: true, tracks: [], results: [] });
 
   try {
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=jp&entity=song&limit=20`;
-    const response = await fetch(url);
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=jp&entity=song&limit=30`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) {
       return res.status(response.status).json({ error: "音楽の検索に失敗しました。" });
     }
     const data = await response.json();
     const songs = (data.results || []).map(item => ({
+      id: item.trackId,
       trackId: item.trackId,
+      title: item.trackName,
       trackName: item.trackName,
+      artist: item.artistName,
       artistName: item.artistName,
-      collectionName: item.collectionName,
-      artworkUrl: item.artworkUrl100 ? item.artworkUrl100.replace("100x100bb", "300x300bb") : "",
-      previewUrl: item.previewUrl,
-      trackViewUrl: item.trackViewUrl
+      album: item.collectionName || "",
+      collectionName: item.collectionName || "",
+      artwork: item.artworkUrl100 ? item.artworkUrl100.replace("100x100bb", "600x600bb") : "",
+      artworkUrl: item.artworkUrl100 ? item.artworkUrl100.replace("100x100bb", "600x600bb") : "",
+      previewUrl: item.previewUrl || "",
+      durationMs: item.trackTimeMillis || 30000,
+      releaseDate: item.releaseDate ? item.releaseDate.slice(0, 10) : "",
+      trackViewUrl: item.trackViewUrl || ""
     }));
-    return res.json({ results: songs });
+    return res.json({ ok: true, tracks: songs, results: songs });
   } catch (err) {
     console.error("Music search error:", err);
     return res.status(500).json({ error: "音楽の取得に失敗しました。" });
@@ -2559,6 +2567,12 @@ app.all("/api/proxy", async (req, res) => {
 </div>
 <style> body { margin-top: 38px !important; } </style>
 `;
+      if (html.includes("<head")) {
+        html = html.replace(/<head([^>]*)>/i, `<head$1><base href="${baseUrl}">`);
+      } else {
+        html = `<base href="${baseUrl}">` + html;
+      }
+
       if (html.includes("<body")) {
         html = html.replace(/<body([^>]*)>/i, `<body$1>${navBar}`);
       } else {
@@ -2578,90 +2592,79 @@ app.all("/api/proxy", async (req, res) => {
 // ⭐ 若雪幸せTube (YouTube MP4 プレイヤー中継 & 検索)
 // ====================================================
 app.get("/api/tube/search", async (req, res) => {
-  const query = String(req.query.q || "").trim();
-  if (!query) return res.json({ videos: [] });
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const query = String(req.query.q || "STUTS").trim();
+  if (!query) return res.json({ ok: true, videos: [] });
 
-  const instances = [
-    "https://inv.tux.pizza/api/v1/search?q=",
-    "https://invidious.nerdvpn.de/api/v1/search?q=",
-    "https://vid.priv.au/api/v1/search?q="
-  ];
-
-  for (const inst of instances) {
-    try {
-      const resp = await fetch(inst + encodeURIComponent(query), { signal: AbortSignal.timeout(4500) });
-      if (resp.ok) {
-        const items = await resp.json();
-        const videos = items.filter(i => i.type === "video" || i.videoId).slice(0, 20).map(v => ({
-          id: v.videoId,
-          title: v.title,
-          author: v.author,
-          lengthSeconds: v.lengthSeconds,
-          viewCount: v.viewCountText || (v.viewCount ? Number(v.viewCount).toLocaleString() + " 回視聴" : ""),
-          publishedText: v.publishedText,
-          thumbnail: (v.videoThumbnails && v.videoThumbnails[0]) ? v.videoThumbnails[0].url : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`
-        }));
+  try {
+    const url = "https://www.youtube.com/youtubei/v1/search?prettyPrint=false";
+    const payload = {
+      context: {
+        client: {
+          clientName: "WEB",
+          clientVersion: "2.20240101.00.00",
+          hl: "ja",
+          gl: "JP"
+        }
+      },
+      query
+    };
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(6000)
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
+      const videos = [];
+      for (const c of contents) {
+        const items = c?.itemSectionRenderer?.contents || [];
+        for (const it of items) {
+          const vr = it.videoRenderer;
+          if (vr && vr.videoId) {
+            const thumbs = vr.thumbnail?.thumbnails || [];
+            const thumb = thumbs.length > 0 ? thumbs[thumbs.length - 1].url : `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`;
+            videos.push({
+              id: vr.videoId,
+              videoId: vr.videoId,
+              title: vr.title?.runs?.[0]?.text || "動画",
+              author: vr.ownerText?.runs?.[0]?.text || "",
+              views: vr.viewCountText?.simpleText || "",
+              lengthText: vr.lengthText?.simpleText || "",
+              thumbnail: thumb
+            });
+          }
+        }
+      }
+      if (videos.length > 0) {
         return res.json({ ok: true, videos });
       }
-    } catch (_) {}
+    }
+  } catch (err) {
+    console.error("YouTube search error:", err.message);
   }
 
-  // Fallback: iTunes search for music or popular query
-  return res.json({ ok: true, videos: [
-    { id: "M7lc1UVf-VE", title: "YouTube Developers Intro", author: "YouTube", thumbnail: "https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg" }
-  ] });
+  // フォールバック
+  return res.json({
+    ok: true,
+    videos: [
+      { id: "_PHDivmHk_0", videoId: "_PHDivmHk_0", title: "STUTS - Rock The Bells feat. KMC", author: "STUTS", views: "4.7万回視聴", thumbnail: "https://i.ytimg.com/vi/_PHDivmHk_0/hqdefault.jpg" },
+      { id: "m5SGc0DrenM", videoId: "m5SGc0DrenM", title: "Kaneee - Feel Missing feat. Yo-Sea", author: "Kaneee", views: "180万回視聴", thumbnail: "https://i.ytimg.com/vi/m5SGc0DrenM/hqdefault.jpg" },
+      { id: "M7lc1UVf-VE", videoId: "M7lc1UVf-VE", title: "YouTube Developer Intro", author: "YouTube", views: "1000万回視聴", thumbnail: "https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg" }
+    ]
+  });
 });
 
 app.get("/api/tube/stream", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
   const videoId = String(req.query.v || "").trim();
   if (!videoId) return res.status(400).send("Video ID required");
-
-  // Invidious stream endpoints
-  const instances = [
-    `https://inv.tux.pizza/latest_version?id=${videoId}&itag=22`,
-    `https://invidious.nerdvpn.de/latest_version?id=${videoId}&itag=22`,
-    `https://vid.priv.au/latest_version?id=${videoId}&itag=18`
-  ];
-
-  for (const url of instances) {
-    try {
-      const test = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(3000) });
-      if (test.ok || test.status === 302 || test.status === 301) {
-        const streamUrl = test.headers.get("location") || url;
-        return res.redirect(streamUrl);
-      }
-    } catch (_) {}
-  }
-
-  // Direct redirect fallback
-  return res.redirect(`https://inv.tux.pizza/latest_version?id=${videoId}&itag=18`);
-});
-
-// ====================================================
-// ⭐ Apple Music風ミュージック API (iTunes Search API 連携)
-// ====================================================
-app.get("/api/music/search", async (req, res) => {
-  const term = String(req.query.q || "STUTS Kaneee").trim();
-  try {
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=song&limit=30&country=JP`;
-    const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    if (!resp.ok) throw new Error("Search failed");
-    const data = await resp.json();
-    const tracks = (data.results || []).map(r => ({
-      id: r.trackId,
-      title: r.trackName,
-      artist: r.artistName,
-      album: r.collectionName,
-      artwork: (r.artworkUrl100 || "").replace("100x100bb", "600x600bb"),
-      previewUrl: r.previewUrl,
-      durationMs: r.trackTimeMillis,
-      releaseDate: r.releaseDate ? r.releaseDate.slice(0, 10) : ""
-    }));
-    return res.json({ ok: true, tracks });
-  } catch (err) {
-    console.error("Music search error:", err.message);
-    return res.status(500).json({ error: "音楽の検索に失敗しました。" });
-  }
+  return res.redirect(`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`);
 });
 
 app.listen(port, () => {

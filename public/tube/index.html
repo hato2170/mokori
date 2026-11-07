@@ -249,26 +249,22 @@
       <button onclick="searchVideos()">🔍 検索</button>
     </div>
 
-    <!-- MP4スタイル プレイヤー -->
+    <!-- MP4 / 埋め込みプレイヤー -->
     <div class="player-card">
-      <div class="video-wrap">
-        <video id="nativePlayer" controls playsinline autoplay preload="metadata">
-          <p>お使いのブラウザは動画再生に対応していません。</p>
-        </video>
+      <div class="video-wrap" id="playerWrap" style="position:relative; width:100%; aspect-ratio:16/9; background:#000;">
+        <iframe id="tubeFrame" src="https://www.youtube-nocookie.com/embed/_PHDivmHk_0?autoplay=0&playsinline=1&modestbranding=1&rel=0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="position:absolute; top:0; left:0; width:100%; height:100%; border:0; display:block;"></iframe>
       </div>
       <div class="player-info">
-        <div class="video-title" id="currentTitle">動画を選択するとMP4プレイヤーで再生されます</div>
+        <div class="video-title" id="currentTitle">STUTS - Rock The Bells feat. KMC</div>
         <div class="video-meta">
-          <span id="currentAuthor">若雪幸せTube · フィルター回避</span>
-          <span id="currentViews"></span>
+          <span id="currentAuthor">STUTS · 公式YouTube</span>
+          <span id="currentViews">4.7万回視聴</span>
         </div>
         <div class="player-controls">
-          <button class="ctrl-btn" onclick="togglePiP()">⛶ 小窓(PiP)</button>
-          <button class="ctrl-btn" onclick="changeSpeed(1.25)">⏩ 1.25倍</button>
-          <button class="ctrl-btn" onclick="changeSpeed(1.5)">⚡ 1.5倍</button>
-          <button class="ctrl-btn" onclick="changeSpeed(2.0)">🚀 2.0倍</button>
-          <button class="ctrl-btn" onclick="changeSpeed(1.0)">⏪ 等速</button>
-          <button class="ctrl-btn" onclick="toggleLoop()">🔁 ループ</button>
+          <button class="ctrl-btn" onclick="switchPlayerMode('nocookie')">📺 高画質・広告なし</button>
+          <button class="ctrl-btn" onclick="switchPlayerMode('edu')">🎓 学校Education</button>
+          <button class="ctrl-btn" onclick="openExternalPip()">⛶ 別タブ全画面</button>
+          <button class="ctrl-btn" onclick="copyShareUrl()">📋 動画リンク共有</button>
         </div>
       </div>
     </div>
@@ -306,38 +302,42 @@
       { id: "M7lc1UVf-VE", title: "作業用BGM · 集中できるチルビート 1時間", author: "Lofi Beats", views: "320万回" }
     ];
 
-    const player = document.getElementById("nativePlayer");
+    let currentVideoId = "_PHDivmHk_0";
+    let currentMode = "nocookie";
+    const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori.onrender.com";
 
-    function renderCards(list) {
-      const grid = document.getElementById("videoGrid");
-      grid.innerHTML = "";
-      list.forEach(v => {
-        const card = document.createElement("div");
-        card.className = "video-card";
-        card.onclick = () => playVideo(v.id, v.title, v.author, v.viewCount || v.views || "");
-        const thumb = v.thumbnail || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`;
-        card.innerHTML = `
-          <div class="thumb-wrap">
-            <img src="${thumb}" alt="${v.title}" loading="lazy">
-          </div>
-          <div class="card-body">
-            <div class="card-title">${v.title}</div>
-            <div class="card-author">${v.author || ""}</div>
-          </div>
-        `;
-        grid.appendChild(card);
-      });
+    function updatePlayerSrc(autoplay = true) {
+      const frame = document.getElementById("tubeFrame");
+      const auto = autoplay ? 1 : 0;
+      if (currentMode === "edu") {
+        frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}?autoplay=${auto}&playsinline=1&modestbranding=1&rel=0`;
+      } else {
+        frame.src = `https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=${auto}&playsinline=1&modestbranding=1&rel=0`;
+      }
     }
 
     function playVideo(id, title, author, views) {
+      currentVideoId = id;
       document.getElementById("currentTitle").textContent = title;
       document.getElementById("currentAuthor").textContent = author || "YouTube";
       document.getElementById("currentViews").textContent = views || "";
-      
-      const streamUrl = `/api/tube/stream?v=${id}`;
-      player.src = streamUrl;
-      player.play().catch(() => {});
+      updatePlayerSrc(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function switchPlayerMode(mode) {
+      currentMode = mode;
+      updatePlayerSrc(true);
+      alert(mode === 'edu' ? '🎓 学校Educationモード（フィルター完全回避）に切り替えました！' : '📺 高画質・広告なしモードに切り替えました！');
+    }
+
+    function openExternalPip() {
+      window.open(`https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1`, "_blank");
+    }
+
+    function copyShareUrl() {
+      const url = `https://youtu.be/${currentVideoId}`;
+      navigator.clipboard.writeText(url).then(() => alert("動画リンクをコピーしました: " + url));
     }
 
     async function searchVideos() {
@@ -346,7 +346,7 @@
       document.getElementById("resultsHeader").textContent = `「${q}」の検索結果`;
       
       try {
-        const res = await fetch(`/api/tube/search?q=${encodeURIComponent(q)}`);
+        const res = await fetch(`${API_BASE}/api/tube/search?q=${encodeURIComponent(q)}`);
         const data = await res.json();
         if (data.videos && data.videos.length > 0) {
           renderCards(data.videos);
@@ -355,31 +355,18 @@
         }
       } catch (e) {
         console.warn("Search error:", e);
+        alert("動画検索中にエラーが発生しました。");
       }
-    }
-
-    function togglePiP() {
-      if (document.pictureInPictureElement) {
-        document.exitPictureInPicture();
-      } else if (player.requestPictureInPicture) {
-        player.requestPictureInPicture();
-      }
-    }
-
-    function changeSpeed(rate) {
-      player.playbackRate = rate;
-    }
-
-    function toggleLoop() {
-      player.loop = !player.loop;
-      alert(player.loop ? "🔁 ループ再生をONにしました" : "ループ再生をOFFにしました");
     }
 
     function toggleStealth() {
       const overlay = document.getElementById("panicOverlay");
       overlay.style.display = (overlay.style.display === "flex") ? "none" : "flex";
       if (overlay.style.display === "flex") {
-        player.pause();
+        const frame = document.getElementById("tubeFrame");
+        frame.src = "about:blank";
+      } else {
+        updatePlayerSrc(false);
       }
     }
 
@@ -388,7 +375,16 @@
     });
 
     // 初期ロード
-    renderCards(INITIAL_VIDEOS);
+    fetch(`${API_BASE}/api/tube/search?q=STUTS+Kaneee+LEX`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.videos && d.videos.length > 0) {
+          renderCards(d.videos);
+        } else {
+          renderCards(INITIAL_VIDEOS);
+        }
+      })
+      .catch(() => renderCards(INITIAL_VIDEOS));
   </script>
 </body>
 </html>

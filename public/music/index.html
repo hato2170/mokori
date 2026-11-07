@@ -373,18 +373,24 @@
     let currentIndex = 0;
     const audio = document.getElementById("audioEl");
 
+    const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori.onrender.com";
+
     function renderTrackList(tracks) {
       const container = document.getElementById("trackList");
       container.innerHTML = "";
+      if (!tracks || tracks.length === 0) {
+        container.innerHTML = `<div style="text-align:center; padding:40px 20px; color:#86868b;">楽曲が見つかりませんでした。</div>`;
+        return;
+      }
       tracks.forEach((t, idx) => {
         const item = document.createElement("div");
         item.className = "track-item" + (idx === currentIndex ? " playing" : "");
         item.onclick = () => playTrack(idx);
         item.innerHTML = `
-          <img class="track-art" src="${t.artwork || 'https://via.placeholder.com/48'}" alt="Art" loading="lazy">
+          <img class="track-art" src="${t.artwork || t.artworkUrl || 'https://via.placeholder.com/48'}" alt="Art" loading="lazy">
           <div class="track-info">
-            <div class="track-title">${t.title}</div>
-            <div class="track-artist">${t.artist} ${t.album ? '· ' + t.album : ''}</div>
+            <div class="track-title">${t.title || t.trackName || '無題'}</div>
+            <div class="track-artist">${t.artist || t.artistName || '不明'} ${(t.album || t.collectionName) ? '· ' + (t.album || t.collectionName) : ''}</div>
           </div>
           <div style="color:#a1a1a6; font-size:12px;">▶</div>
         `;
@@ -396,22 +402,36 @@
       if (idx < 0 || idx >= currentPlaylist.length) return;
       currentIndex = idx;
       const t = currentPlaylist[idx];
-      document.getElementById("dockTitle").textContent = t.title;
-      document.getElementById("dockArtist").textContent = t.artist;
-      document.getElementById("dockArt").src = t.artwork || "https://via.placeholder.com/48";
+      const title = t.title || t.trackName || "無題";
+      const artist = t.artist || t.artistName || "不明";
+      const art = t.artwork || t.artworkUrl || "https://via.placeholder.com/48";
+      const preview = t.previewUrl;
+
+      document.getElementById("dockTitle").textContent = title;
+      document.getElementById("dockArtist").textContent = artist;
+      document.getElementById("dockArt").src = art;
+
+      if (!preview) {
+        alert("この曲の試聴音源が利用できません。次の曲を再生します。");
+        nextTrack();
+        return;
+      }
       
-      audio.src = t.previewUrl || "";
+      audio.src = preview;
       audio.play().then(() => {
         document.getElementById("dockPlayBtn").textContent = "⏸";
-      }).catch(() => {});
+      }).catch((e) => {
+        console.warn("Audio play warning:", e);
+        document.getElementById("dockPlayBtn").textContent = "▶";
+      });
 
       // MediaSession API連携 (iOSロック画面やコントロールセンターに表示)
       if ("mediaSession" in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
-          title: t.title,
-          artist: t.artist,
-          album: t.album || "ちゅこミュージック",
-          artwork: [{ src: t.artwork, sizes: "600x600", type: "image/jpeg" }]
+          title: title,
+          artist: artist,
+          album: t.album || t.collectionName || "ちゅこミュージック",
+          artwork: [{ src: art, sizes: "600x600", type: "image/jpeg" }]
         });
         navigator.mediaSession.setActionHandler("play", () => audio.play());
         navigator.mediaSession.setActionHandler("pause", () => audio.pause());
@@ -467,18 +487,21 @@
       const q = document.getElementById("musicSearchInput").value.trim();
       if (!q) return;
       try {
-        const res = await fetch(`/api/music/search?q=${encodeURIComponent(q)}`);
+        const res = await fetch(`${API_BASE}/api/music/search?q=${encodeURIComponent(q)}`);
         const data = await res.json();
-        if (data.tracks && data.tracks.length > 0) {
-          currentPlaylist = data.tracks;
+        const songs = (data.tracks || data.results || []).filter(s => s.previewUrl);
+        if (songs.length > 0) {
+          currentPlaylist = songs;
           currentIndex = 0;
           renderTrackList(currentPlaylist);
           document.querySelectorAll(".pl-tab-btn").forEach(b => b.classList.remove("active"));
+          playTrack(0);
         } else {
-          alert("該当する楽曲が見つかりませんでした。");
+          alert("該当する楽曲が見つかりませんでした。別のキーワードでお試しください。");
         }
       } catch (err) {
         console.warn("Music search error:", err);
+        alert("音楽の検索に失敗しました。");
       }
     }
 
@@ -486,19 +509,50 @@
       document.querySelectorAll(".pl-tab-btn").forEach(b => b.classList.remove("active"));
       if (type === "hatake") {
         document.getElementById("tabHatake").classList.add("active");
-        currentPlaylist = [...HATAKE_TRACKS];
+        fetch(`${API_BASE}/api/music/search?q=STUTS+Kaneee+LEX`)
+          .then(r => r.json())
+          .then(d => {
+            const songs = (d.tracks || d.results || []).filter(s => s.previewUrl);
+            if (songs.length > 0) {
+              currentPlaylist = songs;
+              currentIndex = 0;
+              renderTrackList(currentPlaylist);
+            } else {
+              currentPlaylist = [...HATAKE_TRACKS];
+              renderTrackList(currentPlaylist);
+            }
+          })
+          .catch(() => {
+            currentPlaylist = [...HATAKE_TRACKS];
+            renderTrackList(currentPlaylist);
+          });
+        return;
       } else if (type === "fav") {
         document.getElementById("tabFav").classList.add("active");
         const favs = JSON.parse(localStorage.getItem("my_music_favs") || "[]");
-        currentPlaylist = favs.length > 0 ? favs : [...HATAKE_TRACKS];
+        if (favs.length > 0) {
+          currentPlaylist = favs;
+          currentIndex = 0;
+          renderTrackList(currentPlaylist);
+          playTrack(0);
+        } else {
+          alert("お気に入りの曲がまだ登録されていません。❤️を押して追加してください！");
+        }
+        return;
       } else if (type === "jpop") {
         document.getElementById("tabJpop").classList.add("active");
-        fetch("/api/music/search?q=J-POP HipHop 2026").then(r => r.json()).then(d => {
-          if (d.tracks) {
-            currentPlaylist = d.tracks;
-            renderTrackList(currentPlaylist);
-          }
-        }).catch(() => {});
+        fetch(`${API_BASE}/api/music/search?q=J-POP+HipHop+2026`)
+          .then(r => r.json())
+          .then(d => {
+            const songs = (d.tracks || d.results || []).filter(s => s.previewUrl);
+            if (songs.length > 0) {
+              currentPlaylist = songs;
+              currentIndex = 0;
+              renderTrackList(currentPlaylist);
+              playTrack(0);
+            }
+          })
+          .catch(() => {});
         return;
       }
       currentIndex = 0;
