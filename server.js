@@ -2561,6 +2561,31 @@ app.all("/api/proxy", async (req, res) => {
     targetUrl = "https://" + targetUrl;
   }
 
+  // Emscripten/WASM等の相対URLが /api/index.wasm に解決された場合の救済
+  if (targetUrl.includes("/api/") && !targetUrl.includes("proxy?url=")) {
+    const assetPart = targetUrl.split("/api/").pop();
+    const referer = req.headers.referer || "";
+    if (referer.includes("proxy?url=")) {
+      try {
+        const parentTarget = decodeURIComponent(referer.split("proxy?url=")[1].split("&")[0]);
+        const parentDir = parentTarget.substring(0, parentTarget.lastIndexOf("/") + 1);
+        const candidates = [
+          parentDir + "webapp/" + assetPart,
+          parentDir + assetPart
+        ];
+        for (const cand of candidates) {
+          try {
+            const probe = await fetch(cand, { method: "HEAD", headers: { "User-Agent": "Mozilla/5.0" } });
+            if (probe.ok) {
+              targetUrl = cand;
+              break;
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+  }
+
   let parsedTarget;
   try {
     parsedTarget = new URL(targetUrl);
