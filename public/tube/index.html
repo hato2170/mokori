@@ -252,18 +252,21 @@
     <!-- MP4 / 埋め込みプレイヤー -->
     <div class="player-card">
       <div class="video-wrap" id="playerWrap" style="position:relative; width:100%; aspect-ratio:16/9; background:#000;">
-        <iframe id="tubeFrame" src="https://www.youtube-nocookie.com/embed/_PHDivmHk_0?autoplay=0&playsinline=1&modestbranding=1&rel=0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="position:absolute; top:0; left:0; width:100%; height:100%; border:0; display:block;"></iframe>
+        <video id="mp4Video" controls playsinline preload="auto" poster="https://i.ytimg.com/vi/_PHDivmHk_0/hqdefault.jpg" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; display:block; z-index:2; outline:none; background:#000;"></video>
+        <audio id="syncAudio" style="display:none;"></audio>
+        <iframe id="tubeFrame" src="" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="position:absolute; top:0; left:0; width:100%; height:100%; border:0; display:none; z-index:1;"></iframe>
       </div>
       <div class="player-info">
         <div class="video-title" id="currentTitle">STUTS - Rock The Bells feat. KMC</div>
         <div class="video-meta">
           <span id="currentAuthor">STUTS · 公式YouTube</span>
           <span id="currentViews">4.7万回視聴</span>
+          <span id="currentStatus" style="color:#38bdf8; font-weight:bold; margin-left:8px;">🎬 MP4ネイティブプレイヤー</span>
         </div>
         <div class="player-controls">
-          <button class="ctrl-btn" id="btnModeProxy" onclick="switchPlayerMode('proxy')" style="background:#0284c7; font-weight:bold;">🛡️ プロキシ再生 (i-フィルター回避)</button>
+          <button class="ctrl-btn" id="btnModeMp4" onclick="switchPlayerMode('mp4')" style="background:#0284c7; font-weight:bold;">🎬 MP4直再生 (おすすめ)</button>
+          <button class="ctrl-btn" id="btnModeProxy" onclick="switchPlayerMode('proxy')">🛡️ プロキシ埋め込み</button>
           <button class="ctrl-btn" id="btnModeEdu" onclick="switchPlayerMode('edu')">🎓 学校Education</button>
-          <button class="ctrl-btn" id="btnModeNocookie" onclick="switchPlayerMode('nocookie')">📺 通常・高画質</button>
           <button class="ctrl-btn" onclick="openDirectSia()">⚡ しあTube直通</button>
           <button class="ctrl-btn" onclick="openTensaiProxy()">🌐 天才プロキシで開く</button>
           <button class="ctrl-btn" onclick="openExternalPip()">⛶ 別タブ全画面</button>
@@ -306,8 +309,33 @@
     ];
 
     let currentVideoId = "_PHDivmHk_0";
-    let currentMode = "proxy";
+    let currentMode = "mp4";
     const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori.onrender.com";
+
+    const mp4Video = document.getElementById("mp4Video");
+    const syncAudio = document.getElementById("syncAudio");
+
+    // Audio / Video synchronization for native MP4 playback
+    mp4Video.addEventListener("play", () => {
+      if (syncAudio.src) syncAudio.play().catch(() => {});
+    });
+    mp4Video.addEventListener("playing", () => {
+      if (syncAudio.src) syncAudio.play().catch(() => {});
+    });
+    mp4Video.addEventListener("pause", () => {
+      if (syncAudio.src) syncAudio.pause();
+    });
+    mp4Video.addEventListener("seeking", () => {
+      if (syncAudio.src) syncAudio.currentTime = mp4Video.currentTime;
+    });
+    mp4Video.addEventListener("timeupdate", () => {
+      if (syncAudio.src && Math.abs(mp4Video.currentTime - syncAudio.currentTime) > 0.4) {
+        syncAudio.currentTime = mp4Video.currentTime + 0.1;
+      }
+    });
+    mp4Video.addEventListener("ratechange", () => {
+      if (syncAudio.src) syncAudio.playbackRate = mp4Video.playbackRate;
+    });
 
     function renderCards(list) {
       const grid = document.getElementById("videoGrid");
@@ -333,16 +361,63 @@
 
     const EDU_PARAMS = "?autoplay=1&mute=0&controls=1&start=0&origin=https%3A%2F%2Fcreate.kahoot.it&playsinline=1&showinfo=0&rel=0&iv_load_policy=3&modestbranding=1&fs=1&cc_load_policy=0&enablejsapi=1&widgetid=1&forigin=https%3A%2F%2Fcreate.kahoot.it%2Flearner%2Fcb8cb5ae-d835-4c4a-bc2d-9cc78519d646%2Fcourse%2F6fba06e3-1f76-47a8-9a4a-53c53eb86286%2F0&aoriginsup=1&vf=6&embed_config=%7B%22enc%22%3A%22AXH1ezmIp-uzBx-99Q9-g8WIjXvlMILi662ObHq4TLkkOhT6QGRH2oLA21NDdviOSsE2MqBvKAz_UxtSswtvHOaXMai4DnQaSGSr9MLZJA51hKNULDcMA7ptn7_pf7DD5waGI3NXk-aYuZXGqqlNEUWBdWxB7orhZg%3D%3D%22%2C%22hideTitle%22%3Afalse%7D";
 
-    function updatePlayerSrc(autoplay = true) {
+    async function updatePlayerSrc(autoplay = true) {
       const frame = document.getElementById("tubeFrame");
+      const videoEl = document.getElementById("mp4Video");
+      const audioEl = document.getElementById("syncAudio");
+      const statusSpan = document.getElementById("currentStatus");
       const auto = autoplay ? 1 : 0;
-      if (currentMode === "proxy") {
-        // 学校iPadのi-フィルター完全回避（自前Renderプロキシ経由）
-        frame.src = `${API_BASE}/api/proxy?url=${encodeURIComponent("https://siatube-web.com/watch?v=" + currentVideoId)}`;
-      } else if (currentMode === "edu") {
-        frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${EDU_PARAMS}`;
-      } else {
+
+      if (currentMode === "mp4") {
+        frame.style.display = "none";
+        frame.src = "about:blank";
+        videoEl.style.display = "block";
+        videoEl.poster = `https://i.ytimg.com/vi/${currentVideoId}/hqdefault.jpg`;
+        statusSpan.textContent = "⏳ MP4ストリーム接続中...";
+
+        try {
+          const res = await fetch(`${API_BASE}/api/tube/stream-info?v=${encodeURIComponent(currentVideoId)}`);
+          const data = await res.json();
+          if (data.ok && (data.videoUrl || data.hlsUrl)) {
+            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            if (isSafari && data.hlsUrl) {
+              videoEl.src = data.hlsUrl;
+            } else if (data.videoUrl) {
+              videoEl.src = data.videoUrl;
+              if (data.audioUrl) {
+                audioEl.src = data.audioUrl;
+              }
+            }
+            videoEl.load();
+            if (autoplay) videoEl.play().catch(() => {});
+            statusSpan.textContent = "🎬 MP4再生中 (フル尺・快適)";
+            return;
+          }
+        } catch (e) {
+          console.warn("MP4 stream resolution error:", e);
+        }
+
+        // Fallback to proxy embed if stream extraction is unavailable
+        statusSpan.textContent = "🛡️ プロキシ埋め込み再生中";
+        videoEl.style.display = "none";
+        videoEl.pause();
+        audioEl.pause();
+        frame.style.display = "block";
         frame.src = `https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=${auto}&playsinline=1&modestbranding=1&rel=0`;
+      } else if (currentMode === "proxy") {
+        videoEl.style.display = "none";
+        videoEl.pause();
+        audioEl.pause();
+        frame.style.display = "block";
+        frame.src = `${API_BASE}/api/proxy?url=${encodeURIComponent("https://siatube-web.com/watch?v=" + currentVideoId)}`;
+        statusSpan.textContent = "🛡️ プロキシ埋め込み再生中";
+      } else if (currentMode === "edu") {
+        videoEl.style.display = "none";
+        videoEl.pause();
+        audioEl.pause();
+        frame.style.display = "block";
+        frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${EDU_PARAMS}`;
+        statusSpan.textContent = "🎓 学校Education再生中";
       }
     }
 
@@ -357,16 +432,16 @@
 
     function switchPlayerMode(mode) {
       currentMode = mode;
+      document.getElementById("btnModeMp4").style.background = mode === "mp4" ? "#0284c7" : "#27272a";
       document.getElementById("btnModeProxy").style.background = mode === "proxy" ? "#0284c7" : "#27272a";
       document.getElementById("btnModeEdu").style.background = mode === "edu" ? "#0284c7" : "#27272a";
-      document.getElementById("btnModeNocookie").style.background = mode === "nocookie" ? "#0284c7" : "#27272a";
       updatePlayerSrc(true);
-      if (mode === "proxy") {
+      if (mode === "mp4") {
+        alert("🎬 MP4プレイヤーモードに切り替えました！（公式YouTube UIではなく、MP4プレイヤー感覚で快適に直再生できます）");
+      } else if (mode === "proxy") {
         alert("🛡️ プロキシ再生モードに切り替えました！（学校iPadでも通信先が本Renderサーバーのみになるため、i-フィルターに検知されません）");
       } else if (mode === "edu") {
         alert("🎓 学校Educationモード（Kahootトークン認証）に切り替えました！");
-      } else {
-        alert("📺 通常・高画質モード（YouTube直通）に切り替えました！");
       }
     }
 

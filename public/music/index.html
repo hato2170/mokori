@@ -465,7 +465,7 @@
       });
     }
 
-    function playTrack(idx) {
+    async function playTrack(idx) {
       if (idx < 0 || idx >= currentPlaylist.length) return;
       currentIndex = idx;
       const t = currentPlaylist[idx];
@@ -475,26 +475,45 @@
       const preview = t.previewUrl;
 
       document.getElementById("dockTitle").textContent = title;
-      document.getElementById("dockArtist").textContent = artist;
+      document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺取得中...";
       document.getElementById("dockArt").src = art;
       document.getElementById("curTime").textContent = "0:00";
-      document.getElementById("totTime").textContent = "読み込み中…";
+      document.getElementById("totTime").textContent = "フル尺準備中…";
       document.getElementById("progressFill").style.width = "0%";
 
-      if (!preview) {
-        document.getElementById("dockArtist").textContent = artist + " · ⚠️ 音源URLがありません（📺ボタンで動画再生可）";
-        alert(`「${title}」の試聴音源が見つかりませんでした。右下の📺ボタンからフルMV・動画を再生できます。`);
-        return;
+      // まずプレビュー音源で0秒即時再生を開始
+      if (preview) {
+        audio.src = preview;
+        audio.currentTime = 0;
+        audio.play().then(() => {
+          document.getElementById("dockPlayBtn").textContent = "⏸";
+        }).catch(() => {});
       }
 
-      audio.src = preview;
-      audio.currentTime = 0;
-      audio.play().then(() => {
-        document.getElementById("dockPlayBtn").textContent = "⏸";
-      }).catch((e) => {
-        console.warn("Audio play error:", e);
-        document.getElementById("dockPlayBtn").textContent = "▶";
-      });
+      // フル尺ストリーム（3〜5分全編）をバックグラウンド取得して継ぎ目なくフル尺へ昇格
+      try {
+        const query = `${artist} ${title}`;
+        const res = await fetch(`${API_BASE}/api/tube/stream-info?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        if (data.ok && data.audioUrl) {
+          const currentPos = audio.currentTime;
+          audio.src = data.audioUrl;
+          audio.currentTime = currentPos;
+          audio.play().then(() => {
+            document.getElementById("dockPlayBtn").textContent = "⏸";
+            document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺再生中";
+            if (data.duration) {
+              const m = Math.floor(data.duration / 60);
+              const s = Math.floor(data.duration % 60).toString().padStart(2, "0");
+              document.getElementById("totTime").textContent = `${m}:${s}`;
+            }
+          }).catch(() => {});
+        } else if (preview) {
+          document.getElementById("dockArtist").textContent = artist + " · ⚡ 試聴再生";
+        }
+      } catch (err) {
+        console.warn("Full stream resolution error:", err);
+      }
 
       // MediaSession API連携 (iOSロック画面やコントロールセンターに表示)
       if ("mediaSession" in navigator) {

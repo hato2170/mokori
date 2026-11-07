@@ -2597,6 +2597,13 @@ app.all("/api/proxy", async (req, res) => {
       html = html.replace(/<base\b[^>]*>/gi, "");
       html = html.replace(/\bintegrity=["'][^"']*["']/gi, "");
 
+      // Poki等のBot判定ヘッダー・変数を安全に解除
+      html = html.replace(/window\.pokiBotScore\s*=\s*\d+;/gi, "window.pokiBotScore = 0;");
+      html = html.replace(/window\.pokiBotVerified\s*=\s*false;/gi, "window.pokiBotVerified = true;");
+      html = html.replace(/window\.pokiCrawlerBlock\s*=\s*["'][^"']*["'];/gi, 'window.pokiCrawlerBlock = "";');
+      html = html.replace(/function T\(e\)\{void 0===window\.pokiBotDetected&&\(window\.pokiBotDetected=e\)\}/gi, "function T(e){window.pokiBotDetected=false;}");
+      html = html.replace(/window\.pokiBotDetectedPromise\s*=\s*Promise\.race\(\[[^\]]+\]\);/gs, "window.pokiBotDetectedPromise=Promise.resolve([]);window.pokiBotDetected=false;");
+
       function resolveUrl(rel) {
         if (!rel || rel.startsWith("data:") || rel.startsWith("javascript:") || rel.startsWith("#") || rel.startsWith("blob:")) {
           return rel;
@@ -2609,7 +2616,7 @@ app.all("/api/proxy", async (req, res) => {
         }
       }
 
-      html = html.replace(/\b(href|src|action)=["']([^"']+)["']/gi, (match, attr, val) => {
+      html = html.replace(/\b(href|src|action|data-src|data-srcset|poster|data-url)=["']([^"']+)["']/gi, (match, attr, val) => {
         return `${attr}="${resolveUrl(val)}"`;
       });
       html = html.replace(/\bsrcset=["']([^"']+)["']/gi, (match, val) => {
@@ -2629,6 +2636,67 @@ app.all("/api/proxy", async (req, res) => {
 <script>
 (function() {
   var baseUrl = ${JSON.stringify(baseUrl)};
+  try {
+    localStorage.setItem('poki_nobot', 'true');
+    window.pokiBotDetected = false;
+    window.pokiBotScore = 0;
+    window.pokiBotVerified = true;
+    window.pokiCrawlerBlock = "";
+    window.pokiBotDetectedPromise = Promise.resolve([]);
+  } catch(_) {}
+
+  function toProxy(u) {
+    if (!u || typeof u !== 'string' || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('javascript:') || u.startsWith('#') || u.includes('/api/proxy?url=')) return u;
+    try {
+      return '/api/proxy?url=' + encodeURIComponent(new URL(u, baseUrl).href);
+    } catch(_) {
+      return u;
+    }
+  }
+
+  ['HTMLImageElement', 'HTMLIFrameElement', 'HTMLScriptElement', 'HTMLSourceElement'].forEach(function(cls) {
+    if (window[cls] && window[cls].prototype) {
+      var desc = Object.getOwnPropertyDescriptor(window[cls].prototype, 'src');
+      if (desc && desc.set) {
+        var origSet = desc.set;
+        Object.defineProperty(window[cls].prototype, 'src', {
+          set: function(val) { return origSet.call(this, toProxy(val)); },
+          get: desc.get
+        });
+      }
+    }
+  });
+
+  var origSetAttribute = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function(name, val) {
+    if (name === 'src' || name === 'href' || name === 'data-src' || name === 'poster') {
+      val = toProxy(val);
+    }
+    return origSetAttribute.call(this, name, val);
+  };
+
+  if (window.XMLHttpRequest) {
+    var origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {
+      url = toProxy(url);
+      return origOpen.call(this, method, url, async, user, pass);
+    };
+  }
+
+  if (window.fetch) {
+    var origFetch = window.fetch;
+    window.fetch = function(input, init) {
+      try {
+        if (typeof input === 'string') {
+          input = toProxy(input);
+        } else if (input && input.url) {
+          input = new Request(toProxy(input.url), init);
+        }
+      } catch(_) {}
+      return origFetch.call(this, input, init);
+    };
+  }
+
   document.addEventListener('submit', function(e) {
     var f = e.target;
     if (!f) return;
@@ -2650,23 +2718,6 @@ app.all("/api/proxy", async (req, res) => {
       }
     }
   }, true);
-
-  if (window.fetch) {
-    var origFetch = window.fetch;
-    window.fetch = function(input, init) {
-      try {
-        var u = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-        if (u && !u.startsWith('data:') && !u.startsWith('blob:') && !u.startsWith('javascript:')) {
-          var abs = new URL(u, baseUrl).href;
-          if (!abs.includes('/api/proxy?url=')) {
-            var proxied = '/api/proxy?url=' + encodeURIComponent(abs);
-            input = (typeof input === 'string') ? proxied : new Request(proxied, init);
-          }
-        }
-      } catch(_) {}
-      return origFetch.call(this, input, init);
-    };
-  }
 })();
 </script>
 `;
@@ -2799,6 +2850,144 @@ app.get("/api/tube/search", async (req, res) => {
       { id: "m5SGc0DrenM", videoId: "m5SGc0DrenM", title: "Kaneee - Feel Missing feat. Yo-Sea", author: "Kaneee", views: "180万回視聴", thumbnail: "https://i.ytimg.com/vi/m5SGc0DrenM/hqdefault.jpg" },
       { id: "M7lc1UVf-VE", videoId: "M7lc1UVf-VE", title: "YouTube Developer Intro", author: "YouTube", views: "1000万回視聴", thumbnail: "https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg" }
     ]
+  });
+});
+
+const streamInfoCache = new Map();
+
+app.get("/api/tube/stream-info", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  let videoId = String(req.query.v || "").trim();
+  const searchQuery = String(req.query.q || "").trim();
+
+  if (!videoId && searchQuery) {
+    try {
+      const sUrl = "https://www.youtube.com/youtubei/v1/search?prettyPrint=false";
+      const sResp = await fetch(sUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "User-Agent": "Mozilla/5.0" },
+        body: JSON.stringify({
+          context: { client: { clientName: "WEB", clientVersion: "2.20240101.00.00", hl: "ja", gl: "JP" } },
+          query: searchQuery
+        }),
+        signal: AbortSignal.timeout(5000)
+      });
+      if (sResp.ok) {
+        const sData = await sResp.json();
+        const contents = sData?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
+        for (const c of contents) {
+          const items = c?.itemSectionRenderer?.contents || [];
+          for (const it of items) {
+            if (it.videoRenderer?.videoId) {
+              videoId = it.videoRenderer.videoId;
+              break;
+            }
+          }
+          if (videoId) break;
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (!videoId) {
+    return res.status(400).json({ ok: false, error: "videoId or query required" });
+  }
+
+  if (streamInfoCache.has(videoId)) {
+    const cached = streamInfoCache.get(videoId);
+    if (Date.now() - cached.time < 7200000) {
+      return res.json({ ok: true, ...cached.data });
+    }
+  }
+
+  const invidiousHosts = [
+    "yt.chocolatemoo53.com",
+    "super8.absturztau.be",
+    "inv.thepixora.com",
+    "invidious.nerdvpn.de"
+  ];
+
+  for (const host of invidiousHosts) {
+    try {
+      const apiUrl = `https://${host}/api/v1/videos/${videoId}`;
+      const invResp = await fetch(apiUrl, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(6000)
+      });
+      if (!invResp.ok) continue;
+      const invData = await invResp.json();
+
+      let videoUrl = "";
+      let audioUrl = "";
+      const adaptive = invData.adaptiveFormats || [];
+      const formatStreams = invData.formatStreams || [];
+
+      for (const af of adaptive) {
+        if (af.type && af.type.includes("audio/mp4") && af.url) {
+          audioUrl = af.url;
+          break;
+        }
+      }
+      if (!audioUrl) {
+        for (const af of adaptive) {
+          if (af.type && af.type.includes("audio") && af.url) {
+            audioUrl = af.url;
+            break;
+          }
+        }
+      }
+
+      for (const q of ["720p", "480p", "360p", "1080p"]) {
+        const found = adaptive.find(af => af.qualityLabel === q && af.type && af.type.includes("video/mp4") && af.url);
+        if (found) {
+          videoUrl = found.url;
+          break;
+        }
+      }
+      if (!videoUrl && formatStreams.length > 0) {
+        videoUrl = formatStreams[0].url;
+        if (!audioUrl) audioUrl = formatStreams[0].url;
+      }
+      if (!videoUrl && adaptive.length > 0) {
+        const anyV = adaptive.find(af => af.type && af.type.includes("video") && af.url);
+        if (anyV) videoUrl = anyV.url;
+      }
+
+      const proxyBase = "https://publer-media-downloader.kalemi-code4806.workers.dev/?noDownload=true&url=";
+      const proxiedVideoUrl = videoUrl ? (proxyBase + encodeURIComponent(videoUrl)) : "";
+      const proxiedAudioUrl = audioUrl ? (proxyBase + encodeURIComponent(audioUrl)) : "";
+
+      const durationSec = invData.lengthSeconds || 180;
+      const resultData = {
+        videoId,
+        title: invData.title || "動画",
+        author: invData.author || "",
+        duration: durationSec,
+        videoUrl: proxiedVideoUrl,
+        audioUrl: proxiedAudioUrl,
+        rawVideoUrl: videoUrl,
+        rawAudioUrl: audioUrl,
+        hlsUrl: invData.hlsUrl || "",
+        thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+      };
+
+      streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
+      return res.json({ ok: true, ...resultData });
+    } catch (_) {
+      continue;
+    }
+  }
+
+  return res.json({
+    ok: true,
+    videoId,
+    title: "動画",
+    duration: 180,
+    videoUrl: "",
+    audioUrl: "",
+    embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1`,
+    thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
   });
 });
 
