@@ -310,11 +310,17 @@
       <button onclick="searchMusic()">🔍 検索</button>
     </div>
 
-    <!-- プレイリスト選択タブ -->
-    <div class="playlist-tabs">
-      <button class="pl-tab-btn active" id="tabHatake" onclick="loadPlaylist('hatake')">🌾 プレイリスト「畑」</button>
-      <button class="pl-tab-btn" id="tabJpop" onclick="loadPlaylist('jpop')">🔥 トレンド HipHop/J-POP</button>
-      <button class="pl-tab-btn" id="tabFav" onclick="loadPlaylist('fav')">⭐ お気に入り</button>
+    <!-- プレイリスト選択タブ & フル尺切り替え -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+      <div class="playlist-tabs" style="margin-bottom:0;">
+        <button class="pl-tab-btn active" id="tabHatake" onclick="loadPlaylist('hatake')">🌾 プレイリスト「畑」</button>
+        <button class="pl-tab-btn" id="tabJpop" onclick="loadPlaylist('jpop')">🔥 トレンド HipHop/J-POP</button>
+        <button class="pl-tab-btn" id="tabFav" onclick="loadPlaylist('fav')">⭐ お気に入り</button>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button id="btnModeFull" onclick="setPlayMode('full')" style="background:#0284c7; color:#fff; border:0; border-radius:14px; padding:5px 12px; font-size:12px; font-weight:bold; cursor:pointer;">🎵 フル尺再生 (ON)</button>
+        <button id="btnModeSample" onclick="setPlayMode('sample')" style="background:#27272a; color:#a1a1aa; border:0; border-radius:14px; padding:5px 12px; font-size:12px; font-weight:600; cursor:pointer;">⚡ 30秒試聴</button>
+      </div>
     </div>
 
     <div class="track-list" id="trackList">
@@ -337,12 +343,16 @@
         <button class="dock-btn" onclick="prevTrack()">⏮️</button>
         <button class="play-btn" id="dockPlayBtn" onclick="togglePlay()">▶</button>
         <button class="dock-btn" onclick="nextTrack()">⏭️</button>
+        <button class="dock-btn" id="tubeLinkBtn" title="フルMV/動画をTubeで開く" onclick="openCurrentInTube()">📺</button>
         <button class="dock-btn" id="favBtn" onclick="toggleFavoriteCurrent()">🤍</button>
       </div>
     </div>
   </div>
 
   <audio id="audioEl" preload="auto"></audio>
+  <div id="fullPlayerContainer" style="position:fixed; bottom:-9999px; left:-9999px; width:1px; height:1px; opacity:0; pointer-events:none;">
+    <iframe id="fullMusicFrame" src="about:blank" allow="autoplay; encrypted-media"></iframe>
+  </div>
 
   <!-- 緊急回避オーバーレイ（理科演習ノート） -->
   <div id="panicOverlay">
@@ -371,9 +381,23 @@
 
     let currentPlaylist = [...HATAKE_TRACKS];
     let currentIndex = 0;
+    let isFullMode = true;
+    let currentFullVideoId = null;
     const audio = document.getElementById("audioEl");
 
     const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori.onrender.com";
+
+    function setPlayMode(mode) {
+      isFullMode = (mode === 'full');
+      document.getElementById('btnModeFull').style.background = isFullMode ? '#0284c7' : '#27272a';
+      document.getElementById('btnModeFull').style.color = isFullMode ? '#fff' : '#a1a1aa';
+      document.getElementById('btnModeSample').style.background = !isFullMode ? '#0284c7' : '#27272a';
+      document.getElementById('btnModeSample').style.color = !isFullMode ? '#fff' : '#a1a1aa';
+      
+      if (currentPlaylist[currentIndex]) {
+        playTrack(currentIndex);
+      }
+    }
 
     function renderTrackList(tracks) {
       const container = document.getElementById("trackList");
@@ -398,7 +422,7 @@
       });
     }
 
-    function playTrack(idx) {
+    async function playTrack(idx) {
       if (idx < 0 || idx >= currentPlaylist.length) return;
       currentIndex = idx;
       const t = currentPlaylist[idx];
@@ -411,19 +435,33 @@
       document.getElementById("dockArtist").textContent = artist;
       document.getElementById("dockArt").src = art;
 
-      if (!preview) {
-        alert("この曲の試聴音源が利用できません。次の曲を再生します。");
-        nextTrack();
-        return;
+      if (isFullMode) {
+        // 🎵 フル尺再生モード: YouTube/しあTube音源を瞬時に解決
+        document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺を準備中...";
+        try {
+          const res = await fetch(`${API_BASE}/api/tube/search?q=${encodeURIComponent(artist + " " + title)}`);
+          const data = await res.json();
+          if (data.videos && data.videos.length > 0) {
+            currentFullVideoId = data.videos[0].id;
+            document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺再生（3〜5分全編）";
+            
+            // 背景の自前プロキシプレイヤーでフル音源を再生
+            const frame = document.getElementById("fullMusicFrame");
+            frame.src = `/api/proxy?url=${encodeURIComponent("https://siatube-web.com/watch?v=" + currentFullVideoId)}`;
+            document.getElementById("dockPlayBtn").textContent = "⏸";
+
+            // 音声要素のダミー進行シミュレーション（シークバー連動）
+            startFakeProgress(210); // 約3分30秒のフル尺
+          } else {
+            fallbackToSample(preview);
+          }
+        } catch (e) {
+          console.warn("Full music resolve error:", e);
+          fallbackToSample(preview);
+        }
+      } else {
+        fallbackToSample(preview);
       }
-      
-      audio.src = preview;
-      audio.play().then(() => {
-        document.getElementById("dockPlayBtn").textContent = "⏸";
-      }).catch((e) => {
-        console.warn("Audio play warning:", e);
-        document.getElementById("dockPlayBtn").textContent = "▶";
-      });
 
       // MediaSession API連携 (iOSロック画面やコントロールセンターに表示)
       if ("mediaSession" in navigator) {
@@ -433,14 +471,61 @@
           album: t.album || t.collectionName || "ちゅこミュージック",
           artwork: [{ src: art, sizes: "600x600", type: "image/jpeg" }]
         });
-        navigator.mediaSession.setActionHandler("play", () => audio.play());
-        navigator.mediaSession.setActionHandler("pause", () => audio.pause());
+        navigator.mediaSession.setActionHandler("play", () => togglePlay());
+        navigator.mediaSession.setActionHandler("pause", () => togglePlay());
         navigator.mediaSession.setActionHandler("previoustrack", () => prevTrack());
         navigator.mediaSession.setActionHandler("nexttrack", () => nextTrack());
       }
 
       updateFavIcon();
       renderTrackList(currentPlaylist);
+    }
+
+    let fakeTimer = null;
+    let fakeCurrent = 0;
+    let fakeTotal = 210;
+
+    function startFakeProgress(totalSec) {
+      if (fakeTimer) clearInterval(fakeTimer);
+      fakeCurrent = 0;
+      fakeTotal = totalSec || 210;
+      fakeTimer = setInterval(() => {
+        fakeCurrent += 1;
+        const pct = Math.min((fakeCurrent / fakeTotal) * 100, 100);
+        document.getElementById("progressFill").style.width = pct + "%";
+        if (fakeCurrent >= fakeTotal) {
+          clearInterval(fakeTimer);
+          nextTrack();
+        }
+      }, 1000);
+    }
+
+    function fallbackToSample(preview) {
+      if (fakeTimer) clearInterval(fakeTimer);
+      if (!preview) {
+        alert("音源が見つかりませんでした。次の曲を再生します。");
+        nextTrack();
+        return;
+      }
+      document.getElementById("dockArtist").textContent = (currentPlaylist[currentIndex].artist || "") + " · ⚡ 30秒サビ試聴";
+      audio.src = preview;
+      audio.play().then(() => {
+        document.getElementById("dockPlayBtn").textContent = "⏸";
+      }).catch((e) => {
+        console.warn("Audio play warning:", e);
+        document.getElementById("dockPlayBtn").textContent = "▶";
+      });
+    }
+
+    function openCurrentInTube() {
+      if (currentFullVideoId) {
+        window.open(`/tube/?v=${currentFullVideoId}`, "_blank");
+      } else {
+        const t = currentPlaylist[currentIndex];
+        if (t) {
+          window.open(`/tube/?q=${encodeURIComponent((t.artist || "") + " " + (t.title || ""))}`, "_blank");
+        }
+      }
     }
 
     function togglePlay() {

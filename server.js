@@ -2529,6 +2529,10 @@ app.all("/api/proxy", async (req, res) => {
       const proxyBase = "/api/proxy?url=";
       const baseUrl = response.url || targetUrl;
 
+      // 既存の <base> タグと integrity 属性を除去（プロキシURL誤解決とSRI拒否の根絶）
+      html = html.replace(/<base\b[^>]*>/gi, "");
+      html = html.replace(/\bintegrity=["'][^"']*["']/gi, "");
+
       function resolveUrl(rel) {
         if (!rel || rel.startsWith("data:") || rel.startsWith("javascript:") || rel.startsWith("#") || rel.startsWith("blob:")) {
           return rel;
@@ -2543,6 +2547,15 @@ app.all("/api/proxy", async (req, res) => {
 
       html = html.replace(/\b(href|src|action)=["']([^"']+)["']/gi, (match, attr, val) => {
         return `${attr}="${resolveUrl(val)}"`;
+      });
+      html = html.replace(/\bsrcset=["']([^"']+)["']/gi, (match, val) => {
+        const parts = val.split(",").map(item => {
+          const trimmed = item.trim();
+          const spaceIdx = trimmed.indexOf(" ");
+          if (spaceIdx === -1) return resolveUrl(trimmed);
+          return resolveUrl(trimmed.slice(0, spaceIdx)) + trimmed.slice(spaceIdx);
+        });
+        return `srcset="${parts.join(", ")}"`;
       });
       html = html.replace(/url\(\s*["']?([^"')]+)["']?\s*\)/gi, (match, val) => {
         return `url("${resolveUrl(val)}")`;
@@ -2567,11 +2580,6 @@ app.all("/api/proxy", async (req, res) => {
 </div>
 <style> body { margin-top: 38px !important; } </style>
 `;
-      if (html.includes("<head")) {
-        html = html.replace(/<head([^>]*)>/i, `<head$1><base href="${baseUrl}">`);
-      } else {
-        html = `<base href="${baseUrl}">` + html;
-      }
 
       if (html.includes("<body")) {
         html = html.replace(/<body([^>]*)>/i, `<body$1>${navBar}`);
@@ -2579,6 +2587,22 @@ app.all("/api/proxy", async (req, res) => {
         html = navBar + html;
       }
       return res.send(html);
+    }
+
+    if (contentType.includes("text/css")) {
+      let css = await response.text();
+      const baseUrl = response.url || targetUrl;
+      css = css.replace(/url\(\s*["']?([^"')]+)["']?\s*\)/gi, (match, val) => {
+        if (!val || val.startsWith("data:") || val.startsWith("blob:")) return match;
+        try {
+          const abs = new URL(val, baseUrl).href;
+          return `url("/api/proxy?url=${encodeURIComponent(abs)}")`;
+        } catch (_) {
+          return match;
+        }
+      });
+      res.setHeader("Content-Type", "text/css; charset=utf-8");
+      return res.send(css);
     }
 
     const buf = await response.arrayBuffer();
