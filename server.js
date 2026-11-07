@@ -2507,30 +2507,36 @@ function renderProxyError(title, detail, retryUrl) {
 // ⭐ 天才プロキシ (Web Proxy Engine)
 // 学校iPad等のフィルターを完全回避し、リンク書き換え & ストリーミング中継
 // ====================================================
-app.get("/api/:filename([a-zA-Z0-9_.-]+\\.(?:wasm|data|bin|mem))", async (req, res) => {
-  const referer = req.headers.referer || "";
-  if (referer.includes("/api/proxy?url=")) {
-    try {
-      const rawTarget = decodeURIComponent(referer.split("/api/proxy?url=")[1].split("&")[0]);
-      const dir = rawTarget.substring(0, rawTarget.lastIndexOf("/") + 1);
-      const candidates = [
-        dir + req.params.filename,
-        dir + "webapp/" + req.params.filename
-      ];
-      for (const cand of candidates) {
+app.use(async (req, res, next) => {
+  if (req.method === "GET" && req.path.startsWith("/api/")) {
+    const filename = req.path.slice(5);
+    if (/^[a-zA-Z0-9_.-]+\.(?:wasm|data|bin|mem)$/i.test(filename)) {
+      const referer = req.headers.referer || "";
+      if (referer.includes("/api/proxy?url=")) {
         try {
-          const resp = await fetch(cand, { headers: { "User-Agent": "Mozilla/5.0" } });
-          if (resp.ok) {
-            res.setHeader("Content-Type", resp.headers.get("content-type") || "application/wasm");
-            res.setHeader("Access-Control-Allow-Origin", "*");
-            const buf = await resp.arrayBuffer();
-            return res.end(Buffer.from(buf));
+          const rawTarget = decodeURIComponent(referer.split("/api/proxy?url=")[1].split("&")[0]);
+          const dir = rawTarget.substring(0, rawTarget.lastIndexOf("/") + 1);
+          const candidates = [
+            dir + filename,
+            dir + "webapp/" + filename
+          ];
+          for (const cand of candidates) {
+            try {
+              const resp = await fetch(cand, { headers: { "User-Agent": "Mozilla/5.0" } });
+              if (resp.ok) {
+                res.setHeader("Content-Type", resp.headers.get("content-type") || "application/wasm");
+                res.setHeader("Access-Control-Allow-Origin", "*");
+                const buf = await resp.arrayBuffer();
+                return res.end(Buffer.from(buf));
+              }
+            } catch (_) {}
           }
         } catch (_) {}
       }
-    } catch (_) {}
+      return res.status(404).send("Not found");
+    }
   }
-  return res.status(404).send("Not found");
+  next();
 });
 
 app.all("/api/proxy", async (req, res) => {
