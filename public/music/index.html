@@ -333,6 +333,10 @@
     <div class="progress-bar" onclick="seekAudio(event)">
       <div class="progress-fill" id="progressFill"></div>
     </div>
+    <div style="display:flex; justify-content:space-between; font-size:11px; color:#a1a1a6; padding:3px 20px 0;">
+      <span id="curTime">0:00</span>
+      <span id="totTime">0:00</span>
+    </div>
     <div class="dock-content">
       <img id="dockArt" class="dock-art" src="https://via.placeholder.com/48x48/1c1c1e/ffffff?text=Music" alt="Cover">
       <div class="dock-info">
@@ -350,9 +354,6 @@
   </div>
 
   <audio id="audioEl" preload="auto"></audio>
-  <div id="fullPlayerContainer" style="position:fixed; bottom:-9999px; left:-9999px; width:1px; height:1px; opacity:0; pointer-events:none;">
-    <iframe id="fullMusicFrame" src="about:blank" allow="autoplay; encrypted-media"></iframe>
-  </div>
 
   <!-- 緊急回避オーバーレイ（理科演習ノート） -->
   <div id="panicOverlay">
@@ -381,21 +382,63 @@
 
     let currentPlaylist = [...HATAKE_TRACKS];
     let currentIndex = 0;
-    let isFullMode = true;
-    let currentFullVideoId = null;
     const audio = document.getElementById("audioEl");
 
     const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori.onrender.com";
 
-    function setPlayMode(mode) {
-      isFullMode = (mode === 'full');
-      document.getElementById('btnModeFull').style.background = isFullMode ? '#0284c7' : '#27272a';
-      document.getElementById('btnModeFull').style.color = isFullMode ? '#fff' : '#a1a1aa';
-      document.getElementById('btnModeSample').style.background = !isFullMode ? '#0284c7' : '#27272a';
-      document.getElementById('btnModeSample').style.color = !isFullMode ? '#fff' : '#a1a1aa';
-      
-      if (currentPlaylist[currentIndex]) {
-        playTrack(currentIndex);
+    function formatTime(sec) {
+      if (!sec || isNaN(sec) || !isFinite(sec)) return "0:00";
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
+    // Audio要素のリアルタイムイベント監視（疑似タイマー全廃）
+    audio.addEventListener("timeupdate", () => {
+      if (!audio.duration || isNaN(audio.duration)) return;
+      const pct = (audio.currentTime / audio.duration) * 100;
+      document.getElementById("progressFill").style.width = Math.min(pct, 100) + "%";
+      document.getElementById("curTime").textContent = formatTime(audio.currentTime);
+      document.getElementById("totTime").textContent = formatTime(audio.duration);
+    });
+
+    audio.addEventListener("loadedmetadata", () => {
+      document.getElementById("totTime").textContent = formatTime(audio.duration);
+    });
+
+    audio.addEventListener("play", () => {
+      document.getElementById("dockPlayBtn").textContent = "⏸";
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
+    });
+
+    audio.addEventListener("pause", () => {
+      document.getElementById("dockPlayBtn").textContent = "▶";
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
+    });
+
+    audio.addEventListener("ended", () => {
+      nextTrack();
+    });
+
+    audio.addEventListener("error", () => {
+      const err = audio.error;
+      let msg = "音源の再生に失敗しました。";
+      if (err) {
+        if (err.code === 1) msg = "再生が中断されました。";
+        else if (err.code === 2) msg = "ネットワーク接続エラーです。";
+        else if (err.code === 3) msg = "音声デコードエラーです。";
+        else if (err.code === 4) msg = "音源URLが無効または形式非対応です。";
+      }
+      document.getElementById("dockArtist").textContent = "⚠️ " + msg;
+      alert(msg + " 別の曲をお試しいただくか、右下の📺ボタンからフルMVを開いてください。");
+    });
+
+    function seekAudio(e) {
+      const bar = e.currentTarget;
+      const rect = bar.getBoundingClientRect();
+      const pos = (e.clientX - rect.left) / rect.width;
+      if (audio.duration && !isNaN(audio.duration)) {
+        audio.currentTime = Math.max(0, Math.min(pos * audio.duration, audio.duration));
       }
     }
 
@@ -422,7 +465,7 @@
       });
     }
 
-    async function playTrack(idx) {
+    function playTrack(idx) {
       if (idx < 0 || idx >= currentPlaylist.length) return;
       currentIndex = idx;
       const t = currentPlaylist[idx];
@@ -434,34 +477,24 @@
       document.getElementById("dockTitle").textContent = title;
       document.getElementById("dockArtist").textContent = artist;
       document.getElementById("dockArt").src = art;
+      document.getElementById("curTime").textContent = "0:00";
+      document.getElementById("totTime").textContent = "読み込み中…";
+      document.getElementById("progressFill").style.width = "0%";
 
-      if (isFullMode) {
-        // 🎵 フル尺再生モード: YouTube/しあTube音源を瞬時に解決
-        document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺を準備中...";
-        try {
-          const res = await fetch(`${API_BASE}/api/tube/search?q=${encodeURIComponent(artist + " " + title)}`);
-          const data = await res.json();
-          if (data.videos && data.videos.length > 0) {
-            currentFullVideoId = data.videos[0].id;
-            document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺再生（3〜5分全編）";
-            
-            // 背景の自前プロキシプレイヤーでフル音源を再生
-            const frame = document.getElementById("fullMusicFrame");
-            frame.src = `/api/proxy?url=${encodeURIComponent("https://siatube-web.com/watch?v=" + currentFullVideoId)}`;
-            document.getElementById("dockPlayBtn").textContent = "⏸";
-
-            // 音声要素のダミー進行シミュレーション（シークバー連動）
-            startFakeProgress(210); // 約3分30秒のフル尺
-          } else {
-            fallbackToSample(preview);
-          }
-        } catch (e) {
-          console.warn("Full music resolve error:", e);
-          fallbackToSample(preview);
-        }
-      } else {
-        fallbackToSample(preview);
+      if (!preview) {
+        document.getElementById("dockArtist").textContent = artist + " · ⚠️ 音源URLがありません（📺ボタンで動画再生可）";
+        alert(`「${title}」の試聴音源が見つかりませんでした。右下の📺ボタンからフルMV・動画を再生できます。`);
+        return;
       }
+
+      audio.src = preview;
+      audio.currentTime = 0;
+      audio.play().then(() => {
+        document.getElementById("dockPlayBtn").textContent = "⏸";
+      }).catch((e) => {
+        console.warn("Audio play error:", e);
+        document.getElementById("dockPlayBtn").textContent = "▶";
+      });
 
       // MediaSession API連携 (iOSロック画面やコントロールセンターに表示)
       if ("mediaSession" in navigator) {
@@ -481,54 +514,20 @@
       renderTrackList(currentPlaylist);
     }
 
-    let fakeTimer = null;
-    let fakeCurrent = 0;
-    let fakeTotal = 210;
-
-    function startFakeProgress(totalSec) {
-      if (fakeTimer) clearInterval(fakeTimer);
-      fakeCurrent = 0;
-      fakeTotal = totalSec || 210;
-      fakeTimer = setInterval(() => {
-        fakeCurrent += 1;
-        const pct = Math.min((fakeCurrent / fakeTotal) * 100, 100);
-        document.getElementById("progressFill").style.width = pct + "%";
-        if (fakeCurrent >= fakeTotal) {
-          clearInterval(fakeTimer);
-          nextTrack();
-        }
-      }, 1000);
-    }
-
-    function fallbackToSample(preview) {
-      if (fakeTimer) clearInterval(fakeTimer);
-      if (!preview) {
-        alert("音源が見つかりませんでした。次の曲を再生します。");
-        nextTrack();
-        return;
-      }
-      document.getElementById("dockArtist").textContent = (currentPlaylist[currentIndex].artist || "") + " · ⚡ 30秒サビ試聴";
-      audio.src = preview;
-      audio.play().then(() => {
-        document.getElementById("dockPlayBtn").textContent = "⏸";
-      }).catch((e) => {
-        console.warn("Audio play warning:", e);
-        document.getElementById("dockPlayBtn").textContent = "▶";
-      });
-    }
-
     function openCurrentInTube() {
-      if (currentFullVideoId) {
-        window.open(`/tube/?v=${currentFullVideoId}`, "_blank");
-      } else {
-        const t = currentPlaylist[currentIndex];
-        if (t) {
-          window.open(`/tube/?q=${encodeURIComponent((t.artist || "") + " " + (t.title || ""))}`, "_blank");
-        }
+      const t = currentPlaylist[currentIndex];
+      if (t) {
+        const query = encodeURIComponent((t.artist || t.artistName || "") + " " + (t.title || t.trackName || ""));
+        const tubeUrl = API_BASE ? `${API_BASE}/tube/?q=${query}` : `/tube/?q=${query}`;
+        window.open(tubeUrl, "_blank");
       }
     }
 
     function togglePlay() {
+      if (!audio.src) {
+        if (currentPlaylist.length > 0) playTrack(0);
+        return;
+      }
       if (audio.paused) {
         audio.play().then(() => {
           document.getElementById("dockPlayBtn").textContent = "⏸";

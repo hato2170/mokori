@@ -297,12 +297,12 @@
 
   <script>
     const INITIAL_VIDEOS = [
-      { id: "M7lc1UVf-VE", title: "STUTS - 夜を使いはたして feat. PUNPEE", author: "STUTS", views: "1,200万回" },
-      { id: "M7lc1UVf-VE", title: "Kaneee - Canvas (Official Music Video)", author: "Kaneee", views: "450万回" },
-      { id: "M7lc1UVf-VE", title: "LEX - なんでも言っちゃって feat. JP THE WAVY", author: "LEX", views: "890万回" },
-      { id: "M7lc1UVf-VE", title: "ブロスタ世界大会ハイライト 2026", author: "Brawl Esports", views: "240万回" },
-      { id: "M7lc1UVf-VE", title: "フォートナイト 最新シーズン神クリップ集", author: "Gaming JP", views: "150万回" },
-      { id: "M7lc1UVf-VE", title: "作業用BGM · 集中できるチルビート 1時間", author: "Lofi Beats", views: "320万回" }
+      { id: "_PHDivmHk_0", title: "STUTS - 夜を使いはたして feat. PUNPEE", author: "STUTS", views: "1,200万回" },
+      { id: "UHGqi7HekoY", title: "Kaneee - Canvas (Official Music Video)", author: "Kaneee", views: "450万回" },
+      { id: "kjVoa56_4x4", title: "LEX - なんでも言っちゃって feat. JP THE WAVY", author: "LEX", views: "890万回" },
+      { id: "P7p3yW5Gg4U", title: "ブロスタ世界大会ハイライト 2026", author: "Brawl Esports", views: "240万回" },
+      { id: "HmHjP7DkuOQ", title: "Kaneee - Born 2 Win (Official Music Video)", author: "Kaneee", views: "180万回" },
+      { id: "jfKfPfyJRdk", title: "作業用BGM · 集中できるチルビート 1時間", author: "Lofi Beats", views: "320万回" }
     ];
 
     let currentVideoId = "_PHDivmHk_0";
@@ -316,7 +316,7 @@
       const auto = autoplay ? 1 : 0;
       if (currentMode === "proxy") {
         // 学校iPadのi-フィルター完全回避（自前Renderプロキシ経由）
-        frame.src = `/api/proxy?url=${encodeURIComponent("https://siatube-web.com/watch?v=" + currentVideoId)}`;
+        frame.src = `${API_BASE}/api/proxy?url=${encodeURIComponent("https://siatube-web.com/watch?v=" + currentVideoId)}`;
       } else if (currentMode === "edu") {
         frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${EDU_PARAMS}`;
       } else {
@@ -353,7 +353,7 @@
     }
 
     function openTensaiProxy() {
-      window.open(`/api/proxy?url=${encodeURIComponent("https://siatube-web.com/watch?v=" + currentVideoId)}`, "_blank");
+      window.open(`${API_BASE}/api/proxy?url=${encodeURIComponent("https://siatube-web.com/watch?v=" + currentVideoId)}`, "_blank");
     }
 
     function openExternalPip() {
@@ -400,16 +400,30 @@
     });
 
     // 初期ロード
-    fetch(`${API_BASE}/api/tube/search?q=STUTS+Kaneee+LEX`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.videos && d.videos.length > 0) {
-          renderCards(d.videos);
-        } else {
-          renderCards(INITIAL_VIDEOS);
-        }
-      })
-      .catch(() => renderCards(INITIAL_VIDEOS));
+    const urlParams = new URLSearchParams(window.location.search);
+    const vParam = urlParams.get("v");
+    const qParam = urlParams.get("q");
+
+    if (vParam) {
+      currentVideoId = vParam;
+      updatePlayerSrc(true);
+    }
+
+    if (qParam) {
+      document.getElementById("searchInput").value = qParam;
+      searchVideos();
+    } else {
+      fetch(`${API_BASE}/api/tube/search?q=STUTS+Kaneee+LEX`)
+        .then(r => r.json())
+        .then(d => {
+          if (d.videos && d.videos.length > 0) {
+            renderCards(d.videos);
+          } else {
+            renderCards(INITIAL_VIDEOS);
+          }
+        })
+        .catch(() => renderCards(INITIAL_VIDEOS));
+    }
   </script>
 </body>
 </html>

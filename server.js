@@ -2461,22 +2461,86 @@ process.on("uncaughtException", (error) => {
 });
 
 
+function isBlockedHost(host) {
+  if (!host) return true;
+  const h = host.toLowerCase().trim();
+  if (['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(h)) return true;
+  if (h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.localhost')) return true;
+  if (/^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h)) return true;
+  if (/^169\.254\./.test(h)) return true;
+  return false;
+}
+
+function renderProxyError(title, detail, retryUrl) {
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>エラー · 天才プロキシ</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; text-align: center; }
+    .box { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 32px 24px; max-width: 480px; width: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    h2 { color: #f87171; font-size: 20px; margin-bottom: 12px; }
+    p { color: #94a3b8; font-size: 14px; line-height: 1.6; margin-bottom: 24px; }
+    .btn-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .btn { display: inline-block; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 13px; }
+    .btn-primary { background: #0284c7; color: #fff; }
+    .btn-sec { background: #334155; color: #cbd5e1; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>⚠️ ${title}</h2>
+    <p>${detail}</p>
+    <div class="btn-row">
+      ${retryUrl ? `<a href="${retryUrl}" class="btn btn-primary">🔄 再試行</a>` : ''}
+      <a href="/tensai-proxy/" class="btn btn-sec">🏠 天才プロキシへ戻る</a>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 // ====================================================
 // ⭐ 天才プロキシ (Web Proxy Engine)
 // 学校iPad等のフィルターを完全回避し、リンク書き換え & ストリーミング中継
 // ====================================================
 app.all("/api/proxy", async (req, res) => {
   let targetUrl = req.query.url;
-  if (!targetUrl) {
-    return res.status(400).send("URL parameter is required. Example: /api/proxy?url=https://poki.com");
+  if (!targetUrl && req.headers.referer) {
+    try {
+      const refUrl = new URL(req.headers.referer);
+      const prevTarget = refUrl.searchParams.get("url");
+      if (prevTarget) {
+        const u = new URL(req.url, prevTarget);
+        targetUrl = u.href;
+      }
+    } catch (_) {}
   }
+
+  if (!targetUrl) {
+    return res.status(400).send(renderProxyError("URLが指定されていません", "アドレスバーまたは検索欄にURLまたは検索キーワードを入力してください。"));
+  }
+
   targetUrl = String(targetUrl).trim();
   if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
     targetUrl = "https://" + targetUrl;
   }
 
+  let parsedTarget;
   try {
-    const parsedTarget = new URL(targetUrl);
+    parsedTarget = new URL(targetUrl);
+  } catch (_) {
+    return res.status(400).send(renderProxyError("無効なURL形式です", "正しいURL（例: poki.com または https://duckduckgo.com）を入力してください。"));
+  }
+
+  if (isBlockedHost(parsedTarget.hostname)) {
+    return res.status(403).send(renderProxyError("アクセス制限", "安全保護のため、内部ネットワークやプライベートIPへの接続はブロックされています。"));
+  }
+
+  try {
     const origin = parsedTarget.origin;
 
     const headers = {
@@ -2561,6 +2625,52 @@ app.all("/api/proxy", async (req, res) => {
         return `url("${resolveUrl(val)}")`;
       });
 
+      const interceptScript = `
+<script>
+(function() {
+  var baseUrl = ${JSON.stringify(baseUrl)};
+  document.addEventListener('submit', function(e) {
+    var f = e.target;
+    if (!f) return;
+    var m = (f.method || 'GET').toUpperCase();
+    if (m === 'GET') {
+      e.preventDefault();
+      try {
+        var act = f.getAttribute('action') || '';
+        var resolvedAct = act ? new URL(act, baseUrl).href : baseUrl;
+        if (resolvedAct.includes('/api/proxy?url=')) {
+          resolvedAct = decodeURIComponent(resolvedAct.split('/api/proxy?url=')[1]);
+        }
+        var fd = new FormData(f);
+        var sp = new URLSearchParams(fd);
+        var dest = resolvedAct.split('?')[0] + '?' + sp.toString();
+        window.location.href = '/api/proxy?url=' + encodeURIComponent(dest);
+      } catch(err) {
+        f.submit();
+      }
+    }
+  }, true);
+
+  if (window.fetch) {
+    var origFetch = window.fetch;
+    window.fetch = function(input, init) {
+      try {
+        var u = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+        if (u && !u.startsWith('data:') && !u.startsWith('blob:') && !u.startsWith('javascript:')) {
+          var abs = new URL(u, baseUrl).href;
+          if (!abs.includes('/api/proxy?url=')) {
+            var proxied = '/api/proxy?url=' + encodeURIComponent(abs);
+            input = (typeof input === 'string') ? proxied : new Request(proxied, init);
+          }
+        }
+      } catch(_) {}
+      return origFetch.call(this, input, init);
+    };
+  }
+})();
+</script>
+`;
+
       const navBar = `
 <div id="__tensai_proxy_bar" style="position:fixed; top:0; left:0; width:100%; height:38px; background:rgba(15,23,42,0.96); backdrop-filter:blur(8px); border-bottom:1px solid rgba(255,255,255,0.15); z-index:2147483647; display:flex; align-items:center; justify-content:space-between; padding:0 12px; box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,sans-serif; color:#fff; font-size:12px;">
   <div style="display:flex; align-items:center; gap:8px;">
@@ -2580,6 +2690,14 @@ app.all("/api/proxy", async (req, res) => {
 </div>
 <style> body { margin-top: 38px !important; } </style>
 `;
+
+      if (html.includes("<head")) {
+        html = html.replace(/<head([^>]*)>/i, `<head$1>${interceptScript}`);
+      } else if (html.includes("<body")) {
+        html = html.replace(/<body([^>]*)>/i, `<body$1>${interceptScript}`);
+      } else {
+        html = interceptScript + html;
+      }
 
       if (html.includes("<body")) {
         html = html.replace(/<body([^>]*)>/i, `<body$1>${navBar}`);
@@ -2608,7 +2726,7 @@ app.all("/api/proxy", async (req, res) => {
     const buf = await response.arrayBuffer();
     return res.end(Buffer.from(buf));
   } catch (err) {
-    return res.status(502).send(`<div style="padding:40px; text-align:center; background:#0f172a; color:#fff; font-family:sans-serif; min-height:100vh;"><h2 style="color:#ef4444;">⚠️ 読み込みに失敗しました</h2><p style="color:#94a3b8;">${err.message}</p><a href="/tensai-proxy/" style="color:#38bdf8;">← 天才プロキシへ戻る</a></div>`);
+    return res.status(502).send(renderProxyError("ページの読み込みに失敗しました", err.message, `/api/proxy?url=${encodeURIComponent(targetUrl)}`));
   }
 });
 

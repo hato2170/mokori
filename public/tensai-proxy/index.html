@@ -293,7 +293,7 @@
           <div class="name">Wikipedia</div>
           <div class="desc">百科事典</div>
         </div>
-        <div class="tile" onclick="launchUrl('https://duckduckgo.com')">
+        <div class="tile" onclick="launchUrl('https://html.duckduckgo.com/html/')">
           <div class="icon">🦆</div>
           <div class="name">DuckDuckGo</div>
           <div class="desc">安全なWeb検索</div>
@@ -338,7 +338,7 @@
         if (url.includes(".") && !url.includes(" ")) {
           url = "https://" + url;
         } else {
-          url = "https://duckduckgo.com/?q=" + encodeURIComponent(url);
+          url = "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(url);
         }
       }
       launchUrl(url);
