@@ -2583,7 +2583,7 @@ app.all("/api/proxy", async (req, res) => {
 
     for (const [key, val] of response.headers.entries()) {
       const lower = key.toLowerCase();
-      if (!["content-security-policy", "x-frame-options", "content-encoding", "transfer-encoding"].includes(lower)) {
+      if (!["content-security-policy", "x-frame-options", "content-encoding", "transfer-encoding", "content-length", "connection"].includes(lower)) {
         res.setHeader(key, val);
       }
     }
