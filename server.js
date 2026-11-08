@@ -2593,6 +2593,19 @@ app.all("/api/proxy", async (req, res) => {
     return res.status(400).send(renderProxyError("無効なURL形式です", "正しいURL（例: poki.com または https://duckduckgo.com）を入力してください。"));
   }
 
+    // プロキシ経由でYouTubeを開いた場合のエラー根絶 (若雪幸せTubeのMP4プレイヤーへ自動中継)
+  if (parsedTarget.hostname.includes("youtube.com") || parsedTarget.hostname === "youtu.be") {
+    let vid = parsedTarget.searchParams.get("v");
+    if (!vid && parsedTarget.hostname === "youtu.be") {
+      vid = parsedTarget.pathname.slice(1).split("/")[0];
+    }
+    if (vid) {
+      return res.redirect(`/tube/?v=${encodeURIComponent(vid)}`);
+    } else {
+      return res.redirect("/tube/");
+    }
+  }
+
   if (isBlockedHost(parsedTarget.hostname)) {
     return res.status(403).send(renderProxyError("アクセス制限", "安全保護のため、内部ネットワークやプライベートIPへの接続はブロックされています。"));
   }
@@ -2752,6 +2765,24 @@ app.all("/api/proxy", async (req, res) => {
 
   try {
     localStorage.setItem('poki_nobot', 'true');
+    window.pokiDebug = true;
+    if (!window.PokiSDK) {
+      window.PokiSDK = {
+        init: function() { return Promise.resolve(); },
+        gameLoadingStart: function() {},
+        gameLoadingFinished: function() {},
+        gameLoadingProgress: function() {},
+        gameplayStart: function() {},
+        gameplayStop: function() {},
+        commercialBreak: function() { return Promise.resolve(); },
+        rewardedBreak: function() { return Promise.resolve(true); },
+        displayAd: function() { return Promise.resolve(); },
+        destroyAd: function() {},
+        setDebug: function() {},
+        happyTime: function() {},
+        showLeaderboard: function() { return Promise.resolve(); }
+      };
+    }
     window.pokiBotDetected = [];
     window.pokiBotScore = 0;
     window.pokiBotVerified = true;
@@ -3002,9 +3033,11 @@ if (window !== window.top) {
 
     if (contentType.includes("javascript") || (response.url && response.url.includes(".js"))) {
       let js = await response.text();
-      js = js.replace(/\bwindow\.location\.pathname\b/g, "(window.__proxy_pathname || window.location.pathname)");
-      js = js.replace(/\blocation\.pathname\b/g, "(window.__proxy_pathname || location.pathname)");
-      js = js.replace(/\blocation\.search\b/g, "(window.__proxy_search !== undefined ? window.__proxy_search : location.search)");
+      // Poki等のゲームSitelock解除 & デバッグモード有効化
+      if (response.url && (response.url.includes("poki") || response.url.includes("fancade") || response.url.includes("turbowarp"))) {
+        js = js.replace(/\bvar\s+pokiDebug\s*=\s*false;/g, "var pokiDebug = true;");
+        js = js.replace(/\bpokiDebug\s*=\s*false\b/g, "pokiDebug = true");
+      }
       res.setHeader("Content-Type", "application/javascript; charset=utf-8");
       return res.send(js);
     }
@@ -3115,7 +3148,17 @@ app.get("/api/music/stream", async (req, res) => {
     for (const [k, v] of upstream.headers.entries()) {
       const lk = k.toLowerCase();
       if (["content-type", "content-length", "content-range", "accept-ranges", "cache-control"].includes(lk)) {
-        res.setHeader(k, v);
+        if (lk === "content-type") {
+          // iOS Safariのaudio/x-m4p非対応エラーを根絶し、ネイティブ再生可能なaudio/mp4へ統一
+          const ct = v.toLowerCase();
+          if (ct.includes("m4p") || ct.includes("m4a") || ct.includes("aac")) {
+            res.setHeader("Content-Type", "audio/mp4");
+          } else {
+            res.setHeader(k, v);
+          }
+        } else {
+          res.setHeader(k, v);
+        }
       }
     }
     if (!res.getHeader("Accept-Ranges")) {
@@ -3397,7 +3440,6 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const service = String(req.params.service || "shiatube").toLowerCase();
   const videoId = String(req.query.v || "_PHDivmHk_0").trim();
-  const eduParam = await getLiveEduParam();
 
   const themes = {
     shiatube: {
@@ -3406,7 +3448,7 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
       color: "#38bdf8",
       bg: "#0b1329",
       accent: "#0284c7",
-      desc: "学校i-フィルター完全回避・しあTube中継モード",
+      desc: "学校i-フィルター完全回避・しあTube中継プレイヤー",
       externalUrl: `https://script.google.com/macros/s/AKfycbzA0pSEaCuLy0I7sZnZdvLKHCgcGbSCPbVLNVLxkj8aWWKMrHpsEDBGcx-cOhk4jwP2/exec?v=${videoId}`
     },
     wakametube: {
@@ -3415,7 +3457,7 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
       color: "#10b981",
       bg: "#062817",
       accent: "#059669",
-      desc: "toka-kun / wakame02 わかめtube Plusモード",
+      desc: "wakame02 わかめtube Plus MP4ストリームプレイヤー",
       externalUrl: `https://wkt-hkg4.onrender.com/wkt/watch?v=${videoId}`
     },
     yukitube: {
@@ -3424,7 +3466,7 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
       color: "#a78bfa",
       bg: "#160b2b",
       accent: "#7c3aed",
-      desc: "Yuki-YouTube ステルス動画プレイヤーモード",
+      desc: "Yuki-YouTube ステルス動画プレイヤー",
       externalUrl: `https://yuki-youtube.onrender.com/watch?v=${videoId}`
     },
     youtubeplus: {
@@ -3433,30 +3475,32 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
       color: "#ef4444",
       bg: "#2b0b0b",
       accent: "#dc2626",
-      desc: "YouTube Plus+ (by yuto1106110) アンブロックモード",
+      desc: "YouTube Plus+ アンブロック動画プレイヤー",
       externalUrl: `https://youtube-plus-plus.vercel.app/watch?v=${videoId}`
     }
   };
 
   const currentTheme = themes[service] || themes.shiatube;
-  const embedUrl = `https://www.youtubeeducation.com/embed/${videoId}${eduParam}&playlist=${videoId}`;
 
+  // 公式YouTube/Educationの埋め込みiframeを完全排除し、黒背景の純粋なHTML5 MP4プレイヤーを提供
   const html = `<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${currentTheme.icon} ${currentTheme.name} - プレイヤー</title>
+  <title>${currentTheme.icon} ${currentTheme.name} · MP4プレイヤー</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: ${currentTheme.bg}; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-    .header { height: 38px; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 13px; }
+    .header { height: 42px; background: rgba(0,0,0,0.85); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 13px; z-index: 10; }
     .header-title { font-weight: bold; color: ${currentTheme.color}; display: flex; align-items: center; gap: 6px; }
-    .header-links { display: flex; align-items: center; gap: 8px; }
-    .btn { background: #334155; color: #fff; border: 0; border-radius: 4px; padding: 4px 10px; font-size: 11px; cursor: pointer; text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; }
-    .btn-accent { background: ${currentTheme.accent}; font-weight: bold; }
-    .player-container { flex: 1; position: relative; width: 100%; background: #000; }
-    iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+    .btn-group { display: flex; gap: 6px; align-items: center; }
+    .head-btn { background: rgba(255,255,255,0.12); color: #fff; text-decoration: none; border: 0; border-radius: 6px; padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+    .head-btn:hover { background: rgba(255,255,255,0.22); }
+    .player-container { flex: 1; width: 100%; height: 100%; position: relative; background: #000; display: flex; align-items: center; justify-content: center; }
+    video { width: 100%; height: 100%; object-fit: contain; background: #000; outline: none; }
+    .notice-bar { padding: 10px 14px; background: rgba(0,0,0,0.85); display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #94a3b8; border-top: 1px solid rgba(255,255,255,0.08); }
+    .ext-btn { background: ${currentTheme.accent}; color: #fff; text-decoration: none; border-radius: 8px; padding: 6px 14px; font-weight: bold; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -3464,17 +3508,36 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
     <div class="header-title">
       <span>${currentTheme.icon}</span>
       <span>${currentTheme.name}</span>
-      <span style="font-size:11px; opacity:0.8; font-weight:normal; margin-left:6px;">(${currentTheme.desc})</span>
+      <span style="font-size:10px; background:rgba(255,255,255,0.15); padding:2px 6px; border-radius:4px; margin-left:4px;">MP4動画直再生</span>
     </div>
-    <div class="header-links">
-      <a href="${currentTheme.externalUrl}" target="_blank" class="btn">⚡ 公式外部直通</a>
-      <a href="/api/proxy?url=${encodeURIComponent(currentTheme.externalUrl)}" target="_blank" class="btn">🌐 プロキシで開く</a>
-      <a href="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1" target="_blank" class="btn">⛶ 全画面</a>
+    <div class="btn-group">
+      <a href="/tube/?v=${videoId}" class="head-btn">📺 若雪Tube</a>
+      <a href="${currentTheme.externalUrl}" target="_blank" rel="noopener" class="head-btn" style="background:${currentTheme.accent};">🚀 本家ミラー直通</a>
+      <button onclick="document.getElementById('mp4Player').requestFullscreen().catch(()=>{})" class="head-btn">⛶ 全画面</button>
+      <button onclick="parent.toggleStealth ? parent.toggleStealth() : window.location.href='https://www.google.com'" class="head-btn" style="background:#dc2626;">🚨</button>
     </div>
   </div>
   <div class="player-container">
-    <iframe src="${embedUrl}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+    <video id="mp4Player" controls playsinline preload="auto" poster="/api/tube/thumb?v=${videoId}"></video>
   </div>
+  <div class="notice-bar">
+    <div>${currentTheme.desc} · 🛡️ YouTube公式埋め込み遮断を完全排除</div>
+    <a href="${currentTheme.externalUrl}" target="_blank" rel="noopener" class="ext-btn">🌐 別タブで開く</a>
+  </div>
+  <script>
+    (async function() {
+      const v = document.getElementById("mp4Player");
+      try {
+        const res = await fetch("/api/tube/stream-info?v=${videoId}");
+        const data = await res.json();
+        if (data.ok && (data.videoUrl || data.hlsUrl)) {
+          v.src = data.hlsUrl || data.videoUrl;
+          v.load();
+          v.play().catch(() => {});
+        }
+      } catch(_) {}
+    })();
+  </script>
 </body>
 </html>`;
 

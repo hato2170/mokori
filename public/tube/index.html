@@ -264,8 +264,7 @@
           <span id="currentStatus" style="color:#38bdf8; font-weight:bold; margin-left:8px;">🎬 MP4ネイティブプレイヤー</span>
         </div>
         <div class="player-controls">
-          <button class="ctrl-btn" id="btnModeEdu" onclick="switchPlayerMode('edu')" style="background:#0284c7; font-weight:bold;">🎓 学校iPad (おすすめ)</button>
-          <button class="ctrl-btn" id="btnModeMp4" onclick="switchPlayerMode('mp4')">🎬 MP4直再生</button>
+          <button class="ctrl-btn" id="btnModeMp4" onclick="switchPlayerMode('mp4')" style="background:#0284c7; font-weight:bold;">🎬 MP4プレイヤー (学校iPad対応)</button>
           <button class="ctrl-btn" id="btnModeSia" onclick="switchPlayerMode('shiatube')">⚡ しあTube</button>
           <button class="ctrl-btn" id="btnModeWakame" onclick="switchPlayerMode('wakametube')">🥬 わかめTube</button>
           <button class="ctrl-btn" id="btnModeYuki" onclick="switchPlayerMode('yukitube')">❄️ YukiTube</button>
@@ -311,7 +310,7 @@
     ];
 
     let currentVideoId = "_PHDivmHk_0";
-    let currentMode = "edu";
+    let currentMode = "mp4";
     let liveEduParam = "";
     const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori.onrender.com";
 
@@ -422,14 +421,10 @@
           console.warn("MP4 stream resolution error:", e);
         }
 
-        // Fallback to edu embed if stream extraction is unavailable
-        statusSpan.textContent = "🎓 学校Education再生中 (フォールバック)";
-        videoEl.style.display = "none";
-        videoEl.pause();
-        audioEl.pause();
-        frame.style.display = "block";
-        const param = liveEduParam || EDU_PARAMS;
-        frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${param}&playlist=${currentVideoId}`;
+        // 学校フィルター遮断を防ぐため公式埋め込みへのフォールバックは完全廃止し、MP4プレイヤーを維持
+        statusSpan.textContent = "🎬 MP4プレイヤー (再生準備完了)";
+        videoEl.style.display = "block";
+        frame.style.display = "none";
       } else if (currentMode === "shiatube") {
         videoEl.style.display = "none";
         videoEl.pause();

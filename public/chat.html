@@ -886,6 +886,19 @@
       #sidebar {
         width: 100%;
       }
+      .room-header {
+        padding: 0 10px;
+        gap: 6px;
+      }
+      .room-actions .icon-btn {
+        width: 32px;
+        height: 32px;
+        font-size: 15px;
+      }
+      .room-title {
+        font-size: 15px;
+        max-width: 130px;
+      }
       #chatRoom {
         position: absolute;
         inset: 0;
@@ -914,14 +927,18 @@
       <div class="header-actions">
         <button class="icon-btn" id="openProfileBtn" title="プロフィール設定" onclick="window.openProfileModal()" style="font-size:18px;">👤</button>
         <button class="icon-btn" id="openThemeFontBtn" title="着せ替え・フォント・BGM設定" onclick="window.openThemeFontModal()" style="font-size:18px;">🎨</button>
-        <button class="icon-btn" id="openAiStudioBtn" title="AIスタジオ" onclick="window.location.href='./ai.html'" style="font-size:18px;">🤖</button>
-        <button class="icon-btn" title="もこりプロキシ" onclick="window.location.href='/tensai-proxy/'" style="font-size:18px;">🌐</button>
-        <button class="icon-btn" title="ちゅこtube" onclick="window.location.href='/tube/'" style="font-size:18px;">📺</button>
-        <button class="icon-btn" title="ちゅこミュージック" onclick="window.location.href='/music/'" style="font-size:18px;">🎵</button>
-        <button class="icon-btn" id="openGameHubBtn" title="ゲーム広場" onclick="window.openGameHub()" style="font-size:18px;">🎮</button>
-        <button class="icon-btn" id="newChatBtn" title="新しいトーク">＋</button>
-        <button class="icon-btn" id="refreshAllBtn" title="更新">🔄</button>
+        <button class="icon-btn" id="newChatBtn" title="新しいトーク" style="font-size:20px; font-weight:bold;">＋</button>
+        <button class="icon-btn" id="refreshAllBtn" title="更新" style="font-size:16px;">🔄</button>
       </div>
+    </div>
+
+    <!-- ⚡ LINE風 クイック機能バー (横スクロール対応・崩れゼロ) -->
+    <div class="quick-apps-bar" style="display:flex; gap:6px; padding:8px 14px 10px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;">
+      <a href="/tensai-proxy/" style="display:inline-flex; align-items:center; gap:5px; background:#f2f0e8; color:var(--text); text-decoration:none; padding:6px 12px; border-radius:14px; font-size:12px; font-weight:600; white-space:nowrap; border:1px solid var(--border); box-shadow:0 1px 2px rgba(0,0,0,0.03);">🌐 プロキシ</a>
+      <a href="/tube/" style="display:inline-flex; align-items:center; gap:5px; background:#f2f0e8; color:var(--text); text-decoration:none; padding:6px 12px; border-radius:14px; font-size:12px; font-weight:600; white-space:nowrap; border:1px solid var(--border); box-shadow:0 1px 2px rgba(0,0,0,0.03);">📺 若雪Tube</a>
+      <a href="/music/" style="display:inline-flex; align-items:center; gap:5px; background:#f2f0e8; color:var(--text); text-decoration:none; padding:6px 12px; border-radius:14px; font-size:12px; font-weight:600; white-space:nowrap; border:1px solid var(--border); box-shadow:0 1px 2px rgba(0,0,0,0.03);">🎵 音楽</a>
+      <button onclick="window.openGameHub()" style="display:inline-flex; align-items:center; gap:5px; background:#f2f0e8; color:var(--text); padding:6px 12px; border-radius:14px; font-size:12px; font-weight:600; white-space:nowrap; border:1px solid var(--border); box-shadow:0 1px 2px rgba(0,0,0,0.03); cursor:pointer;">🎮 ゲーム広場</button>
+      <a href="./ai.html" style="display:inline-flex; align-items:center; gap:5px; background:#f2f0e8; color:var(--text); text-decoration:none; padding:6px 12px; border-radius:14px; font-size:12px; font-weight:600; white-space:nowrap; border:1px solid var(--border); box-shadow:0 1px 2px rgba(0,0,0,0.03);">🤖 AIスタジオ</a>
     </div>
 
     <!-- タブ切り替え: トーク / 友達 -->
