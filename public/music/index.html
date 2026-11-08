@@ -422,15 +422,28 @@
 
     audio.addEventListener("error", () => {
       const err = audio.error;
-      let msg = "音源の再生に失敗しました。";
+      let msg = "音源の再生エラー";
       if (err) {
         if (err.code === 1) msg = "再生が中断されました。";
         else if (err.code === 2) msg = "ネットワーク接続エラーです。";
         else if (err.code === 3) msg = "音声デコードエラーです。";
-        else if (err.code === 4) msg = "音源URLが無効または形式非対応です。";
+        else if (err.code === 4) msg = "音源形式エラー";
+      }
+      console.warn("Audio element error:", err);
+      const t = currentPlaylist[currentIndex];
+      const preview = t ? (t.preview || t.previewUrl) : "";
+      if (preview) {
+        const fallbackUrl = `${API_BASE}/api/music/stream?url=${encodeURIComponent(preview)}`;
+        if (audio.src !== fallbackUrl) {
+          audio.src = fallbackUrl;
+          audio.play().then(() => {
+            document.getElementById("dockPlayBtn").textContent = "⏸";
+            document.getElementById("dockArtist").textContent = (t.artist || t.artistName) + " · 🎵 快適再生中";
+          }).catch(() => {});
+          return;
+        }
       }
       document.getElementById("dockArtist").textContent = "⚠️ " + msg;
-      alert(msg + " 別の曲をお試しいただくか、右下の📺ボタンからフルMVを開いてください。");
     });
 
     function seekAudio(e) {
@@ -505,20 +518,29 @@
         const query = `${artist} ${title}`;
         const res = await fetch(`${API_BASE}/api/tube/stream-info?q=${encodeURIComponent(query)}`);
         const data = await res.json();
-        if (data.ok && data.audioUrl) {
-          const currentPos = audio.currentTime;
+        if (data.ok && data.audioUrl && audio.src === proxiedStreamUrl) {
           const fullAudioUrl = (data.audioUrl.startsWith("http") && !data.audioUrl.includes("onrender.com"))
             ? `${API_BASE}/api/music/stream?url=${encodeURIComponent(data.audioUrl)}`
             : data.audioUrl;
-          audio.src = fullAudioUrl;
-          audio.currentTime = currentPos;
-          audio.play().then(() => {
-            document.getElementById("dockPlayBtn").textContent = "⏸";
-            document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺再生中";
-            if (data.duration) {
-              const m = Math.floor(data.duration / 60);
-              const s = Math.floor(data.duration % 60).toString().padStart(2, "0");
-              document.getElementById("totTime").textContent = `${m}:${s}`;
+          
+          // 事前疎通確認をして403等の場合はプロキシ音源を維持
+          fetch(fullAudioUrl, { method: "HEAD" }).then(headResp => {
+            if (headResp.ok && audio.src === proxiedStreamUrl) {
+              const currentPos = audio.currentTime;
+              audio.src = fullAudioUrl;
+              audio.currentTime = currentPos;
+              audio.play().then(() => {
+                document.getElementById("dockPlayBtn").textContent = "⏸";
+                document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺再生中";
+                if (data.duration) {
+                  const m = Math.floor(data.duration / 60);
+                  const s = Math.floor(data.duration % 60).toString().padStart(2, "0");
+                  document.getElementById("totTime").textContent = `${m}:${s}`;
+                }
+              }).catch(() => {
+                audio.src = proxiedStreamUrl;
+                audio.play().catch(() => {});
+              });
             }
           }).catch(() => {});
         } else if (preview) {
