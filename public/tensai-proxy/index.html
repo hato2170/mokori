@@ -363,9 +363,6 @@
         window.location.href = "/tube/";
         return;
       }
-      const input = document.getElementById("targetUrlInput");
-      let url = (input.value || "").trim();
-      if (!url) return;
       if (!url.startsWith("http://") && !url.startsWith("https://")) {
         if (url.includes(".") && !url.includes(" ")) {
           url = "https://" + url;
