@@ -2693,6 +2693,59 @@ app.all("/api/proxy", async (req, res) => {
 <script>
 (function() {
   var baseUrl = ${JSON.stringify(baseUrl)};
+  var baseObj;
+  try {
+    baseObj = new URL(baseUrl);
+  } catch(_) {
+    baseObj = { pathname: '/', search: '', hash: '', href: baseUrl, origin: '' };
+  }
+
+  window.__proxy_pathname = baseObj.pathname || '/';
+  window.__proxy_search = baseObj.search || '';
+  window.__proxy_hash = baseObj.hash || '';
+  window.__proxy_href = baseObj.href || baseUrl;
+
+  var mockLocation = {
+    get pathname() { return window.__proxy_pathname; },
+    set pathname(v) { window.__proxy_pathname = v; },
+    get search() { return window.__proxy_search; },
+    set search(v) { window.__proxy_search = v; },
+    get hash() { return window.__proxy_hash; },
+    set hash(v) { window.__proxy_hash = v; },
+    get href() { return window.__proxy_href; },
+    set href(v) {
+      if (typeof v === 'string' && !v.includes('/api/proxy')) {
+        location.href = '/api/proxy?url=' + encodeURIComponent(new URL(v, baseUrl).href);
+      } else {
+        location.href = v;
+      }
+    },
+    get origin() { return baseObj.origin; },
+    get host() { return baseObj.host; },
+    get hostname() { return baseObj.hostname; },
+    get port() { return baseObj.port; },
+    get protocol() { return baseObj.protocol; },
+    assign: function(url) { this.href = url; },
+    replace: function(url) { this.href = url; },
+    reload: function() { location.reload(); },
+    toString: function() { return window.__proxy_href; }
+  };
+
+  try {
+    var origDefaultView = Object.getOwnPropertyDescriptor(Document.prototype, 'defaultView').get;
+    var winProxy = new Proxy(window, {
+      get: function(target, prop) {
+        if (prop === 'location') return mockLocation;
+        var val = target[prop];
+        return typeof val === 'function' ? val.bind(target) : val;
+      }
+    });
+    Object.defineProperty(Document.prototype, 'defaultView', {
+      configurable: true,
+      get: function() { return winProxy; }
+    });
+  } catch(_) {}
+
   try {
     localStorage.setItem('poki_nobot', 'true');
     window.pokiBotDetected = false;
@@ -2755,11 +2808,29 @@ app.all("/api/proxy", async (req, res) => {
       }
     }
     history.pushState = function(state, title, url) {
-      if (url) arguments[2] = wrapHistoryUrl(url);
+      if (url) {
+        try {
+          var target = new URL(url, baseUrl);
+          window.__proxy_pathname = target.pathname;
+          window.__proxy_search = target.search;
+          window.__proxy_hash = target.hash;
+          window.__proxy_href = target.href;
+          arguments[2] = wrapHistoryUrl(url);
+        } catch(_) {}
+      }
       return origPush.apply(this, arguments);
     };
     history.replaceState = function(state, title, url) {
-      if (url) arguments[2] = wrapHistoryUrl(url);
+      if (url) {
+        try {
+          var target = new URL(url, baseUrl);
+          window.__proxy_pathname = target.pathname;
+          window.__proxy_search = target.search;
+          window.__proxy_hash = target.hash;
+          window.__proxy_href = target.href;
+          arguments[2] = wrapHistoryUrl(url);
+        } catch(_) {}
+      }
       return origReplace.apply(this, arguments);
     };
   }
@@ -2862,6 +2933,15 @@ app.all("/api/proxy", async (req, res) => {
       return res.send(css);
     }
 
+    if (contentType.includes("javascript") || (response.url && response.url.includes(".js"))) {
+      let js = await response.text();
+      js = js.replace(/\bwindow\.location\.pathname\b/g, "(window.__proxy_pathname || window.location.pathname)");
+      js = js.replace(/\blocation\.pathname\b/g, "(window.__proxy_pathname || location.pathname)");
+      js = js.replace(/\blocation\.search\b/g, "(window.__proxy_search !== undefined ? window.__proxy_search : location.search)");
+      res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+      return res.send(js);
+    }
+
     const buf = await response.arrayBuffer();
     return res.end(Buffer.from(buf));
   } catch (err) {
@@ -2941,11 +3021,165 @@ app.get("/api/tube/search", async (req, res) => {
   });
 });
 
+// ==========================================
+// 音楽・動画ストリーミング & 学タブ（学校iPad）プロキシ
+// ==========================================
+const { Readable } = require("stream");
+
+// 1. 音楽ストリーミングプロキシ (Render経由・Rangeヘッダー完全対応・iOS/iPad Safari対応)
+app.get("/api/music/stream", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "*");
+  const targetUrl = String(req.query.url || "").trim();
+  if (!targetUrl) return res.status(400).send("url parameter required");
+
+  try {
+    const range = req.headers.range;
+    const fetchHeaders = {
+      "User-Agent": "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+      ...(range ? { Range: range } : {})
+    };
+    const upstream = await fetch(targetUrl, {
+      headers: fetchHeaders,
+      signal: AbortSignal.timeout(15000)
+    });
+
+    res.status(upstream.status);
+    for (const [k, v] of upstream.headers.entries()) {
+      const lk = k.toLowerCase();
+      if (["content-type", "content-length", "content-range", "accept-ranges", "cache-control"].includes(lk)) {
+        res.setHeader(k, v);
+      }
+    }
+    if (!res.getHeader("Accept-Ranges")) {
+      res.setHeader("Accept-Ranges", "bytes");
+    }
+
+    if (!upstream.body) {
+      return res.end();
+    }
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).send("Music stream failed: " + err.message);
+    }
+  }
+});
+
+// 2. 学校Educationパラメータ（Kahoot encトークン動的自動更新・学タブ完全対応）
+let cachedEduParam = null;
+let lastEduFetchTime = 0;
+
+async function getLiveEduParam() {
+  const now = Date.now();
+  if (cachedEduParam && (now - lastEduFetchTime < 1800000)) {
+    return cachedEduParam;
+  }
+
+  const sources = [
+    { url: "https://raw.githubusercontent.com/toka-kun/Education/refs/heads/main/keys/key1.json", type: "json" },
+    { url: "https://raw.githubusercontent.com/wakame02/wktopu/refs/heads/main/edu.text", type: "text" },
+    { url: "https://raw.githubusercontent.com/siawaseok3/wakame/master/video_config.json", type: "sia" }
+  ];
+
+  for (const src of sources) {
+    try {
+      const resp = await fetch(src.url, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(4000)
+      });
+      if (!resp.ok) continue;
+      let paramStr = "";
+      if (src.type === "json") {
+        const j = await resp.json();
+        paramStr = j.result || "";
+      } else if (src.type === "sia") {
+        const j = await resp.json();
+        paramStr = j.params || "";
+      } else {
+        paramStr = await resp.text();
+      }
+      if (paramStr && paramStr.includes("embed_config")) {
+        paramStr = paramStr.replace(/&amp;/g, "&").trim();
+        cachedEduParam = paramStr;
+        lastEduFetchTime = now;
+        return paramStr;
+      }
+    } catch (_) {}
+  }
+
+  const fallback = "?autoplay=1&mute=0&controls=1&start=0&origin=https%3A%2F%2Fcreate.kahoot.it&playsinline=1&showinfo=0&rel=0&iv_load_policy=3&modestbranding=1&fs=1&cc_load_policy=0&enablejsapi=1&widgetid=1&forigin=https%3A%2F%2Fcreate.kahoot.it%2Flearner%2Fcb8cb5ae-d835-4c4a-bc2d-9cc78519d646%2Fcourse%2F6fba06e3-1f76-47a8-9a4a-53c53eb86286%2F0&aoriginsup=1&vf=6&embed_config=%7B%22enc%22%3A%22AXH1ezmGkMf2FLv0BY163EhJHuZ7l-eqFdNKi-qqyyuWZ4ocVXbnfgWJAKgkE9Jn93hXkK3xo4n7q68b750DYQJ1MI07Fu_t7iQSF6CVUg5jx-oGzkIa688Nrse8VNYp8pl1JaBrLbvstbMKzRBnfm2h46Wf28CKkQ%3D%3D%22%2C%22hideTitle%22%3Afalse%7D";
+  cachedEduParam = fallback;
+  return fallback;
+}
+
+app.get("/api/tube/edu-param", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "public, max-age=1800");
+  const params = await getLiveEduParam();
+  res.json({ ok: true, params });
+});
+
+// 3. 動画ストリームプロキシ (Range対応・Render中継)
+app.get("/api/tube/proxy-stream", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "*");
+  const targetUrl = String(req.query.url || "").trim();
+  if (!targetUrl) return res.status(400).send("url parameter required");
+
+  try {
+    const range = req.headers.range;
+    const fetchHeaders = {
+      "User-Agent": "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15",
+      ...(range ? { Range: range } : {})
+    };
+    const upstream = await fetch(targetUrl, {
+      headers: fetchHeaders,
+      signal: AbortSignal.timeout(20000)
+    });
+
+    res.status(upstream.status);
+    for (const [k, v] of upstream.headers.entries()) {
+      const lk = k.toLowerCase();
+      if (["content-type", "content-length", "content-range", "accept-ranges", "cache-control"].includes(lk)) {
+        res.setHeader(k, v);
+      }
+    }
+    if (!res.getHeader("Accept-Ranges")) {
+      res.setHeader("Accept-Ranges", "bytes");
+    }
+    if (!upstream.body) return res.end();
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).send("Video stream error: " + err.message);
+  }
+});
+
+// 4. サムネイル中継 (i.ytimg.com ブロック回避)
+app.get("/api/tube/thumb", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  const videoId = String(req.query.v || "").trim();
+  if (!videoId) return res.status(400).send("v required");
+
+  try {
+    const upstream = await fetch(`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (upstream.ok && upstream.body) {
+      res.setHeader("Content-Type", "image/jpeg");
+      return Readable.fromWeb(upstream.body).pipe(res);
+    }
+  } catch (_) {}
+  res.redirect(`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`);
+});
+
 const streamInfoCache = new Map();
 
 app.get("/api/tube/stream-info", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.setHeader("Cache-Control", "public, max-age=1800");
   let videoId = String(req.query.v || "").trim();
   const searchQuery = String(req.query.q || "").trim();
 
@@ -2982,18 +3216,21 @@ app.get("/api/tube/stream-info", async (req, res) => {
     return res.status(400).json({ ok: false, error: "videoId or query required" });
   }
 
+  const liveEduParam = await getLiveEduParam();
+  const eduEmbedUrl = `https://www.youtubeeducation.com/embed/${videoId}${liveEduParam}&playlist=${videoId}`;
+
   if (streamInfoCache.has(videoId)) {
     const cached = streamInfoCache.get(videoId);
     if (Date.now() - cached.time < 7200000) {
-      return res.json({ ok: true, ...cached.data });
+      return res.json({ ok: true, eduEmbedUrl, ...cached.data });
     }
   }
 
   const invidiousHosts = [
+    "echostreamz.com",
     "yt.chocolatemoo53.com",
-    "super8.absturztau.be",
-    "inv.thepixora.com",
-    "invidious.nerdvpn.de"
+    "iv.melmac.space",
+    "super8.absturztau.be"
   ];
 
   for (const host of invidiousHosts) {
@@ -3001,7 +3238,7 @@ app.get("/api/tube/stream-info", async (req, res) => {
       const apiUrl = `https://${host}/api/v1/videos/${videoId}`;
       const invResp = await fetch(apiUrl, {
         headers: { "User-Agent": "Mozilla/5.0" },
-        signal: AbortSignal.timeout(6000)
+        signal: AbortSignal.timeout(3500)
       });
       if (!invResp.ok) continue;
       const invData = await invResp.json();
@@ -3042,9 +3279,8 @@ app.get("/api/tube/stream-info", async (req, res) => {
         if (anyV) videoUrl = anyV.url;
       }
 
-      const proxyBase = "https://publer-media-downloader.kalemi-code4806.workers.dev/?noDownload=true&url=";
-      const proxiedVideoUrl = videoUrl ? (proxyBase + encodeURIComponent(videoUrl)) : "";
-      const proxiedAudioUrl = audioUrl ? (proxyBase + encodeURIComponent(audioUrl)) : "";
+      const proxiedVideoUrl = videoUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(videoUrl)}` : "";
+      const proxiedAudioUrl = audioUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(audioUrl)}` : "";
 
       const durationSec = invData.lengthSeconds || 180;
       const resultData = {
@@ -3056,8 +3292,9 @@ app.get("/api/tube/stream-info", async (req, res) => {
         audioUrl: proxiedAudioUrl,
         rawVideoUrl: videoUrl,
         rawAudioUrl: audioUrl,
+        eduEmbedUrl,
         hlsUrl: invData.hlsUrl || "",
-        thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+        thumbnail: `/api/tube/thumb?v=${videoId}`
       };
 
       streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
@@ -3074,8 +3311,9 @@ app.get("/api/tube/stream-info", async (req, res) => {
     duration: 180,
     videoUrl: "",
     audioUrl: "",
+    eduEmbedUrl,
     embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1`,
-    thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+    thumbnail: `/api/tube/thumb?v=${videoId}`
   });
 });
 
@@ -3083,7 +3321,8 @@ app.get("/api/tube/stream", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const videoId = String(req.query.v || "").trim();
   if (!videoId) return res.status(400).send("Video ID required");
-  return res.redirect(`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`);
+  const eduParam = await getLiveEduParam();
+  return res.redirect(`https://www.youtubeeducation.com/embed/${videoId}${eduParam}&playlist=${videoId}`);
 });
 
 app.listen(port, () => {

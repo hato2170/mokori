@@ -264,9 +264,9 @@
           <span id="currentStatus" style="color:#38bdf8; font-weight:bold; margin-left:8px;">🎬 MP4ネイティブプレイヤー</span>
         </div>
         <div class="player-controls">
-          <button class="ctrl-btn" id="btnModeMp4" onclick="switchPlayerMode('mp4')" style="background:#0284c7; font-weight:bold;">🎬 MP4直再生 (おすすめ)</button>
-          <button class="ctrl-btn" id="btnModeProxy" onclick="switchPlayerMode('proxy')">🛡️ プロキシ埋め込み</button>
-          <button class="ctrl-btn" id="btnModeEdu" onclick="switchPlayerMode('edu')">🎓 学校Education</button>
+          <button class="ctrl-btn" id="btnModeEdu" onclick="switchPlayerMode('edu')" style="background:#0284c7; font-weight:bold;">🎓 学校iPad (おすすめ)</button>
+          <button class="ctrl-btn" id="btnModeMp4" onclick="switchPlayerMode('mp4')">🎬 MP4直再生 (サーバー中継)</button>
+          <button class="ctrl-btn" id="btnModeProxy" onclick="switchPlayerMode('proxy')">🛡️ プロキシ埋め込み (しあTube)</button>
           <button class="ctrl-btn" onclick="openDirectSia()">⚡ しあTube直通</button>
           <button class="ctrl-btn" onclick="openTensaiProxy()">🌐 天才プロキシで開く</button>
           <button class="ctrl-btn" onclick="openExternalPip()">⛶ 別タブ全画面</button>
@@ -309,7 +309,8 @@
     ];
 
     let currentVideoId = "_PHDivmHk_0";
-    let currentMode = "mp4";
+    let currentMode = "edu";
+    let liveEduParam = "";
     const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori.onrender.com";
 
     const mp4Video = document.getElementById("mp4Video");
@@ -345,7 +346,7 @@
         const card = document.createElement("div");
         card.className = "video-card";
         card.onclick = () => playVideo(v.id, v.title, v.author, v.views || v.viewCount || "");
-        const thumb = v.thumbnail || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`;
+        const thumb = v.thumbnail || `${API_BASE}/api/tube/thumb?v=${v.id}`;
         card.innerHTML = `
           <div class="thumb-wrap">
             <img src="${thumb}" alt="${v.title}" loading="lazy">
@@ -359,7 +360,17 @@
       });
     }
 
-    const EDU_PARAMS = "?autoplay=1&mute=0&controls=1&start=0&origin=https%3A%2F%2Fcreate.kahoot.it&playsinline=1&showinfo=0&rel=0&iv_load_policy=3&modestbranding=1&fs=1&cc_load_policy=0&enablejsapi=1&widgetid=1&forigin=https%3A%2F%2Fcreate.kahoot.it%2Flearner%2Fcb8cb5ae-d835-4c4a-bc2d-9cc78519d646%2Fcourse%2F6fba06e3-1f76-47a8-9a4a-53c53eb86286%2F0&aoriginsup=1&vf=6&embed_config=%7B%22enc%22%3A%22AXH1ezmIp-uzBx-99Q9-g8WIjXvlMILi662ObHq4TLkkOhT6QGRH2oLA21NDdviOSsE2MqBvKAz_UxtSswtvHOaXMai4DnQaSGSr9MLZJA51hKNULDcMA7ptn7_pf7DD5waGI3NXk-aYuZXGqqlNEUWBdWxB7orhZg%3D%3D%22%2C%22hideTitle%22%3Afalse%7D";
+    const EDU_PARAMS = "?autoplay=1&mute=0&controls=1&start=0&origin=https%3A%2F%2Fcreate.kahoot.it&playsinline=1&showinfo=0&rel=0&iv_load_policy=3&modestbranding=1&fs=1&cc_load_policy=0&enablejsapi=1&widgetid=1&forigin=https%3A%2F%2Fcreate.kahoot.it%2Flearner%2Fcb8cb5ae-d835-4c4a-bc2d-9cc78519d646%2Fcourse%2F6fba06e3-1f76-47a8-9a4a-53c53eb86286%2F0&aoriginsup=1&vf=6&embed_config=%7B%22enc%22%3A%22AXH1ezmGkMf2FLv0BY163EhJHuZ7l-eqFdNKi-qqyyuWZ4ocVXbnfgWJAKgkE9Jn93hXkK3xo4n7q68b750DYQJ1MI07Fu_t7iQSF6CVUg5jx-oGzkIa688Nrse8VNYp8pl1JaBrLbvstbMKzRBnfm2h46Wf28CKkQ%3D%3D%22%2C%22hideTitle%22%3Afalse%7D";
+
+    async function loadLiveEduParam() {
+      try {
+        const res = await fetch(`${API_BASE}/api/tube/edu-param`);
+        const data = await res.json();
+        if (data.ok && data.params) {
+          liveEduParam = data.params;
+        }
+      } catch (_) {}
+    }
 
     async function updatePlayerSrc(autoplay = true) {
       const frame = document.getElementById("tubeFrame");
@@ -368,11 +379,23 @@
       const statusSpan = document.getElementById("currentStatus");
       const auto = autoplay ? 1 : 0;
 
-      if (currentMode === "mp4") {
+      if (!liveEduParam) {
+        await loadLiveEduParam();
+      }
+
+      if (currentMode === "edu") {
+        videoEl.style.display = "none";
+        videoEl.pause();
+        audioEl.pause();
+        frame.style.display = "block";
+        const param = liveEduParam || EDU_PARAMS;
+        frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${param}&playlist=${currentVideoId}`;
+        statusSpan.textContent = "🎓 学校iPad (i-フィルター完全回避・再生中)";
+      } else if (currentMode === "mp4") {
         frame.style.display = "none";
         frame.src = "about:blank";
         videoEl.style.display = "block";
-        videoEl.poster = `https://i.ytimg.com/vi/${currentVideoId}/hqdefault.jpg`;
+        videoEl.poster = `${API_BASE}/api/tube/thumb?v=${currentVideoId}`;
         statusSpan.textContent = "⏳ MP4ストリーム接続中...";
 
         try {
@@ -390,34 +413,28 @@
             }
             videoEl.load();
             if (autoplay) videoEl.play().catch(() => {});
-            statusSpan.textContent = "🎬 MP4再生中 (フル尺・快適)";
+            statusSpan.textContent = "🎬 MP4再生中 (サーバー中継)";
             return;
           }
         } catch (e) {
           console.warn("MP4 stream resolution error:", e);
         }
 
-        // Fallback to proxy embed if stream extraction is unavailable
-        statusSpan.textContent = "🛡️ プロキシ埋め込み再生中";
+        // Fallback to edu embed if stream extraction is unavailable
+        statusSpan.textContent = "🎓 学校Education再生中 (フォールバック)";
         videoEl.style.display = "none";
         videoEl.pause();
         audioEl.pause();
         frame.style.display = "block";
-        frame.src = `https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=${auto}&playsinline=1&modestbranding=1&rel=0`;
+        const param = liveEduParam || EDU_PARAMS;
+        frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${param}&playlist=${currentVideoId}`;
       } else if (currentMode === "proxy") {
         videoEl.style.display = "none";
         videoEl.pause();
         audioEl.pause();
         frame.style.display = "block";
-        frame.src = `${API_BASE}/api/proxy?url=${encodeURIComponent("https://siatube-web.com/watch?v=" + currentVideoId)}`;
+        frame.src = `${API_BASE}/api/proxy?url=${encodeURIComponent("https://siatube.com/watch?v=" + currentVideoId)}`;
         statusSpan.textContent = "🛡️ プロキシ埋め込み再生中";
-      } else if (currentMode === "edu") {
-        videoEl.style.display = "none";
-        videoEl.pause();
-        audioEl.pause();
-        frame.style.display = "block";
-        frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${EDU_PARAMS}`;
-        statusSpan.textContent = "🎓 学校Education再生中";
       }
     }
 
@@ -446,11 +463,11 @@
     }
 
     function openDirectSia() {
-      window.open(`https://siatube-web.com/watch?v=${currentVideoId}`, "_blank");
+      window.open(`https://siatube.com/watch?v=${currentVideoId}`, "_blank");
     }
 
     function openTensaiProxy() {
-      window.open(`${API_BASE}/api/proxy?url=${encodeURIComponent("https://siatube-web.com/watch?v=" + currentVideoId)}`, "_blank");
+      window.open(`${API_BASE}/api/proxy?url=${encodeURIComponent("https://siatube.com/watch?v=" + currentVideoId)}`, "_blank");
     }
 
     function openExternalPip() {

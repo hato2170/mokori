@@ -478,16 +478,26 @@
       document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺取得中...";
       document.getElementById("dockArt").src = art;
       document.getElementById("curTime").textContent = "0:00";
-      document.getElementById("totTime").textContent = "フル尺準備中…";
+      document.getElementById("totTime").textContent = "準備中…";
       document.getElementById("progressFill").style.width = "0%";
 
-      // まずプレビュー音源で0秒即時再生を開始
-      if (preview) {
-        audio.src = preview;
+      // 学タブ・学校フィルター完全回避用：Renderサーバー経由のストリームURLで即時再生
+      const proxiedStreamUrl = preview ? `${API_BASE}/api/music/stream?url=${encodeURIComponent(preview)}` : "";
+      if (proxiedStreamUrl) {
+        audio.src = proxiedStreamUrl;
         audio.currentTime = 0;
+        audio.load();
         audio.play().then(() => {
           document.getElementById("dockPlayBtn").textContent = "⏸";
-        }).catch(() => {});
+          document.getElementById("dockArtist").textContent = artist + " · 🎵 快適再生中";
+        }).catch((e) => {
+          console.warn("Audio play error, retrying direct:", e);
+          // 万が一プロキシで弾かれた場合の直接再生フォールバック
+          if (preview && audio.src !== preview) {
+            audio.src = preview;
+            audio.play().catch(() => {});
+          }
+        });
       }
 
       // フル尺ストリーム（3〜5分全編）をバックグラウンド取得して継ぎ目なくフル尺へ昇格
@@ -497,7 +507,10 @@
         const data = await res.json();
         if (data.ok && data.audioUrl) {
           const currentPos = audio.currentTime;
-          audio.src = data.audioUrl;
+          const fullAudioUrl = (data.audioUrl.startsWith("http") && !data.audioUrl.includes("onrender.com"))
+            ? `${API_BASE}/api/music/stream?url=${encodeURIComponent(data.audioUrl)}`
+            : data.audioUrl;
+          audio.src = fullAudioUrl;
           audio.currentTime = currentPos;
           audio.play().then(() => {
             document.getElementById("dockPlayBtn").textContent = "⏸";
@@ -509,7 +522,7 @@
             }
           }).catch(() => {});
         } else if (preview) {
-          document.getElementById("dockArtist").textContent = artist + " · ⚡ 試聴再生";
+          document.getElementById("dockArtist").textContent = artist + " · 🎵 再生中";
         }
       } catch (err) {
         console.warn("Full stream resolution error:", err);
