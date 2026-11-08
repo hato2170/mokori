@@ -3392,6 +3392,96 @@ app.get("/api/tube/stream", async (req, res) => {
   return res.redirect(`https://www.youtubeeducation.com/embed/${videoId}${eduParam}&playlist=${videoId}`);
 });
 
+// 5. 各種YouTube代替ミラー中継（しあTube、わかめTube、YukiTube、YouTube＋）
+app.get("/api/tube/mirror/:service", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const service = String(req.params.service || "shiatube").toLowerCase();
+  const videoId = String(req.query.v || "_PHDivmHk_0").trim();
+  const eduParam = await getLiveEduParam();
+
+  const themes = {
+    shiatube: {
+      name: "しあTube (SiaTube)",
+      icon: "⚡",
+      color: "#38bdf8",
+      bg: "#0b1329",
+      accent: "#0284c7",
+      desc: "学校i-フィルター完全回避・しあTube中継モード",
+      externalUrl: `https://script.google.com/macros/s/AKfycbzA0pSEaCuLy0I7sZnZdvLKHCgcGbSCPbVLNVLxkj8aWWKMrHpsEDBGcx-cOhk4jwP2/exec?v=${videoId}`
+    },
+    wakametube: {
+      name: "わかめTube (wkt-Plus)",
+      icon: "🥬",
+      color: "#10b981",
+      bg: "#062817",
+      accent: "#059669",
+      desc: "toka-kun / wakame02 わかめtube Plusモード",
+      externalUrl: `https://wkt-hkg4.onrender.com/wkt/watch?v=${videoId}`
+    },
+    yukitube: {
+      name: "YukiTube (雪Tube)",
+      icon: "❄️",
+      color: "#a78bfa",
+      bg: "#160b2b",
+      accent: "#7c3aed",
+      desc: "Yuki-YouTube ステルス動画プレイヤーモード",
+      externalUrl: `https://yuki-youtube.onrender.com/watch?v=${videoId}`
+    },
+    youtubeplus: {
+      name: "YouTube Plus+ (YT++)",
+      icon: "➕",
+      color: "#ef4444",
+      bg: "#2b0b0b",
+      accent: "#dc2626",
+      desc: "YouTube Plus+ (by yuto1106110) アンブロックモード",
+      externalUrl: `https://youtube-plus-plus.vercel.app/watch?v=${videoId}`
+    }
+  };
+
+  const currentTheme = themes[service] || themes.shiatube;
+  const embedUrl = `https://www.youtubeeducation.com/embed/${videoId}${eduParam}&playlist=${videoId}`;
+
+  const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${currentTheme.icon} ${currentTheme.name} - プレイヤー</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: ${currentTheme.bg}; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .header { height: 38px; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 13px; }
+    .header-title { font-weight: bold; color: ${currentTheme.color}; display: flex; align-items: center; gap: 6px; }
+    .header-links { display: flex; align-items: center; gap: 8px; }
+    .btn { background: #334155; color: #fff; border: 0; border-radius: 4px; padding: 4px 10px; font-size: 11px; cursor: pointer; text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; }
+    .btn-accent { background: ${currentTheme.accent}; font-weight: bold; }
+    .player-container { flex: 1; position: relative; width: 100%; background: #000; }
+    iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-title">
+      <span>${currentTheme.icon}</span>
+      <span>${currentTheme.name}</span>
+      <span style="font-size:11px; opacity:0.8; font-weight:normal; margin-left:6px;">(${currentTheme.desc})</span>
+    </div>
+    <div class="header-links">
+      <a href="${currentTheme.externalUrl}" target="_blank" class="btn">⚡ 公式外部直通</a>
+      <a href="/api/proxy?url=${encodeURIComponent(currentTheme.externalUrl)}" target="_blank" class="btn">🌐 プロキシで開く</a>
+      <a href="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1" target="_blank" class="btn">⛶ 全画面</a>
+    </div>
+  </div>
+  <div class="player-container">
+    <iframe src="${embedUrl}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+  </div>
+</body>
+</html>`;
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  return res.send(html);
+});
+
 app.listen(port, () => {
   console.log(`mokori server listening on port ${port}`);
 });

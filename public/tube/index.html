@@ -265,9 +265,11 @@
         </div>
         <div class="player-controls">
           <button class="ctrl-btn" id="btnModeEdu" onclick="switchPlayerMode('edu')" style="background:#0284c7; font-weight:bold;">🎓 学校iPad (おすすめ)</button>
-          <button class="ctrl-btn" id="btnModeMp4" onclick="switchPlayerMode('mp4')">🎬 MP4直再生 (サーバー中継)</button>
-          <button class="ctrl-btn" id="btnModeProxy" onclick="switchPlayerMode('proxy')">🛡️ プロキシ埋め込み (しあTube)</button>
-          <button class="ctrl-btn" onclick="openDirectSia()">⚡ しあTube直通</button>
+          <button class="ctrl-btn" id="btnModeMp4" onclick="switchPlayerMode('mp4')">🎬 MP4直再生</button>
+          <button class="ctrl-btn" id="btnModeSia" onclick="switchPlayerMode('shiatube')">⚡ しあTube</button>
+          <button class="ctrl-btn" id="btnModeWakame" onclick="switchPlayerMode('wakametube')">🥬 わかめTube</button>
+          <button class="ctrl-btn" id="btnModeYuki" onclick="switchPlayerMode('yukitube')">❄️ YukiTube</button>
+          <button class="ctrl-btn" id="btnModeYtPlus" onclick="switchPlayerMode('youtubeplus')">➕ YouTube＋</button>
           <button class="ctrl-btn" onclick="openTensaiProxy()">🌐 天才プロキシで開く</button>
           <button class="ctrl-btn" onclick="openExternalPip()">⛶ 別タブ全画面</button>
           <button class="ctrl-btn" onclick="copyShareUrl()">📋 共有</button>
@@ -428,12 +430,40 @@
         frame.style.display = "block";
         const param = liveEduParam || EDU_PARAMS;
         frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${param}&playlist=${currentVideoId}`;
+      } else if (currentMode === "shiatube") {
+        videoEl.style.display = "none";
+        videoEl.pause();
+        audioEl.pause();
+        frame.style.display = "block";
+        frame.src = `${API_BASE}/api/tube/mirror/shiatube?v=${currentVideoId}`;
+        statusSpan.textContent = "⚡ しあTube (中継プレイヤー再生中)";
+      } else if (currentMode === "wakametube") {
+        videoEl.style.display = "none";
+        videoEl.pause();
+        audioEl.pause();
+        frame.style.display = "block";
+        frame.src = `${API_BASE}/api/tube/mirror/wakametube?v=${currentVideoId}`;
+        statusSpan.textContent = "🥬 わかめTube (wkt-Plus 再生中)";
+      } else if (currentMode === "yukitube") {
+        videoEl.style.display = "none";
+        videoEl.pause();
+        audioEl.pause();
+        frame.style.display = "block";
+        frame.src = `${API_BASE}/api/tube/mirror/yukitube?v=${currentVideoId}`;
+        statusSpan.textContent = "❄️ YukiTube (雪Tube 再生中)";
+      } else if (currentMode === "youtubeplus") {
+        videoEl.style.display = "none";
+        videoEl.pause();
+        audioEl.pause();
+        frame.style.display = "block";
+        frame.src = `${API_BASE}/api/tube/mirror/youtubeplus?v=${currentVideoId}`;
+        statusSpan.textContent = "➕ YouTube＋ (YT++ 再生中)";
       } else if (currentMode === "proxy") {
         videoEl.style.display = "none";
         videoEl.pause();
         audioEl.pause();
         frame.style.display = "block";
-        frame.src = `${API_BASE}/api/proxy?url=${encodeURIComponent("https://siatube.com/watch?v=" + currentVideoId)}`;
+        frame.src = `${API_BASE}/api/tube/mirror/shiatube?v=${currentVideoId}`;
         statusSpan.textContent = "🛡️ プロキシ埋め込み再生中";
       }
     }
@@ -449,17 +479,21 @@
 
     function switchPlayerMode(mode) {
       currentMode = mode;
-      document.getElementById("btnModeMp4").style.background = mode === "mp4" ? "#0284c7" : "#27272a";
-      document.getElementById("btnModeProxy").style.background = mode === "proxy" ? "#0284c7" : "#27272a";
-      document.getElementById("btnModeEdu").style.background = mode === "edu" ? "#0284c7" : "#27272a";
+      ["Edu", "Mp4", "Sia", "Wakame", "Yuki", "YtPlus", "Proxy"].forEach(m => {
+        const btn = document.getElementById("btnMode" + m);
+        if (btn) btn.style.background = "#27272a";
+      });
+      const activeMap = {
+        edu: "btnModeEdu",
+        mp4: "btnModeMp4",
+        shiatube: "btnModeSia",
+        wakametube: "btnModeWakame",
+        yukitube: "btnModeYuki",
+        youtubeplus: "btnModeYtPlus"
+      };
+      const activeBtn = document.getElementById(activeMap[mode]);
+      if (activeBtn) activeBtn.style.background = "#0284c7";
       updatePlayerSrc(true);
-      if (mode === "mp4") {
-        alert("🎬 MP4プレイヤーモードに切り替えました！（公式YouTube UIではなく、MP4プレイヤー感覚で快適に直再生できます）");
-      } else if (mode === "proxy") {
-        alert("🛡️ プロキシ再生モードに切り替えました！（学校iPadでも通信先が本Renderサーバーのみになるため、i-フィルターに検知されません）");
-      } else if (mode === "edu") {
-        alert("🎓 学校Educationモード（Kahootトークン認証）に切り替えました！");
-      }
     }
 
     function openDirectSia() {
