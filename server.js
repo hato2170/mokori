@@ -2673,17 +2673,21 @@ app.all("/api/proxy", async (req, res) => {
         }
       }
 
-      html = html.replace(/\b(href|src|action|data-src|data-srcset|poster|data-url)=["']([^"']+)["']/gi, (match, attr, val) => {
+      function resolveSrcset(val) {
+        if (!val) return val;
+        return val.replace(/(\S+)(?:\s+([\d\.]+[wx]))?(?:,\s*|$)/g, (match, u, desc) => {
+          if (!u) return match;
+          const proxied = resolveUrl(u);
+          const suffix = match.trim().endsWith(",") ? ", " : "";
+          return proxied + (desc ? ` ${desc}` : "") + suffix;
+        });
+      }
+
+      html = html.replace(/\b(href|src|action|data-src|poster|data-url)=["']([^"']+)["']/gi, (match, attr, val) => {
         return `${attr}="${resolveUrl(val)}"`;
       });
-      html = html.replace(/\bsrcset=["']([^"']+)["']/gi, (match, val) => {
-        const parts = val.split(",").map(item => {
-          const trimmed = item.trim();
-          const spaceIdx = trimmed.indexOf(" ");
-          if (spaceIdx === -1) return resolveUrl(trimmed);
-          return resolveUrl(trimmed.slice(0, spaceIdx)) + trimmed.slice(spaceIdx);
-        });
-        return `srcset="${parts.join(", ")}"`;
+      html = html.replace(/\b(srcset|data-srcset)=["']([^"']+)["']/gi, (match, attr, val) => {
+        return `${attr}="${resolveSrcset(val)}"`;
       });
       html = html.replace(/url\(\s*["']?([^"')]+)["']?\s*\)/gi, (match, val) => {
         return `url("${resolveUrl(val)}")`;
@@ -2748,12 +2752,66 @@ app.all("/api/proxy", async (req, res) => {
 
   try {
     localStorage.setItem('poki_nobot', 'true');
-    window.pokiBotDetected = false;
+    window.pokiBotDetected = [];
     window.pokiBotScore = 0;
     window.pokiBotVerified = true;
     window.pokiCrawlerBlock = "";
     window.pokiBotDetectedPromise = Promise.resolve([]);
   } catch(_) {}
+
+  if (baseUrl.includes('poki.com')) {
+    function tryMountPokiGame() {
+      var gp = document.getElementById('game-player');
+      if (!gp) return false;
+      if (gp.querySelector('iframe')) return true;
+
+      var contentUrl = null;
+      try {
+        if (window.INITIAL_STATE && window.INITIAL_STATE.api && window.INITIAL_STATE.api.queries) {
+          for (var k in window.INITIAL_STATE.api.queries) {
+            if (k.startsWith('getGame(')) {
+              var qData = window.INITIAL_STATE.api.queries[k].data;
+              if (qData && qData.content) {
+                contentUrl = qData.content;
+                break;
+              }
+            }
+          }
+        }
+      } catch(e) {}
+
+      if (contentUrl) {
+        var proxyUrl = '/api/proxy?url=' + encodeURIComponent(contentUrl);
+        var iframe = document.createElement('iframe');
+        iframe.id = 'game-element';
+        iframe.name = 'gameFrame';
+        iframe.src = proxyUrl;
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
+        iframe.style.border = 'none';
+        iframe.style.minHeight = '550px';
+        iframe.allowFullscreen = true;
+        iframe.setAttribute('allow', 'autoplay; fullscreen; camera; focus-without-user-activation *; monetization; gamepad; keyboard-map *; xr-spatial-tracking; clipboard-write; web-share; accelerometer; magnetometer; gyroscope; microphone *; screen-wake-lock');
+        iframe.setAttribute('sandbox', 'allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-same-origin allow-downloads');
+        gp.innerHTML = '';
+        gp.appendChild(iframe);
+        return true;
+      }
+      return false;
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', tryMountPokiGame);
+    } else {
+      tryMountPokiGame();
+    }
+    var checkTimer = setInterval(function() {
+      if (tryMountPokiGame()) {
+        clearInterval(checkTimer);
+      }
+    }, 250);
+    setTimeout(function() { clearInterval(checkTimer); }, 12000);
+  }
 
   function toProxy(u) {
     if (!u || typeof u !== 'string' || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('javascript:') || u.startsWith('#') || u.includes('/api/proxy?url=')) return u;
@@ -2898,7 +2956,16 @@ app.all("/api/proxy", async (req, res) => {
     <a href="/tensai-proxy/" style="background:#0284c7; color:#fff; text-decoration:none; border-radius:4px; padding:3px 8px; font-size:11px; font-weight:bold;">🏠 ホーム</a>
   </div>
 </div>
-<style> body { margin-top: 38px !important; } </style>
+<style id="__tensai_proxy_style"> body { margin-top: 38px !important; } </style>
+<script>
+if (window !== window.top) {
+  var __b = document.getElementById('__tensai_proxy_bar');
+  if (__b) __b.style.display = 'none';
+  var __s = document.getElementById('__tensai_proxy_style');
+  if (__s) __s.remove();
+  if (document.body) document.body.style.marginTop = '0px';
+}
+</script>
 `;
 
       if (html.includes("<head")) {
