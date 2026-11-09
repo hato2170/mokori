@@ -141,6 +141,115 @@ async function getChatMessagesFast(chatId) {
 }
 const CACHE_TTL_MS = 3000;
 
+// ----------------------------------------------------
+// ⭐ 「アップデート完了！」「テスト」等のメッセージ完全自動抹消処理
+// ----------------------------------------------------
+async function purgeUpdateAndTestMessages() {
+  if (!db) return { ok: false, error: "Firebase DB is not initialized" };
+  try {
+    console.log("[Cleanup] Starting purge of update/test messages across all chats...");
+    const chatsSnap = await db.collection("chats").get();
+    let totalDeleted = 0;
+    const deletedList = [];
+
+    for (const chatDoc of chatsSnap.docs) {
+      const chatId = chatDoc.id;
+      const chatRef = db.collection("chats").doc(chatId);
+      const msgsSnap = await chatRef.collection("messages").get();
+      let lastValidMsg = null;
+
+      for (const mDoc of msgsSnap.docs) {
+        const data = mDoc.data();
+        const text = String(data.text || data.originalText || "");
+        const shouldDelete =
+          text.includes("アップデート") ||
+          text.includes("アプデ") ||
+          text.includes("落ちないよ") ||
+          text.includes("超安定化") ||
+          text.includes("完了！") ||
+          text.includes("アップデート完了") ||
+          text.includes("テスト成功") ||
+          (text.includes("テスト") && (data.senderUid === "system" || text.includes("完了")));
+
+        if (shouldDelete) {
+          console.log(`[Cleanup] Deleting message ${mDoc.id} in ${chatId}: "${text}"`);
+          await mDoc.ref.delete().catch(() => {});
+          deletedList.push({ chatId, msgId: mDoc.id, text, senderName: data.senderName });
+          totalDeleted++;
+        } else {
+          lastValidMsg = { id: mDoc.id, ...data };
+        }
+      }
+
+      // lastMessage と announcement の復旧・クリーンアップ
+      const cData = chatDoc.data();
+      const updates = {};
+      if (cData.lastMessage) {
+        const lastText = String(cData.lastMessage.text || "");
+        if (
+          lastText.includes("アップデート") ||
+          lastText.includes("アプデ") ||
+          lastText.includes("落ちないよ") ||
+          lastText.includes("超安定化") ||
+          lastText.includes("完了！") ||
+          lastText.includes("アップデート完了") ||
+          lastText.includes("テスト成功")
+        ) {
+          if (lastValidMsg) {
+            updates.lastMessage = {
+              id: lastValidMsg.id,
+              text: lastValidMsg.text || "",
+              senderName: lastValidMsg.senderName || "",
+              createdAt: lastValidMsg.createdAt || null
+            };
+          } else {
+            updates.lastMessage = null;
+          }
+        }
+      }
+      if (cData.announcement) {
+        const annText = String(cData.announcement.text || "");
+        if (
+          annText.includes("アップデート") ||
+          annText.includes("アプデ") ||
+          annText.includes("落ちないよ") ||
+          annText.includes("超安定化") ||
+          annText.includes("完了！") ||
+          annText.includes("アップデート完了") ||
+          annText.includes("テスト成功")
+        ) {
+          updates.announcement = null;
+        }
+      }
+      if (Object.keys(updates).length > 0) {
+        await chatRef.update(updates).catch(() => {});
+        console.log(`[Cleanup] Fixed chat headers for ${chatId}:`, updates);
+      }
+    }
+
+    memoryChatMessages.clear();
+    messageCache.clear();
+    console.log(`[Cleanup] Purge complete! Total messages deleted: ${totalDeleted}`);
+    return { ok: true, deletedCount: totalDeleted, deleted: deletedList };
+  } catch (err) {
+    console.warn("[Cleanup] Purge error:", err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+// サーバー起動時に自動実行
+setTimeout(() => {
+  if (db) {
+    purgeUpdateAndTestMessages().catch(() => {});
+  }
+}, 1500);
+
+// 手動呼び出し・確認用エンドポイント
+app.all("/api/system/cleanup-messages", async (req, res) => {
+  const result = await purgeUpdateAndTestMessages();
+  return res.json(result);
+});
+
 async function isUserAdmin(uid, userObj) {
   if (!uid) return false;
   if (userObj && (userObj.admin === true || userObj.role === "admin")) return true;
