@@ -78,8 +78,8 @@ const sessionsList = $("sessionsList");
 
 // Toolbar elements
 const webSearchToggle = $("webSearchToggle");
-const webSearchState = $("webSearchState");
-const imageGenBtn = $("imageGenBtn");
+const webSearchState = $("webSearchStatus") || $("webSearchState");
+const imageGenBtn = $("genImageBtn") || $("imageGenBtn");
 const attachBtn = $("attachBtn");
 const fileInput = $("fileInput");
 const clearChatBtn = $("clearChatBtn");
@@ -813,14 +813,17 @@ async function sendMessage(rawText) {
   }
 }
 
-$("chatForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const text = promptEl.value.trim();
-  if ((!text && !currentAttachment) || !currentUser || generating || loadingHistory) return;
-  promptEl.value = "";
-  promptEl.style.height = "auto";
-  await sendMessage(text || "ファイルを解析してください。");
-});
+const chatFormEl = $("inputForm") || $("chatForm");
+if (chatFormEl) {
+  chatFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = promptEl.value.trim();
+    if ((!text && !currentAttachment) || !currentUser || generating || loadingHistory) return;
+    promptEl.value = "";
+    promptEl.style.height = "auto";
+    await sendMessage(text || "ファイルを解析してください。");
+  });
+}
 
 promptEl.addEventListener("input", () => {
   promptEl.style.height = "auto";
@@ -830,7 +833,7 @@ promptEl.addEventListener("input", () => {
 promptEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
-    $("chatForm").requestSubmit();
+    if (chatFormEl) chatFormEl.requestSubmit();
   }
 });
 

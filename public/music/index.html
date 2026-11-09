@@ -353,6 +353,7 @@
   </div>
 
   <audio id="audioEl" preload="auto"></audio>
+  <iframe id="fullMusicFrame" style="display:none; width:1px; height:1px; border:0;" allow="autoplay; encrypted-media"></iframe>
 
   <!-- 緊急回避オーバーレイ（理科演習ノート） -->
   <div id="panicOverlay">
@@ -591,12 +592,26 @@
         } catch (err) {
           if (requestId !== playRequestId) return;
           console.warn("Full stream resolution error:", err);
+          try {
+            const query = `${artist} ${title}`;
+            const sRes = await fetch(`${API_BASE}/api/tube/search?q=${encodeURIComponent(query)}`);
+            const sData = await sRes.json();
+            if (sData && sData.results && sData.results[0]) {
+              const bgFrame = document.getElementById("fullMusicFrame");
+              if (bgFrame) {
+                bgFrame.src = `${API_BASE}/api/tube/stream?v=${encodeURIComponent(sData.results[0].id)}&autoplay=1`;
+                document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺ストリーミング中 (Education)";
+                document.getElementById("dockPlayBtn").textContent = "⏸";
+                return;
+              }
+            }
+          } catch (_) {}
           if (previewUrl && activeSourceUrl !== previewUrl) {
             audioFallbackAttempted = true;
             setAudioSource(previewUrl);
             audio.play().catch(() => {});
           }
-          document.getElementById("dockArtist").textContent = artist + " · 30秒試聴（フル尺に接続できません）";
+          document.getElementById("dockArtist").textContent = artist + " · 30秒試聴（フル尺は右の📺ボタンでTube再生できます）";
         }
       }
 

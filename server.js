@@ -152,6 +152,55 @@ async function purgeUpdateAndTestMessages(extraWord = "") {
     let totalDeleted = 0;
     const deletedList = [];
 
+    // 0. テストユーザー (haruto_unlimited や「ぶろすたがすきです！」等) の完全消去
+    try {
+      const usersSnap = await db.collection("users").get();
+      for (const uDoc of usersSnap.docs) {
+        const uData = uDoc.data() || {};
+        const uName = String(uData.username || "").toLowerCase();
+        const uBio = String(uData.bio || "");
+        const uStatus = String(uData.statusMessage || "");
+        const isTarget =
+          uName.includes("haruto_unlimited") ||
+          uName.includes("harutounlimited") ||
+          uBio.includes("ぶろすたがすき") ||
+          uStatus.includes("ぶろすたがすき") ||
+          uBio.includes("ぶろすた") ||
+          uName === "haruto_unlimited" ||
+          uName === "haruto_unlimited_3";
+
+        if (isTarget) {
+          console.log(`[Cleanup] Deleting test user ${uDoc.id} (${uData.username})`);
+          await uDoc.ref.delete().catch(() => {});
+          if (uData.username) {
+            await db.collection("usernames").doc(String(uData.username).toLowerCase()).delete().catch(() => {});
+          }
+          // 全員グループのメンバー一覧からも除外
+          try {
+            const allRef = db.collection("chats").doc("all_members");
+            const allSnap = await allRef.get();
+            if (allSnap.exists) {
+              const allData = allSnap.data() || {};
+              const members = (allData.members || []).filter(uid => uid !== uDoc.id);
+              const memberInfo = { ...(allData.memberInfo || {}) };
+              delete memberInfo[uDoc.id];
+              await allRef.update({ members, memberInfo }).catch(() => {});
+            }
+          } catch (_) {}
+        }
+      }
+
+      // usernames コレクションも念のため直接点検
+      const unSnap = await db.collection("usernames").get();
+      for (const unDoc of unSnap.docs) {
+        if (unDoc.id.includes("haruto_unlimited") || unDoc.id.includes("harutounlimited")) {
+          await unDoc.ref.delete().catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.warn("[Cleanup] User purge error:", e.message);
+    }
+
     for (const chatDoc of chatsSnap.docs) {
       const chatId = chatDoc.id;
       const chatRef = db.collection("chats").doc(chatId);
@@ -173,8 +222,16 @@ async function purgeUpdateAndTestMessages(extraWord = "") {
           text.includes("アップデート完了") ||
           text.includes("テスト成功") ||
           text.includes("テスト") ||
-          (extraWord && (text.includes(extraWord) || origText.includes(extraWord))) ||
-          (data.senderName && String(data.senderName).includes("haruto_unlimited"));
+          text.includes("ぶろすたがすき") ||
+          origText.includes("ぶろすたがすき") ||
+          text.includes("はると(cpu1)") ||
+          origText.includes("はると(cpu1)") ||
+          (data.senderName && (
+            String(data.senderName).includes("haruto_unlimited") ||
+            String(data.senderName).includes("はると(cpu1)") ||
+            String(data.senderName).includes("haruto unlimited")
+          )) ||
+          (extraWord && (text.includes(extraWord) || origText.includes(extraWord)));
 
         if (shouldDelete) {
           console.log(`[Cleanup] Deleting message ${mDoc.id} in ${chatId}: "${text}" (orig: "${origText}")`);
@@ -1403,17 +1460,25 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
           const authHeader = req.headers.authorization || "";
           let aiText = "";
           try {
+            const aiConvId = chatData.aiConversationId || `mokori_${chatId}`;
             const aiResp = await fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
                 Authorization: authHeader
               },
-              body: JSON.stringify({ message: text, model: "@cf/meta/llama-3.2-3b-instruct" })
+              body: JSON.stringify({
+                message: text,
+                model: "@cf/meta/llama-3.2-3b-instruct",
+                conversationId: aiConvId
+              })
             });
             if (aiResp.ok) {
               const aiData = await aiResp.json();
-              aiText = aiData.response || aiData.message || "";
+              aiText = aiData.reply || aiData.assistantMessage?.content || aiData.response || aiData.message || "";
+              if (aiData.conversationId && aiData.conversationId !== chatData.aiConversationId) {
+                await chatRef.update({ aiConversationId: aiData.conversationId }).catch(() => {});
+              }
             }
           } catch (e) {
             console.warn("AI fetch fallback:", e.message);
@@ -1532,6 +1597,16 @@ app.post("/api/games/rooms/:roomId/join", requireLogin, async (req, res) => {
 
   const now = Date.now();
   let room = memoryGameRooms.get(roomId);
+
+  if (!room && db) {
+    try {
+      const snap = await db.collection("game_rooms").doc(roomId).get();
+      if (snap.exists) {
+        room = snap.data();
+        memoryGameRooms.set(roomId, room);
+      }
+    } catch (_) {}
+  }
 
   if (!room) {
     const rawInit = req.body.initialState;
@@ -2976,18 +3051,28 @@ app.all("/api/proxy", async (req, res) => {
 
       var contentUrl = null;
       try {
-        if (window.INITIAL_STATE && window.INITIAL_STATE.api && window.INITIAL_STATE.api.queries) {
-          for (var k in window.INITIAL_STATE.api.queries) {
-            if (k.startsWith('getGame(')) {
-              var qData = window.INITIAL_STATE.api.queries[k].data;
-              if (qData && qData.content) {
-                contentUrl = qData.content;
-                break;
+        var rawHTML = document.documentElement ? document.documentElement.innerHTML : '';
+        var m = rawHTML.match(/https?:(?:\\u002F|\/)+(?:\\u002F|\/)+games\.poki\.com(?:\\u002F|\/)+[a-zA-Z0-9_\-\\\/]+/);
+        if (m) {
+          contentUrl = m[0].replace(/\\u002F/g, '/').replace(/\\\//g, '/').replace(/\\/g, '');
+        }
+      } catch(_) {}
+
+      if (!contentUrl) {
+        try {
+          if (window.INITIAL_STATE && window.INITIAL_STATE.api && window.INITIAL_STATE.api.queries) {
+            for (var k in window.INITIAL_STATE.api.queries) {
+              if (k.startsWith('getGame(')) {
+                var qData = window.INITIAL_STATE.api.queries[k].data;
+                if (qData && (qData.content || (qData.file && qData.file.content))) {
+                  contentUrl = qData.content || qData.file.content;
+                  break;
+                }
               }
             }
           }
-        }
-      } catch(e) {}
+        } catch(e) {}
+      }
 
       if (contentUrl) {
         var proxyUrl = '/api/proxy?url=' + encodeURIComponent(contentUrl);
@@ -3697,14 +3782,20 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
   };
 
   const currentTheme = themes[service] || themes.shiatube;
+  const eduParam = await getLiveEduParam();
+  const eduEmbedUrl = `https://www.youtubeeducation.com/embed/${videoId}${eduParam}&playlist=${videoId}&autoplay=1&playsinline=1&enablejsapi=1`;
 
-  // 公式YouTube/Educationの埋め込みiframeを完全排除し、黒背景の純粋なHTML5 MP4プレイヤーを提供
+  // 学校iPad(i-filter@cloud)でも斜線エラーなく確実に再生する統合プレイヤー
+  const defaultEmbedSrc = (service === "wakametube" || service === "yukitube" || service === "shiatube" || service === "youtubeplus")
+    ? currentTheme.externalUrl
+    : eduEmbedUrl;
+
   const html = `<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${currentTheme.icon} ${currentTheme.name} · MP4プレイヤー</title>
+  <title>${currentTheme.icon} ${currentTheme.name} · アンブロックプレイヤー</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: ${currentTheme.bg}; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -3714,7 +3805,7 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
     .head-btn { background: rgba(255,255,255,0.12); color: #fff; text-decoration: none; border: 0; border-radius: 6px; padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
     .head-btn:hover { background: rgba(255,255,255,0.22); }
     .player-container { flex: 1; width: 100%; height: 100%; position: relative; background: #000; display: flex; align-items: center; justify-content: center; }
-    video { width: 100%; height: 100%; object-fit: contain; background: #000; outline: none; }
+    iframe { width: 100%; height: 100%; border: none; }
     .notice-bar { padding: 10px 14px; background: rgba(0,0,0,0.85); display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #94a3b8; border-top: 1px solid rgba(255,255,255,0.08); }
     .ext-btn { background: ${currentTheme.accent}; color: #fff; text-decoration: none; border-radius: 8px; padding: 6px 14px; font-weight: bold; font-size: 12px; }
   </style>
@@ -3724,35 +3815,45 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
     <div class="header-title">
       <span>${currentTheme.icon}</span>
       <span>${currentTheme.name}</span>
-      <span style="font-size:10px; background:rgba(255,255,255,0.15); padding:2px 6px; border-radius:4px; margin-left:4px;">MP4動画直再生</span>
+      <span style="font-size:10px; background:rgba(255,255,255,0.15); padding:2px 6px; border-radius:4px; margin-left:4px;">アンブロック中継</span>
     </div>
     <div class="btn-group">
       <a href="/tube/?v=${videoId}" class="head-btn">📺 若雪Tube</a>
-      <a href="${currentTheme.externalUrl}" target="_blank" rel="noopener" class="head-btn" style="background:${currentTheme.accent};">🚀 本家ミラー直通</a>
-      <button onclick="document.getElementById('mp4Player').requestFullscreen().catch(()=>{})" class="head-btn">⛶ 全画面</button>
+      <button onclick="switchMode('edu')" class="head-btn" style="background:#0284c7;">🎓 教育モード</button>
+      <button onclick="switchMode('mirror')" class="head-btn" style="background:${currentTheme.accent};">🚀 ミラー切替</button>
+      <a href="${currentTheme.externalUrl}" target="_blank" rel="noopener" class="head-btn">別タブ直通</a>
+      <button onclick="toggleFullscreen()" class="head-btn">⛶ 全画面</button>
       <button onclick="parent.toggleStealth ? parent.toggleStealth() : window.location.href='https://www.google.com'" class="head-btn" style="background:#dc2626;">🚨</button>
     </div>
   </div>
   <div class="player-container">
-    <video id="mp4Player" controls playsinline preload="auto" poster="/api/tube/thumb?v=${videoId}"></video>
+    <iframe id="mainPlayerFrame" src="${defaultEmbedSrc}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture; accelerometer; gyroscope"></iframe>
   </div>
   <div class="notice-bar">
-    <div>${currentTheme.desc} · 🛡️ YouTube公式埋め込み遮断を完全排除</div>
-    <a href="${currentTheme.externalUrl}" target="_blank" rel="noopener" class="ext-btn">🌐 別タブで開く</a>
+    <div>${currentTheme.desc} · 🛡️ i-フィルター@cloud完全回避</div>
+    <a href="${currentTheme.externalUrl}" target="_blank" rel="noopener" class="ext-btn">🌐 本家サイトで開く</a>
   </div>
   <script>
-    (async function() {
-      const v = document.getElementById("mp4Player");
-      try {
-        const res = await fetch("/api/tube/stream-info?v=${videoId}");
-        const data = await res.json();
-        if (data.ok && (data.videoUrl || data.hlsUrl)) {
-          v.src = data.hlsUrl || data.videoUrl;
-          v.load();
-          v.play().catch(() => {});
-        }
-      } catch(_) {}
-    })();
+    const eduSrc = "${eduEmbedUrl}";
+    const mirrorSrc = "${currentTheme.externalUrl}";
+    let currentIsEdu = ${defaultEmbedSrc === eduEmbedUrl ? "true" : "false"};
+
+    function switchMode(m) {
+      const f = document.getElementById("mainPlayerFrame");
+      if (m === 'edu') {
+        f.src = eduSrc;
+        currentIsEdu = true;
+      } else {
+        f.src = mirrorSrc;
+        currentIsEdu = false;
+      }
+    }
+
+    function toggleFullscreen() {
+      const f = document.getElementById("mainPlayerFrame");
+      if (f.requestFullscreen) f.requestFullscreen().catch(()=>{});
+      else if (f.webkitRequestFullscreen) f.webkitRequestFullscreen();
+    }
   </script>
 </body>
 </html>`;

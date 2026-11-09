@@ -361,9 +361,9 @@
       syncAudio.load();
       const frame = document.getElementById("tubeFrame");
       frame.style.display = "block";
-      frame.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(currentVideoId)}?autoplay=1&playsinline=1&controls=1`;
+      frame.src = `${API_BASE}/api/tube/stream?v=${encodeURIComponent(currentVideoId)}`;
       mp4Video.style.display = "none";
-      setMp4Status(message || "⚠️ MP4を再生できないため、YouTubeプレイヤーに切り替えました");
+      setMp4Status(message || "🎓 学校iPad安心モード（Educationプレイヤー）に切り替えました");
     }
     function scheduleYoutubeFallback(message) {
       if (mediaLoadTimer || usingYoutubeFallback) return;
@@ -584,7 +584,7 @@
     }
 
     function openExternalPip() {
-      window.open(`https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1`, "_blank");
+      window.open(`${API_BASE}/api/tube/stream?v=${currentVideoId}`, "_blank");
     }
 
     function copyShareUrl() {

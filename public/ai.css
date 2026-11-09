@@ -87,6 +87,39 @@ button, textarea, select { font: inherit; }
 .composer button[type="submit"] { flex: 0 0 36px; height: 36px; border: 0; border-radius: 50%; background: #222; color: #fff; font-size: 20px; cursor: pointer; }
 .composer button[type="submit"]:disabled { background: #c9c9c9; cursor: default; }
 
+/* Controls bar & Input form styling */
+.controls-bar { width: min(100% - 24px, 720px); margin: 0 auto 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.model-select-wrapper { display: inline-flex; align-items: center; gap: 6px; background: #f8fafc; border: 1px solid #d1d5db; border-radius: 12px; padding: 4px 10px; }
+.control-label { font-weight: 700; color: #475569; font-size: 11px; }
+.model-select { border: none; background: transparent; font-size: 12px; font-weight: 600; color: #1e293b; outline: none; cursor: pointer; max-width: 180px; }
+.web-search-toggle-wrapper { display: inline-flex; align-items: center; }
+.web-search-btn { border: 1px solid #e2e8f0; background: #f8fafc; color: #475569; padding: 4px 10px; border-radius: 12px; font-size: 11.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all .15s; }
+.web-search-btn:hover { background: #f1f5f9; }
+
+.input-form { width: min(100% - 24px, 720px); margin: 0 auto 8px; display: flex; align-items: flex-end; gap: 6px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 22px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); background: #fff; position: sticky; bottom: 8px; z-index: 5; }
+.tool-btn { flex: 0 0 32px; height: 32px; border: 1px solid #e2e8f0; border-radius: 50%; background: #f8fafc; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; color: #334155; transition: background .15s; }
+.tool-btn:hover { background: #e2e8f0; }
+.input-textarea { resize: none; max-height: 140px; min-height: 36px; flex: 1; min-width: 0; border: 0; outline: 0; padding: 7px 4px; line-height: 1.4; background: transparent; font-size: 14.5px; font-family: inherit; }
+.send-btn { flex: 0 0 34px; height: 34px; border: 0; border-radius: 50%; background: #222; color: #fff; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .15s; }
+.send-btn:disabled { background: #c9c9c9; cursor: default; }
+.status-line { width: min(100% - 24px, 720px); margin: 0 auto; font-size: 11px; color: #64748b; min-height: 16px; }
+
+/* Responsive adjustments for smartphones */
+@media (max-width: 480px) {
+  .topbar { padding: 6px 10px; height: 54px; }
+  .title-area strong { font-size: 14px; }
+  .topbar-btn { padding: 4px 8px; font-size: 11px; }
+  .controls-bar { flex-direction: column; align-items: stretch; gap: 6px; }
+  .model-select-wrapper { justify-content: space-between; width: 100%; }
+  .model-select { max-width: 100%; flex: 1; }
+  .web-search-toggle-wrapper { width: 100%; }
+  .web-search-btn { width: 100%; justify-content: center; padding: 6px; }
+  .input-form { padding: 4px 8px; gap: 4px; border-radius: 18px; }
+  .tool-btn { flex: 0 0 30px; height: 30px; font-size: 13px; }
+  .input-textarea { font-size: 13.5px; min-height: 32px; padding: 5px 2px; }
+  .send-btn { flex: 0 0 32px; height: 32px; font-size: 14px; }
+}
+
 footer { text-align: center; color: #888; font-size: 10px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); }
 [hidden] { display: none !important; }
 @media (min-width: 700px) { .welcome { margin-top: 40px; } }
