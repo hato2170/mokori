@@ -159,8 +159,12 @@ async function purgeUpdateAndTestMessages(extraWord = "") {
 
       for (const mDoc of msgsSnap.docs) {
         const data = mDoc.data();
-        const text = String(data.text || data.originalText || "");
+        const text = String(data.text || "");
+        const origText = String(data.originalText || "");
         const shouldDelete =
+          mDoc.id === "TFtFQF3Blod4K4wB6zui" ||
+          text.includes("俺は知らないよ") ||
+          origText.includes("俺は知らないよ") ||
           text.includes("アップデート") ||
           text.includes("アプデ") ||
           text.includes("落ちないよ") ||
@@ -169,14 +173,13 @@ async function purgeUpdateAndTestMessages(extraWord = "") {
           text.includes("アップデート完了") ||
           text.includes("テスト成功") ||
           text.includes("テスト") ||
-          text.includes("俺は知らないよ") ||
-          (extraWord && text.includes(extraWord)) ||
+          (extraWord && (text.includes(extraWord) || origText.includes(extraWord))) ||
           (data.senderName && String(data.senderName).includes("haruto_unlimited"));
 
         if (shouldDelete) {
-          console.log(`[Cleanup] Deleting message ${mDoc.id} in ${chatId}: "${text}"`);
+          console.log(`[Cleanup] Deleting message ${mDoc.id} in ${chatId}: "${text}" (orig: "${origText}")`);
           await mDoc.ref.delete().catch(() => {});
-          deletedList.push({ chatId, msgId: mDoc.id, text, senderName: data.senderName });
+          deletedList.push({ chatId, msgId: mDoc.id, text: origText || text, senderName: data.senderName });
           totalDeleted++;
         }
       }
@@ -185,8 +188,11 @@ async function purgeUpdateAndTestMessages(extraWord = "") {
       const cData = chatDoc.data();
       const updates = {};
       if (cData.lastMessage) {
+        const lastId = String(cData.lastMessage.id || "");
         const lastText = String(cData.lastMessage.text || "");
-        if (
+        const needUpdateLast =
+          lastId === "TFtFQF3Blod4K4wB6zui" ||
+          lastText.includes("俺は知らないよ") ||
           lastText.includes("アップデート") ||
           lastText.includes("アプデ") ||
           lastText.includes("落ちないよ") ||
@@ -195,16 +201,19 @@ async function purgeUpdateAndTestMessages(extraWord = "") {
           lastText.includes("アップデート完了") ||
           lastText.includes("テスト成功") ||
           lastText.includes("テスト") ||
-          lastText.includes("俺は知らないよ") ||
-          (extraWord && lastText.includes(extraWord))
-        ) {
+          (extraWord && lastText.includes(extraWord));
+
+        if (needUpdateLast) {
           const prevSnap = await chatRef.collection("messages").orderBy("createdAt", "desc").limit(10).get();
           let foundPrev = null;
           for (const pDoc of prevSnap.docs) {
+            if (pDoc.id === "TFtFQF3Blod4K4wB6zui") continue;
             const pData = pDoc.data();
             const pText = String(pData.text || "");
+            const pOrig = String(pData.originalText || "");
             if (
               !pText.includes("俺は知らないよ") &&
+              !pOrig.includes("俺は知らないよ") &&
               !pText.includes("アップデート") &&
               !pText.includes("アプデ") &&
               !pText.includes("テスト") &&
@@ -215,7 +224,8 @@ async function purgeUpdateAndTestMessages(extraWord = "") {
                 id: pDoc.id,
                 text: pText,
                 senderName: pData.senderName || "",
-                createdAt: pData.createdAt || null
+                createdAt: pData.createdAt || null,
+                unsent: Boolean(pData.unsent)
               };
               break;
             }
