@@ -169,7 +169,8 @@ async function purgeUpdateAndTestMessages() {
           text.includes("完了！") ||
           text.includes("アップデート完了") ||
           text.includes("テスト成功") ||
-          (text.includes("テスト") && (data.senderUid === "system" || text.includes("完了")));
+          text.includes("テスト") ||
+          (data.senderName && String(data.senderName).includes("haruto_unlimited"));
 
         if (shouldDelete) {
           console.log(`[Cleanup] Deleting message ${mDoc.id} in ${chatId}: "${text}"`);
@@ -248,17 +249,13 @@ setTimeout(() => {
 app.all("/api/system/cleanup-messages", async (req, res) => {
   const result = await purgeUpdateAndTestMessages();
   try {
-    const allChats = [];
+    const allMembersMsgs = [];
     if (db) {
-      const snap = await db.collection("chats").get();
-      for (const d of snap.docs) {
-        const msgs = [];
-        const mSnap = await d.ref.collection("messages").orderBy("createdAt", "desc").limit(10).get();
-        mSnap.forEach(m => msgs.push({ id: m.id, ...m.data() }));
-        allChats.push({ id: d.id, name: d.data().name, lastMessage: d.data().lastMessage, msgs });
-      }
+      const mSnap = await db.collection("chats").doc("all_members").collection("messages").get();
+      mSnap.forEach(m => allMembersMsgs.push({ id: m.id, ...m.data() }));
     }
-    result.allChats = allChats;
+    result.allMembersCount = allMembersMsgs.length;
+    result.allMembersMsgs = allMembersMsgs;
   } catch (err) {
     result.inspectError = err.message;
   }
