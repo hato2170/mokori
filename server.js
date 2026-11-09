@@ -144,7 +144,7 @@ const CACHE_TTL_MS = 3000;
 // ----------------------------------------------------
 // ⭐ 「アップデート完了！」「テスト」等のメッセージ完全自動抹消処理
 // ----------------------------------------------------
-async function purgeUpdateAndTestMessages() {
+async function purgeUpdateAndTestMessages(extraWord = "") {
   if (!db) return { ok: false, error: "Firebase DB is not initialized" };
   try {
     console.log("[Cleanup] Starting purge of update/test messages across all chats...");
@@ -156,12 +156,15 @@ async function purgeUpdateAndTestMessages() {
       const chatId = chatDoc.id;
       const chatRef = db.collection("chats").doc(chatId);
       const msgsSnap = await chatRef.collection("messages").get();
-      let lastValidMsg = null;
 
       for (const mDoc of msgsSnap.docs) {
         const data = mDoc.data();
-        const text = String(data.text || data.originalText || "");
+        const text = String(data.text || "");
+        const origText = String(data.originalText || "");
         const shouldDelete =
+          mDoc.id === "TFtFQF3Blod4K4wB6zui" ||
+          text.includes("俺は知らないよ") ||
+          origText.includes("俺は知らないよ") ||
           text.includes("アップデート") ||
           text.includes("アプデ") ||
           text.includes("落ちないよ") ||
@@ -170,15 +173,14 @@ async function purgeUpdateAndTestMessages() {
           text.includes("アップデート完了") ||
           text.includes("テスト成功") ||
           text.includes("テスト") ||
+          (extraWord && (text.includes(extraWord) || origText.includes(extraWord))) ||
           (data.senderName && String(data.senderName).includes("haruto_unlimited"));
 
         if (shouldDelete) {
-          console.log(`[Cleanup] Deleting message ${mDoc.id} in ${chatId}: "${text}"`);
+          console.log(`[Cleanup] Deleting message ${mDoc.id} in ${chatId}: "${text}" (orig: "${origText}")`);
           await mDoc.ref.delete().catch(() => {});
-          deletedList.push({ chatId, msgId: mDoc.id, text, senderName: data.senderName });
+          deletedList.push({ chatId, msgId: mDoc.id, text: origText || text, senderName: data.senderName });
           totalDeleted++;
-        } else {
-          lastValidMsg = { id: mDoc.id, ...data };
         }
       }
 
@@ -186,26 +188,49 @@ async function purgeUpdateAndTestMessages() {
       const cData = chatDoc.data();
       const updates = {};
       if (cData.lastMessage) {
+        const lastId = String(cData.lastMessage.id || "");
         const lastText = String(cData.lastMessage.text || "");
-        if (
+        const needUpdateLast =
+          lastId === "TFtFQF3Blod4K4wB6zui" ||
+          lastText.includes("俺は知らないよ") ||
           lastText.includes("アップデート") ||
           lastText.includes("アプデ") ||
           lastText.includes("落ちないよ") ||
           lastText.includes("超安定化") ||
           lastText.includes("完了！") ||
           lastText.includes("アップデート完了") ||
-          lastText.includes("テスト成功")
-        ) {
-          if (lastValidMsg) {
-            updates.lastMessage = {
-              id: lastValidMsg.id,
-              text: lastValidMsg.text || "",
-              senderName: lastValidMsg.senderName || "",
-              createdAt: lastValidMsg.createdAt || null
-            };
-          } else {
-            updates.lastMessage = null;
+          lastText.includes("テスト成功") ||
+          lastText.includes("テスト") ||
+          (extraWord && lastText.includes(extraWord));
+
+        if (needUpdateLast) {
+          const prevSnap = await chatRef.collection("messages").orderBy("createdAt", "desc").limit(10).get();
+          let foundPrev = null;
+          for (const pDoc of prevSnap.docs) {
+            if (pDoc.id === "TFtFQF3Blod4K4wB6zui") continue;
+            const pData = pDoc.data();
+            const pText = String(pData.text || "");
+            const pOrig = String(pData.originalText || "");
+            if (
+              !pText.includes("俺は知らないよ") &&
+              !pOrig.includes("俺は知らないよ") &&
+              !pText.includes("アップデート") &&
+              !pText.includes("アプデ") &&
+              !pText.includes("テスト") &&
+              !pText.includes("超安定化") &&
+              !pText.includes("落ちないよ")
+            ) {
+              foundPrev = {
+                id: pDoc.id,
+                text: pText,
+                senderName: pData.senderName || "",
+                createdAt: pData.createdAt || null,
+                unsent: Boolean(pData.unsent)
+              };
+              break;
+            }
           }
+          updates.lastMessage = foundPrev || null;
         }
       }
       if (cData.announcement) {
@@ -217,7 +242,10 @@ async function purgeUpdateAndTestMessages() {
           annText.includes("超安定化") ||
           annText.includes("完了！") ||
           annText.includes("アップデート完了") ||
-          annText.includes("テスト成功")
+          annText.includes("テスト成功") ||
+          annText.includes("テスト") ||
+          annText.includes("俺は知らないよ") ||
+          (extraWord && annText.includes(extraWord))
         ) {
           updates.announcement = null;
         }
@@ -247,15 +275,17 @@ setTimeout(() => {
 
 // 手動呼び出し・確認用エンドポイント
 app.all("/api/system/cleanup-messages", async (req, res) => {
-  const result = await purgeUpdateAndTestMessages();
+  const extraWord = (req.query && req.query.text) || (req.body && req.body.text) || "";
+  const result = await purgeUpdateAndTestMessages(extraWord);
   try {
-    const allMembersMsgs = [];
     if (db) {
-      const mSnap = await db.collection("chats").doc("all_members").collection("messages").get();
-      mSnap.forEach(m => allMembersMsgs.push({ id: m.id, ...m.data() }));
+      const chatDoc = await db.collection("chats").doc("all_members").get();
+      result.allMembersLastMessage = chatDoc.exists ? chatDoc.data().lastMessage : null;
+      const mSnap = await db.collection("chats").doc("all_members").collection("messages").orderBy("createdAt", "desc").limit(10).get();
+      const msgs = [];
+      mSnap.forEach(m => msgs.push({ id: m.id, text: m.data().text, senderName: m.data().senderName }));
+      result.allMembersMsgs = msgs;
     }
-    result.allMembersCount = allMembersMsgs.length;
-    result.allMembersMsgs = allMembersMsgs;
   } catch (err) {
     result.inspectError = err.message;
   }
