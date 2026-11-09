@@ -144,7 +144,7 @@ const CACHE_TTL_MS = 3000;
 // ----------------------------------------------------
 // ⭐ 「アップデート完了！」「テスト」等のメッセージ完全自動抹消処理
 // ----------------------------------------------------
-async function purgeUpdateAndTestMessages() {
+async function purgeUpdateAndTestMessages(extraWord = "") {
   if (!db) return { ok: false, error: "Firebase DB is not initialized" };
   try {
     console.log("[Cleanup] Starting purge of update/test messages across all chats...");
@@ -156,7 +156,6 @@ async function purgeUpdateAndTestMessages() {
       const chatId = chatDoc.id;
       const chatRef = db.collection("chats").doc(chatId);
       const msgsSnap = await chatRef.collection("messages").get();
-      let lastValidMsg = null;
 
       for (const mDoc of msgsSnap.docs) {
         const data = mDoc.data();
@@ -170,6 +169,8 @@ async function purgeUpdateAndTestMessages() {
           text.includes("アップデート完了") ||
           text.includes("テスト成功") ||
           text.includes("テスト") ||
+          text.includes("俺は知らないよ") ||
+          (extraWord && text.includes(extraWord)) ||
           (data.senderName && String(data.senderName).includes("haruto_unlimited"));
 
         if (shouldDelete) {
@@ -177,8 +178,6 @@ async function purgeUpdateAndTestMessages() {
           await mDoc.ref.delete().catch(() => {});
           deletedList.push({ chatId, msgId: mDoc.id, text, senderName: data.senderName });
           totalDeleted++;
-        } else {
-          lastValidMsg = { id: mDoc.id, ...data };
         }
       }
 
@@ -194,18 +193,34 @@ async function purgeUpdateAndTestMessages() {
           lastText.includes("超安定化") ||
           lastText.includes("完了！") ||
           lastText.includes("アップデート完了") ||
-          lastText.includes("テスト成功")
+          lastText.includes("テスト成功") ||
+          lastText.includes("テスト") ||
+          lastText.includes("俺は知らないよ") ||
+          (extraWord && lastText.includes(extraWord))
         ) {
-          if (lastValidMsg) {
-            updates.lastMessage = {
-              id: lastValidMsg.id,
-              text: lastValidMsg.text || "",
-              senderName: lastValidMsg.senderName || "",
-              createdAt: lastValidMsg.createdAt || null
-            };
-          } else {
-            updates.lastMessage = null;
+          const prevSnap = await chatRef.collection("messages").orderBy("createdAt", "desc").limit(10).get();
+          let foundPrev = null;
+          for (const pDoc of prevSnap.docs) {
+            const pData = pDoc.data();
+            const pText = String(pData.text || "");
+            if (
+              !pText.includes("俺は知らないよ") &&
+              !pText.includes("アップデート") &&
+              !pText.includes("アプデ") &&
+              !pText.includes("テスト") &&
+              !pText.includes("超安定化") &&
+              !pText.includes("落ちないよ")
+            ) {
+              foundPrev = {
+                id: pDoc.id,
+                text: pText,
+                senderName: pData.senderName || "",
+                createdAt: pData.createdAt || null
+              };
+              break;
+            }
           }
+          updates.lastMessage = foundPrev || null;
         }
       }
       if (cData.announcement) {
@@ -217,7 +232,10 @@ async function purgeUpdateAndTestMessages() {
           annText.includes("超安定化") ||
           annText.includes("完了！") ||
           annText.includes("アップデート完了") ||
-          annText.includes("テスト成功")
+          annText.includes("テスト成功") ||
+          annText.includes("テスト") ||
+          annText.includes("俺は知らないよ") ||
+          (extraWord && annText.includes(extraWord))
         ) {
           updates.announcement = null;
         }
@@ -247,7 +265,8 @@ setTimeout(() => {
 
 // 手動呼び出し・確認用エンドポイント
 app.all("/api/system/cleanup-messages", async (req, res) => {
-  const result = await purgeUpdateAndTestMessages();
+  const extraWord = (req.query && req.query.text) || (req.body && req.body.text) || "";
+  const result = await purgeUpdateAndTestMessages(extraWord);
   return res.json(result);
 });
 
