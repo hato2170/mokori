@@ -313,8 +313,7 @@
     <!-- プレイリスト選択タブ & フル尺切り替え -->
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
       <div class="playlist-tabs" style="margin-bottom:0;">
-        <button class="pl-tab-btn active" id="tabHatake" onclick="loadPlaylist('hatake')">🌾 プレイリスト「畑」</button>
-        <button class="pl-tab-btn" id="tabJpop" onclick="loadPlaylist('jpop')">🔥 トレンド HipHop/J-POP</button>
+        <button class="pl-tab-btn active" id="tabJpop" onclick="loadPlaylist('jpop')">🔥 トレンド HipHop/J-POP</button>
         <button class="pl-tab-btn" id="tabFav" onclick="loadPlaylist('fav')">⭐ お気に入り</button>
       </div>
       <div style="display:flex; gap:6px;">
@@ -370,8 +369,8 @@
   </div>
 
   <script>
-    // 遥人さんのプレイリスト「畑」厳選トラック
-    const HATAKE_TRACKS = [
+    // おすすめ人気トラック
+    const DEFAULT_TRACKS = [
       { id: "h1", title: "夜を使いはたして feat. PUNPEE", artist: "STUTS", album: "Pushin'", artwork: "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/bf/25/6f/bf256f61-ea3c-c6f8-4e3a-e9fa4900a0dc/4526180373414.jpg/600x600bb.jpg", previewUrl: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview115/v4/a1/38/59/a138597f-cb25-6cb3-b68a-cf2aef4a5bf4/mzaf_10915647716942461011.plus.aac.p.m4a" },
       { id: "h2", title: "Canvas", artist: "Kaneee", album: "Canvas - Single", artwork: "https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/b8/b6/c9/b8b6c934-8b6b-4e1b-4f05-728734913c19/197188736181.jpg/600x600bb.jpg", previewUrl: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview116/v4/05/cf/4e/05cf4e88-64cb-cf2e-9a99-b1d5e3ef1cc9/mzaf_14092784796338870104.plus.aac.p.m4a" },
       { id: "h3", title: "なんでも言っちゃって feat. JP THE WAVY", artist: "LEX", album: "LOGIC", artwork: "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/4e/3b/b1/4e3bb1ee-27c1-7a60-9dc4-839e9f16d99b/190296482163.jpg/600x600bb.jpg", previewUrl: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview125/v4/21/cf/30/21cf305d-e593-9c88-e9f0-f9de7b738c62/mzaf_11306351187427183020.plus.aac.p.m4a" },
@@ -380,7 +379,7 @@
       { id: "h6", title: "Mirage", artist: "STUTS", album: "Orbit", artwork: "https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/91/3c/6e/913c6e94-1dc0-5bb9-75a7-ea01bcda90c9/4526180621423.jpg/600x600bb.jpg", previewUrl: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview112/v4/31/53/78/31537873-19eb-1bf0-c350-be9575971a81/mzaf_1130663737568112108.plus.aac.p.m4a" }
     ];
 
-    let currentPlaylist = [...HATAKE_TRACKS];
+    let currentPlaylist = [...DEFAULT_TRACKS];
     let currentIndex = 0;
     const audio = document.getElementById("audioEl");
 
@@ -645,27 +644,7 @@
 
     function loadPlaylist(type) {
       document.querySelectorAll(".pl-tab-btn").forEach(b => b.classList.remove("active"));
-      if (type === "hatake") {
-        document.getElementById("tabHatake").classList.add("active");
-        fetch(`${API_BASE}/api/music/search?q=STUTS+Kaneee+LEX`)
-          .then(r => r.json())
-          .then(d => {
-            const songs = (d.tracks || d.results || []).filter(s => s.previewUrl);
-            if (songs.length > 0) {
-              currentPlaylist = songs;
-              currentIndex = 0;
-              renderTrackList(currentPlaylist);
-            } else {
-              currentPlaylist = [...HATAKE_TRACKS];
-              renderTrackList(currentPlaylist);
-            }
-          })
-          .catch(() => {
-            currentPlaylist = [...HATAKE_TRACKS];
-            renderTrackList(currentPlaylist);
-          });
-        return;
-      } else if (type === "fav") {
+      if (type === "fav") {
         document.getElementById("tabFav").classList.add("active");
         const favs = JSON.parse(localStorage.getItem("my_music_favs") || "[]");
         if (favs.length > 0) {
@@ -677,9 +656,10 @@
           alert("お気に入りの曲がまだ登録されていません。❤️を押して追加してください！");
         }
         return;
-      } else if (type === "jpop") {
-        document.getElementById("tabJpop").classList.add("active");
-        fetch(`${API_BASE}/api/music/search?q=J-POP+HipHop+2026`)
+      } else {
+        const jpopBtn = document.getElementById("tabJpop");
+        if (jpopBtn) jpopBtn.classList.add("active");
+        fetch(`${API_BASE}/api/music/search?q=STUTS+Kaneee+LEX`)
           .then(r => r.json())
           .then(d => {
             const songs = (d.tracks || d.results || []).filter(s => s.previewUrl);
@@ -687,14 +667,17 @@
               currentPlaylist = songs;
               currentIndex = 0;
               renderTrackList(currentPlaylist);
-              playTrack(0);
+            } else {
+              currentPlaylist = [...DEFAULT_TRACKS];
+              renderTrackList(currentPlaylist);
             }
           })
-          .catch(() => {});
+          .catch(() => {
+            currentPlaylist = [...DEFAULT_TRACKS];
+            renderTrackList(currentPlaylist);
+          });
         return;
       }
-      currentIndex = 0;
-      renderTrackList(currentPlaylist);
     }
 
     function toggleFavoriteCurrent() {
@@ -732,8 +715,8 @@
       if (e.key === "Escape") toggleStealth();
     });
 
-    // 初期起動: 畑プレイリスト展開
-    loadPlaylist("hatake");
+    // 初期起動: トレンドプレイリスト展開
+    loadPlaylist("jpop");
   </script>
 </body>
 </html>
