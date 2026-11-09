@@ -267,6 +267,18 @@ setTimeout(() => {
 app.all("/api/system/cleanup-messages", async (req, res) => {
   const extraWord = (req.query && req.query.text) || (req.body && req.body.text) || "";
   const result = await purgeUpdateAndTestMessages(extraWord);
+  try {
+    if (db) {
+      const chatDoc = await db.collection("chats").doc("all_members").get();
+      result.allMembersLastMessage = chatDoc.exists ? chatDoc.data().lastMessage : null;
+      const mSnap = await db.collection("chats").doc("all_members").collection("messages").orderBy("createdAt", "desc").limit(10).get();
+      const msgs = [];
+      mSnap.forEach(m => msgs.push({ id: m.id, text: m.data().text, senderName: m.data().senderName }));
+      result.allMembersMsgs = msgs;
+    }
+  } catch (err) {
+    result.inspectError = err.message;
+  }
   return res.json(result);
 });
 
