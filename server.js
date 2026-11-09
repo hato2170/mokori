@@ -248,17 +248,6 @@ setTimeout(() => {
 // 手動呼び出し・確認用エンドポイント
 app.all("/api/system/cleanup-messages", async (req, res) => {
   const result = await purgeUpdateAndTestMessages();
-  try {
-    const allMembersMsgs = [];
-    if (db) {
-      const mSnap = await db.collection("chats").doc("all_members").collection("messages").get();
-      mSnap.forEach(m => allMembersMsgs.push({ id: m.id, ...m.data() }));
-    }
-    result.allMembersCount = allMembersMsgs.length;
-    result.allMembersMsgs = allMembersMsgs;
-  } catch (err) {
-    result.inspectError = err.message;
-  }
   return res.json(result);
 });
 
