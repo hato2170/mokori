@@ -252,16 +252,16 @@
     <!-- MP4 / 埋め込みプレイヤー -->
     <div class="player-card">
       <div class="video-wrap" id="playerWrap" style="position:relative; width:100%; aspect-ratio:16/9; background:#000;">
-        <video id="mp4Video" controls playsinline preload="auto" poster="https://i.ytimg.com/vi/_PHDivmHk_0/hqdefault.jpg" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; display:block; z-index:2; outline:none; background:#000;"></video>
+        <video id="mp4Video" controls playsinline preload="metadata" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; display:block; z-index:2; outline:none; background:#000;"></video>
         <audio id="syncAudio" style="display:none;"></audio>
         <iframe id="tubeFrame" src="" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="position:absolute; top:0; left:0; width:100%; height:100%; border:0; display:none; z-index:1;"></iframe>
       </div>
       <div class="player-info">
-        <div class="video-title" id="currentTitle">STUTS - Rock The Bells feat. KMC</div>
+        <div class="video-title" id="currentTitle">若雪幸せTube (学タブ特化プレイヤー)</div>
         <div class="video-meta">
-          <span id="currentAuthor">STUTS · 公式YouTube</span>
-          <span id="currentViews">4.7万回視聴</span>
-          <span id="currentStatus" style="color:#38bdf8; font-weight:bold; margin-left:8px;">🎬 MP4ネイティブプレイヤー</span>
+          <span id="currentAuthor">動画を選択してください</span>
+          <span id="currentViews"></span>
+          <span id="currentStatus" style="color:#38bdf8; font-weight:bold; margin-left:8px;">✨ 準備完了</span>
         </div>
         <div class="player-controls">
           <button class="ctrl-btn" id="btnModeMp4" onclick="switchPlayerMode('mp4')" style="background:#0284c7; font-weight:bold;">🎬 MP4プレイヤー (学校iPad対応)</button>
@@ -309,7 +309,7 @@
       { id: "jfKfPfyJRdk", title: "作業用BGM · 集中できるチルビート 1時間", author: "Lofi Beats", views: "320万回" }
     ];
 
-    let currentVideoId = "_PHDivmHk_0";
+    let currentVideoId = "";
     let currentMode = "mp4";
     let liveEduParam = "";
     const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori.onrender.com";
@@ -340,62 +340,30 @@
     });
 
     const mediaStatus = document.getElementById("currentStatus");
-    let usingYoutubeFallback = false;
-    let mediaLoadTimer = null;
     function setMp4Status(message) {
-      if (currentMode === "mp4" && mediaStatus) mediaStatus.textContent = message;
+      if (mediaStatus) mediaStatus.textContent = message;
     }
-    function clearMediaLoadTimer() {
-      if (mediaLoadTimer) clearTimeout(mediaLoadTimer);
-      mediaLoadTimer = null;
-    }
-    function showYoutubeFallback(message) {
-      if (currentMode !== "mp4" || usingYoutubeFallback) return;
-      usingYoutubeFallback = true;
-      clearMediaLoadTimer();
-      mp4Video.pause();
-      syncAudio.pause();
-      mp4Video.removeAttribute("src");
-      mp4Video.load();
-      syncAudio.removeAttribute("src");
-      syncAudio.load();
-      const frame = document.getElementById("tubeFrame");
-      frame.style.display = "block";
-      frame.src = `${API_BASE}/api/tube/stream?v=${encodeURIComponent(currentVideoId)}`;
-      mp4Video.style.display = "none";
-      setMp4Status(message || "🎓 学校iPad安心モード（Educationプレイヤー）に切り替えました");
-    }
-    function scheduleYoutubeFallback(message) {
-      if (mediaLoadTimer || usingYoutubeFallback) return;
-      mediaLoadTimer = setTimeout(() => {
-        mediaLoadTimer = null;
-        if (currentMode === "mp4" && !usingYoutubeFallback && mp4Video.readyState < 3) showYoutubeFallback(message);
-      }, 15000);
-    }
+
     mp4Video.addEventListener("loadstart", () => setMp4Status("⏳ MP4ストリームを読み込み中..."));
     mp4Video.addEventListener("loadedmetadata", () => setMp4Status("⏳ 動画を読み込みました。再生を準備中..."));
     mp4Video.addEventListener("canplay", () => {
-      clearMediaLoadTimer();
       if (mp4Video.paused) setMp4Status("▶️ 再生準備完了。再生ボタンを押してください");
     });
     mp4Video.addEventListener("playing", () => {
-      clearMediaLoadTimer();
       setMp4Status("🎬 動画を再生中");
     });
     mp4Video.addEventListener("waiting", () => {
       setMp4Status("⏳ 動画をバッファリング中...");
-      scheduleYoutubeFallback("⚠️ 動画が読み込めないため、YouTubeプレイヤーへ切り替え中...");
     });
     mp4Video.addEventListener("stalled", () => {
       setMp4Status("⚠️ 動画の読み込みが停滞しています");
-      scheduleYoutubeFallback("⚠️ 動画の読み込みが停滞したため、YouTubeプレイヤーへ切り替え中...");
     });
     mp4Video.addEventListener("pause", () => {
-      if (!mp4Video.ended && !usingYoutubeFallback) setMp4Status("⏸ 動画を一時停止中");
+      if (!mp4Video.ended) setMp4Status("⏸ 動画を一時停止中");
     });
     mp4Video.addEventListener("ended", () => setMp4Status("動画の再生が終了しました"));
     mp4Video.addEventListener("error", () => {
-      if (!mp4Video.currentSrc || usingYoutubeFallback) return;
+      if (!mp4Video.currentSrc) return;
       const errorMessages = {
         1: "再生が中断されました",
         2: "動画の読み込みに失敗しました",
@@ -403,7 +371,7 @@
         4: "この動画形式は再生できません"
       };
       const code = mp4Video.error && mp4Video.error.code;
-      showYoutubeFallback("⚠️ " + (errorMessages[code] || "動画を再生できませんでした") + "。YouTubeプレイヤーへ切り替え中...");
+      setMp4Status("⚠️ " + (errorMessages[code] || "動画を再生できませんでした") + "。上部のミラー（⚡ しあTube / 🥬 わかめTube / ❄️ YukiTube / 🚀 YouTube＋）からも直接再生できます");
     });
 
     function renderCards(list) {
@@ -461,7 +429,6 @@
         frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${param}&playlist=${currentVideoId}`;
         statusSpan.textContent = "🎓 学校iPad (埋め込みを読み込み中...)";
       } else if (currentMode === "mp4") {
-        usingYoutubeFallback = false;
         frame.style.display = "none";
         frame.src = "about:blank";
         videoEl.style.display = "block";
@@ -471,6 +438,10 @@
         audioEl.load();
         videoEl.removeAttribute("src");
         videoEl.load();
+        if (!currentVideoId) {
+          statusSpan.textContent = "✨ 準備完了 · 動画を選んでください";
+          return;
+        }
         videoEl.poster = `${API_BASE}/api/tube/thumb?v=${currentVideoId}`;
         statusSpan.textContent = "⏳ MP4ストリーム接続中...";
 
@@ -490,24 +461,23 @@
               audioEl.src = new URL(data.audioUrl, API_BASE || window.location.origin).href;
               audioEl.load();
             }
-            scheduleYoutubeFallback("⚠️ MP4の読み込みがタイムアウトしました。YouTubeプレイヤーへ切り替え中...");
             videoEl.load();
             if (autoplay) {
               videoEl.play().catch(error => {
                 if (loadId !== playerLoadId || !videoEl.paused) return;
-                statusSpan.textContent = error && error.name === "NotAllowedError"
-                  ? "▶️ 自動再生できません。再生ボタンを押してください"
-                  : "⚠️ 再生を開始できませんでした。再生ボタンを押してください";
+                statusSpan.textContent = "▶️ 再生準備完了。再生ボタンを押してください";
               });
             } else {
               statusSpan.textContent = "▶️ 再生準備完了。再生ボタンを押してください";
             }
             return;
           }
-          showYoutubeFallback("⚠️ MP4ストリームが見つかりません。YouTubeプレイヤーへ切り替え中...");
+          statusSpan.textContent = "⚠️ MP4ストリーム準備中... 上部ミラー（⚡ しあTube / 🥬 わかめTube / ❄️ YukiTube / 🚀 YouTube＋）から直接再生できます";
         } catch (e) {
           console.warn("MP4 stream resolution error:", e);
-          if (loadId === playerLoadId) showYoutubeFallback("⚠️ MP4ストリームを取得できません。YouTubeプレイヤーへ切り替え中...");
+          if (loadId === playerLoadId) {
+            statusSpan.textContent = "⚠️ MP4ストリーム準備中... 上部ミラー（⚡ しあTube / 🥬 わかめTube / ❄️ YukiTube / 🚀 YouTube＋）から直接再生できます";
+          }
         }
       } else if (currentMode === "shiatube") {
         videoEl.style.display = "none";
@@ -631,8 +601,12 @@
     const vParam = urlParams.get("v");
     const qParam = urlParams.get("q");
 
-    if (vParam) currentVideoId = vParam;
-    updatePlayerSrc(Boolean(vParam));
+    if (vParam) {
+      currentVideoId = vParam;
+      updatePlayerSrc(true);
+    } else {
+      setMp4Status("✨ 準備完了 · 動画を検索または下のリストから選んでください");
+    }
 
     if (qParam) {
       document.getElementById("searchInput").value = qParam;

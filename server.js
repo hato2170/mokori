@@ -2736,7 +2736,42 @@ function renderProxyError(title, detail, retryUrl) {
 app.use(async (req, res, next) => {
   if (req.method === "GET" && req.path.startsWith("/api/")) {
     const filename = req.path.slice(5);
-    if (/^[a-zA-Z0-9_.-]+\.(?:wasm|data|bin|mem)$/i.test(filename)) {
+    const knownApiPrefixes = ["system", "health", "register", "login", "users", "friends", "chats", "games", "calls", "music", "voom", "proxy", "tube"];
+    const firstPart = filename.split("/")[0].toLowerCase();
+    if (!knownApiPrefixes.includes(firstPart)) {
+      if (filename.includes("poki-sdk")) {
+        res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        return res.send(`
+          (function() {
+            window.pokiDebug = true;
+            window.poki_nobot = true;
+            window.PokiSDK = window.PokiSDK || {};
+            var p = window.PokiSDK;
+            p.init = function() { return Promise.resolve(); };
+            p.gameLoadingStart = function() {};
+            p.gameLoadingFinished = function() {};
+            p.gameLoadingProgress = function() {};
+            p.gameplayStart = function() {};
+            p.gameplayStop = function() {};
+            p.commercialBreak = function() { return Promise.resolve(); };
+            p.rewardedBreak = function() { return Promise.resolve(true); };
+            p.displayAd = function() { return Promise.resolve(); };
+            p.destroyAd = function() {};
+            p.setDebug = function() {};
+            p.happyTime = function() {};
+            p.showLeaderboard = function() { return Promise.resolve(); };
+            p.getLeaderboard = function() { return Promise.resolve([]); };
+            p.measure = function() {};
+            p.setPlayerAge = function() {};
+            p.toggleMute = function() {};
+            if (typeof p.dequeue === 'function') {
+              try { p.dequeue(); } catch(_) {}
+            }
+          })();
+        `);
+      }
+
       const referer = req.headers.referer || "";
       if (referer.includes("/api/proxy?url=")) {
         try {
@@ -2744,13 +2779,15 @@ app.use(async (req, res, next) => {
           const dir = rawTarget.substring(0, rawTarget.lastIndexOf("/") + 1);
           const candidates = [
             dir + filename,
-            dir + "webapp/" + filename
+            dir + "webapp/" + filename,
+            new URL(filename, dir).href
           ];
           for (const cand of candidates) {
             try {
               const resp = await fetch(cand, { headers: { "User-Agent": "Mozilla/5.0" } });
               if (resp.ok) {
-                res.setHeader("Content-Type", resp.headers.get("content-type") || "application/wasm");
+                const ct = resp.headers.get("content-type") || (filename.endsWith(".wasm") ? "application/wasm" : filename.endsWith(".js") ? "application/javascript" : "application/octet-stream");
+                res.setHeader("Content-Type", ct);
                 res.setHeader("Access-Control-Allow-Origin", "*");
                 const buf = await resp.arrayBuffer();
                 return res.end(Buffer.from(buf));
