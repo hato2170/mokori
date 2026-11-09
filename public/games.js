@@ -341,21 +341,31 @@
 
   function renderCrazyGamesBrawl(container) {
     container.innerHTML = `
-      <section class="crazygames-launch-panel">
-        <div class="crazygames-launch-icon" aria-hidden="true">⭐</div>
-        <h2>Brawl Squad（CrazyGames版）</h2>
-        <p>CrazyGamesの公式ページでプレイできます。埋め込みでの動作を確認できないため、ゲームは別タブで開きます。</p>
-        <a class="crazygames-launch-button" href="${CRAZYGAMES_BRAWL_URL}" target="_blank" rel="noopener noreferrer">
-          CrazyGamesでプレイ（別タブ） ↗
+      <div class="crazygames-embed-frame-wrap">
+        <iframe
+          class="crazygames-embed-frame"
+          src="${CRAZYGAMES_BRAWL_URL}"
+          title="Brawl Squad on CrazyGames"
+          allow="autoplay; fullscreen; gamepad; accelerometer; gyroscope; picture-in-picture"
+          allowfullscreen
+          webkitallowfullscreen
+          loading="eager">
+        </iframe>
+      </div>
+      <div class="crazygames-embed-fallback">
+        <span>埋め込みで遊べない場合はこちら</span>
+        <a href="${CRAZYGAMES_BRAWL_URL}" target="_blank" rel="noopener noreferrer">
+          CrazyGames公式ページを開く ↗
         </a>
-        <p class="crazygames-launch-note">別タブが自動で開かなかった場合は、上のボタンをタップしてください。</p>
-      </section>
+      </div>
     `;
-
-    window.open(CRAZYGAMES_BRAWL_URL, "_blank", "noopener,noreferrer");
   }
 
   function stopAllGames() {
+    if (activeGame === "brawl-crazygames") {
+      const embed = document.getElementById("gameEmbedContainer");
+      if (embed) embed.innerHTML = "";
+    }
     window.onkeydown = null;
     if (window._stopShogi) { window._stopShogi(); window._stopShogi = null; }
     if (window._stopDrawQuiz) { window._stopDrawQuiz(); window._stopDrawQuiz = null; }

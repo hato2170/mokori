@@ -2734,13 +2734,33 @@ app.all("/api/proxy", async (req, res) => {
   try {
     const origin = parsedTarget.origin;
 
+    let virtualReferer = origin + "/";
+    try {
+      const browserReferer = new URL(req.headers.referer || "");
+      const virtualPageUrl = browserReferer.searchParams.get("url");
+      if (virtualPageUrl) {
+        const parsedVirtualPage = new URL(virtualPageUrl);
+        if (parsedVirtualPage.protocol === "http:" || parsedVirtualPage.protocol === "https:") {
+          virtualReferer = parsedVirtualPage.href;
+        }
+      }
+    } catch (_) {}
+
     const headers = {
       "User-Agent": req.headers["user-agent"] || "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
       "Accept": req.headers["accept"] || "*/*",
-      "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-      "Referer": origin + "/"
+      "Accept-Language": req.headers["accept-language"] || "ja,en-US;q=0.9,en;q=0.8",
+      "Referer": virtualReferer
     };
 
+    if (req.headers.origin) {
+      try {
+        headers["Origin"] = new URL(virtualReferer).origin;
+      } catch (_) {}
+    }
+    for (const name of ["authorization", "content-type", "if-match", "if-none-match", "if-range", "if-modified-since", "if-unmodified-since", "x-requested-with", "x-api-key"]) {
+      if (req.headers[name]) headers[name] = req.headers[name];
+    }
     if (req.headers["range"]) {
       headers["Range"] = req.headers["range"];
     }
@@ -2755,8 +2775,12 @@ app.all("/api/proxy", async (req, res) => {
       if (typeof req.body === "string" || Buffer.isBuffer(req.body)) {
         fetchOpts.body = req.body;
       } else if (typeof req.body === "object") {
-        fetchOpts.body = JSON.stringify(req.body);
-        headers["Content-Type"] = "application/json";
+        if ((req.headers["content-type"] || "").includes("application/x-www-form-urlencoded")) {
+          fetchOpts.body = new URLSearchParams(req.body).toString();
+        } else {
+          fetchOpts.body = JSON.stringify(req.body);
+          if (!headers["content-type"]) headers["Content-Type"] = "application/json";
+        }
       }
     }
 
@@ -3056,10 +3080,12 @@ app.all("/api/proxy", async (req, res) => {
     var origFetch = window.fetch;
     window.fetch = function(input, init) {
       try {
-        if (typeof input === 'string') {
-          input = toProxy(input);
-        } else if (input && input.url) {
-          input = new Request(toProxy(input.url), init);
+        if (typeof input === 'string' || (typeof URL !== 'undefined' && input instanceof URL)) {
+          input = toProxy(String(input));
+        } else if (input && typeof input.url === 'string') {
+          var request = new Request(input, init);
+          input = new Request(toProxy(request.url), request);
+          init = undefined;
         }
       } catch(_) {}
       return origFetch.call(this, input, init);
@@ -3362,6 +3388,7 @@ app.get("/api/tube/proxy-stream", async (req, res) => {
     const range = req.headers.range;
     const fetchHeaders = {
       "User-Agent": "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15",
+      "Referer": "https://www.youtube.com/",
       ...(range ? { Range: range } : {})
     };
     const upstream = await fetch(targetUrl, {
@@ -3447,8 +3474,8 @@ app.get("/api/tube/stream-info", async (req, res) => {
     return res.status(400).json({ ok: false, error: "videoId or query required" });
   }
 
-  const liveEduParam = await getLiveEduParam();
-  const eduEmbedUrl = `https://www.youtubeeducation.com/embed/${videoId}${liveEduParam}&playlist=${videoId}`;
+  const eduParams = cachedEduParam || "";
+  const eduEmbedUrl = `https://www.youtubeeducation.com/embed/${videoId}${eduParams}${eduParams ? "&" : "?"}playlist=${videoId}`;
 
   if (streamInfoCache.has(videoId)) {
     const cached = streamInfoCache.get(videoId);
@@ -3478,36 +3505,37 @@ app.get("/api/tube/stream-info", async (req, res) => {
       let audioUrl = "";
       const adaptive = invData.adaptiveFormats || [];
       const formatStreams = invData.formatStreams || [];
+      const preferredQualities = ["720p", "480p", "360p", "1080p"];
+      const isCompatibleMp4 = format => format && format.url && format.type && format.type.includes("video/mp4") && !/\b(?:vp0?9|av0?1|hev1|hvc1)\b/i.test(format.type);
+      const muxedMp4 = formatStreams.filter(isCompatibleMp4);
 
-      for (const af of adaptive) {
-        if (af.type && af.type.includes("audio/mp4") && af.url) {
-          audioUrl = af.url;
-          break;
-        }
-      }
-      if (!audioUrl) {
-        for (const af of adaptive) {
-          if (af.type && af.type.includes("audio") && af.url) {
-            audioUrl = af.url;
-            break;
-          }
-        }
-      }
-
-      for (const q of ["720p", "480p", "360p", "1080p"]) {
-        const found = adaptive.find(af => af.qualityLabel === q && af.type && af.type.includes("video/mp4") && af.url);
+      for (const quality of preferredQualities) {
+        const found = muxedMp4.find(format => format.qualityLabel === quality);
         if (found) {
           videoUrl = found.url;
           break;
         }
       }
-      if (!videoUrl && formatStreams.length > 0) {
-        videoUrl = formatStreams[0].url;
-        if (!audioUrl) audioUrl = formatStreams[0].url;
+      if (!videoUrl && muxedMp4.length > 0) {
+        videoUrl = muxedMp4[0].url;
       }
-      if (!videoUrl && adaptive.length > 0) {
-        const anyV = adaptive.find(af => af.type && af.type.includes("video") && af.url);
-        if (anyV) videoUrl = anyV.url;
+
+      if (!videoUrl) {
+        const adaptiveMp4 = adaptive.filter(isCompatibleMp4);
+        for (const quality of preferredQualities) {
+          const found = adaptiveMp4.find(format => format.qualityLabel === quality);
+          if (found) {
+            videoUrl = found.url;
+            break;
+          }
+        }
+        if (!videoUrl && adaptiveMp4.length > 0) {
+          videoUrl = adaptiveMp4[0].url;
+        }
+
+        const audioFormat = adaptive.find(format => format.url && format.type && format.type.includes("audio/mp4")) ||
+          adaptive.find(format => format.url && format.type && format.type.includes("audio"));
+        if (videoUrl && audioFormat) audioUrl = audioFormat.url;
       }
 
       const proxiedVideoUrl = videoUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(videoUrl)}` : "";

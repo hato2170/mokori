@@ -339,6 +339,34 @@
       if (syncAudio.src) syncAudio.playbackRate = mp4Video.playbackRate;
     });
 
+    const mediaStatus = document.getElementById("currentStatus");
+    function setMp4Status(message) {
+      if (currentMode === "mp4" && mediaStatus) mediaStatus.textContent = message;
+    }
+    mp4Video.addEventListener("loadstart", () => setMp4Status("⏳ MP4ストリームを読み込み中..."));
+    mp4Video.addEventListener("loadedmetadata", () => setMp4Status("⏳ 動画を読み込みました。再生を準備中..."));
+    mp4Video.addEventListener("canplay", () => {
+      if (mp4Video.paused) setMp4Status("▶️ 再生準備完了。再生ボタンを押してください");
+    });
+    mp4Video.addEventListener("playing", () => setMp4Status("🎬 動画を再生中"));
+    mp4Video.addEventListener("waiting", () => setMp4Status("⏳ 動画をバッファリング中..."));
+    mp4Video.addEventListener("stalled", () => setMp4Status("⚠️ 動画の読み込みが停滞しています"));
+    mp4Video.addEventListener("pause", () => {
+      if (!mp4Video.ended) setMp4Status("⏸ 動画を一時停止中");
+    });
+    mp4Video.addEventListener("ended", () => setMp4Status("動画の再生が終了しました"));
+    mp4Video.addEventListener("error", () => {
+      if (!mp4Video.currentSrc) return;
+      const errorMessages = {
+        1: "再生が中断されました",
+        2: "動画の読み込みに失敗しました",
+        3: "動画をデコードできませんでした",
+        4: "この動画形式は再生できません"
+      };
+      const code = mp4Video.error && mp4Video.error.code;
+      setMp4Status("⚠️ " + (errorMessages[code] || "動画を再生できませんでした"));
+    });
+
     function renderCards(list) {
       const grid = document.getElementById("videoGrid");
       grid.innerHTML = "";
@@ -373,93 +401,107 @@
       } catch (_) {}
     }
 
+    let playerLoadId = 0;
+
     async function updatePlayerSrc(autoplay = true) {
+      const loadId = ++playerLoadId;
       const frame = document.getElementById("tubeFrame");
       const videoEl = document.getElementById("mp4Video");
       const audioEl = document.getElementById("syncAudio");
       const statusSpan = document.getElementById("currentStatus");
-      const auto = autoplay ? 1 : 0;
-
-      if (!liveEduParam) {
-        await loadLiveEduParam();
-      }
 
       if (currentMode === "edu") {
+        if (!liveEduParam) await loadLiveEduParam();
+        if (loadId !== playerLoadId) return;
         videoEl.style.display = "none";
         videoEl.pause();
         audioEl.pause();
         frame.style.display = "block";
         const param = liveEduParam || EDU_PARAMS;
         frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${param}&playlist=${currentVideoId}`;
-        statusSpan.textContent = "🎓 学校iPad (i-フィルター完全回避・再生中)";
+        statusSpan.textContent = "🎓 学校iPad (埋め込みを読み込み中...)";
       } else if (currentMode === "mp4") {
         frame.style.display = "none";
         frame.src = "about:blank";
         videoEl.style.display = "block";
+        videoEl.pause();
+        audioEl.pause();
+        audioEl.removeAttribute("src");
+        audioEl.load();
+        videoEl.removeAttribute("src");
+        videoEl.load();
         videoEl.poster = `${API_BASE}/api/tube/thumb?v=${currentVideoId}`;
         statusSpan.textContent = "⏳ MP4ストリーム接続中...";
 
         try {
           const res = await fetch(`${API_BASE}/api/tube/stream-info?v=${encodeURIComponent(currentVideoId)}`);
+          if (!res.ok) throw new Error(`stream-info HTTP ${res.status}`);
           const data = await res.json();
-          if (data.ok && (data.videoUrl || data.hlsUrl)) {
-            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-            if (isSafari && data.hlsUrl) {
-              videoEl.src = data.hlsUrl;
-            } else if (data.videoUrl) {
-              videoEl.src = data.videoUrl;
-              if (data.audioUrl) {
-                audioEl.src = data.audioUrl;
-              }
+          if (loadId !== playerLoadId) return;
+
+          const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+          const sourceUrl = data.videoUrl
+            ? new URL(data.videoUrl, API_BASE || window.location.origin).href
+            : (isSafari ? data.hlsUrl : "");
+          if (data.ok && sourceUrl) {
+            videoEl.src = sourceUrl;
+            if (data.videoUrl && data.audioUrl) {
+              audioEl.src = new URL(data.audioUrl, API_BASE || window.location.origin).href;
+              audioEl.load();
             }
             videoEl.load();
-            if (autoplay) videoEl.play().catch(() => {});
-            statusSpan.textContent = "🎬 MP4再生中 (サーバー中継)";
+            if (autoplay) {
+              videoEl.play().catch(error => {
+                if (loadId !== playerLoadId || !videoEl.paused) return;
+                statusSpan.textContent = error && error.name === "NotAllowedError"
+                  ? "▶️ 自動再生できません。再生ボタンを押してください"
+                  : "⚠️ 再生を開始できませんでした。再生ボタンを押してください";
+              });
+            } else {
+              statusSpan.textContent = "▶️ 再生準備完了。再生ボタンを押してください";
+            }
             return;
           }
+          statusSpan.textContent = "⚠️ この動画の再生可能なストリームが見つかりません";
         } catch (e) {
           console.warn("MP4 stream resolution error:", e);
+          if (loadId === playerLoadId) statusSpan.textContent = "⚠️ MP4ストリームを取得できませんでした";
         }
-
-        // 学校フィルター遮断を防ぐため公式埋め込みへのフォールバックは完全廃止し、MP4プレイヤーを維持
-        statusSpan.textContent = "🎬 MP4プレイヤー (再生準備完了)";
-        videoEl.style.display = "block";
-        frame.style.display = "none";
       } else if (currentMode === "shiatube") {
         videoEl.style.display = "none";
         videoEl.pause();
         audioEl.pause();
         frame.style.display = "block";
         frame.src = `${API_BASE}/api/tube/mirror/shiatube?v=${currentVideoId}`;
-        statusSpan.textContent = "⚡ しあTube (中継プレイヤー再生中)";
+        statusSpan.textContent = "⚡ しあTube (埋め込みを読み込み中...)";
       } else if (currentMode === "wakametube") {
         videoEl.style.display = "none";
         videoEl.pause();
         audioEl.pause();
         frame.style.display = "block";
         frame.src = `${API_BASE}/api/tube/mirror/wakametube?v=${currentVideoId}`;
-        statusSpan.textContent = "🥬 わかめTube (wkt-Plus 再生中)";
+        statusSpan.textContent = "🥬 わかめTube (埋め込みを読み込み中...)";
       } else if (currentMode === "yukitube") {
         videoEl.style.display = "none";
         videoEl.pause();
         audioEl.pause();
         frame.style.display = "block";
         frame.src = `${API_BASE}/api/tube/mirror/yukitube?v=${currentVideoId}`;
-        statusSpan.textContent = "❄️ YukiTube (雪Tube 再生中)";
+        statusSpan.textContent = "❄️ YukiTube (埋め込みを読み込み中...)";
       } else if (currentMode === "youtubeplus") {
         videoEl.style.display = "none";
         videoEl.pause();
         audioEl.pause();
         frame.style.display = "block";
         frame.src = `${API_BASE}/api/tube/mirror/youtubeplus?v=${currentVideoId}`;
-        statusSpan.textContent = "➕ YouTube＋ (YT++ 再生中)";
+        statusSpan.textContent = "➕ YouTube＋ (埋め込みを読み込み中...)";
       } else if (currentMode === "proxy") {
         videoEl.style.display = "none";
         videoEl.pause();
         audioEl.pause();
         frame.style.display = "block";
         frame.src = `${API_BASE}/api/tube/mirror/shiatube?v=${currentVideoId}`;
-        statusSpan.textContent = "🛡️ プロキシ埋め込み再生中";
+        statusSpan.textContent = "🛡️ プロキシ埋め込みを読み込み中...";
       }
     }
 
@@ -547,10 +589,8 @@
     const vParam = urlParams.get("v");
     const qParam = urlParams.get("q");
 
-    if (vParam) {
-      currentVideoId = vParam;
-      updatePlayerSrc(true);
-    }
+    if (vParam) currentVideoId = vParam;
+    updatePlayerSrc(Boolean(vParam));
 
     if (qParam) {
       document.getElementById("searchInput").value = qParam;
