@@ -381,9 +381,45 @@
 
     let currentPlaylist = [...DEFAULT_TRACKS];
     let currentIndex = 0;
+    let playMode = "full";
+    let playRequestId = 0;
+    let activeSourceUrl = "";
+    let previewSourceUrl = "";
+    let audioFallbackAttempted = false;
     const audio = document.getElementById("audioEl");
 
     const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori.onrender.com";
+
+    function absoluteAudioUrl(url) {
+      try { return new URL(url, API_BASE || window.location.origin).href; }
+      catch (_) { return url; }
+    }
+
+    function setAudioSource(url) {
+      activeSourceUrl = absoluteAudioUrl(url);
+      audio.src = activeSourceUrl;
+      audio.load();
+    }
+
+    function updatePlayModeButtons() {
+      const full = document.getElementById("btnModeFull");
+      const sample = document.getElementById("btnModeSample");
+      if (full) {
+        full.style.background = playMode === "full" ? "#0284c7" : "#27272a";
+        full.style.color = playMode === "full" ? "#fff" : "#a1a1aa";
+      }
+      if (sample) {
+        sample.style.background = playMode === "sample" ? "#fa243c" : "#27272a";
+        sample.style.color = playMode === "sample" ? "#fff" : "#a1a1aa";
+      }
+    }
+
+    function setPlayMode(mode) {
+      if (mode !== "full" && mode !== "sample") return;
+      playMode = mode;
+      updatePlayModeButtons();
+      if (activeSourceUrl && currentPlaylist[currentIndex]) playTrack(currentIndex);
+    }
 
     function formatTime(sec) {
       if (!sec || isNaN(sec) || !isFinite(sec)) return "0:00";
@@ -430,17 +466,14 @@
       }
       console.warn("Audio element error:", err);
       const t = currentPlaylist[currentIndex];
-      const preview = t ? (t.preview || t.previewUrl) : "";
-      if (preview) {
-        const fallbackUrl = `${API_BASE}/api/music/stream?url=${encodeURIComponent(preview)}`;
-        if (audio.src !== fallbackUrl) {
-          audio.src = fallbackUrl;
-          audio.play().then(() => {
-            document.getElementById("dockPlayBtn").textContent = "⏸";
-            document.getElementById("dockArtist").textContent = (t.artist || t.artistName) + " · 🎵 快適再生中";
-          }).catch(() => {});
-          return;
-        }
+      if (previewSourceUrl && activeSourceUrl !== previewSourceUrl && !audioFallbackAttempted) {
+        audioFallbackAttempted = true;
+        setAudioSource(previewSourceUrl);
+        audio.play().then(() => {
+          document.getElementById("dockPlayBtn").textContent = "⏸";
+          document.getElementById("dockArtist").textContent = (t.artist || t.artistName) + " · 30秒試聴に切替";
+        }).catch(() => {});
+        return;
       }
       document.getElementById("dockArtist").textContent = "⚠️ " + msg;
     });
@@ -479,74 +512,92 @@
 
     async function playTrack(idx) {
       if (idx < 0 || idx >= currentPlaylist.length) return;
+      const requestId = ++playRequestId;
       currentIndex = idx;
       const t = currentPlaylist[idx];
       const title = t.title || t.trackName || "無題";
       const artist = t.artist || t.artistName || "不明";
       const art = t.artwork || t.artworkUrl || "https://via.placeholder.com/48";
-      const preview = t.previewUrl;
+      const preview = t.previewUrl || t.preview || "";
 
       document.getElementById("dockTitle").textContent = title;
-      document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺取得中...";
+      document.getElementById("dockArtist").textContent = artist + (playMode === "full" ? " · 🎵 フル尺を取得中..." : " · ⚡ 30秒試聴中");
       document.getElementById("dockArt").src = art;
       document.getElementById("curTime").textContent = "0:00";
       document.getElementById("totTime").textContent = "準備中…";
       document.getElementById("progressFill").style.width = "0%";
 
-      // 学タブ・学校フィルター完全回避用：Renderサーバー経由のストリームURLで即時再生
-      const proxiedStreamUrl = preview ? `${API_BASE}/api/music/stream?url=${encodeURIComponent(preview)}` : "";
-      if (proxiedStreamUrl) {
-        audio.src = proxiedStreamUrl;
-        audio.currentTime = 0;
-        audio.load();
-        audio.play().then(() => {
-          document.getElementById("dockPlayBtn").textContent = "⏸";
-          document.getElementById("dockArtist").textContent = artist + " · 🎵 快適再生中";
-        }).catch((e) => {
-          console.warn("Audio play error, retrying direct:", e);
-          // 万が一プロキシで弾かれた場合の直接再生フォールバック
-          if (preview && audio.src !== preview) {
-            audio.src = preview;
-            audio.play().catch(() => {});
+      const previewUrl = preview
+        ? absoluteAudioUrl(`${API_BASE}/api/music/stream?url=${encodeURIComponent(preview)}`)
+        : "";
+      previewSourceUrl = previewUrl;
+      audioFallbackAttempted = false;
+
+      if (previewUrl) {
+        setAudioSource(previewUrl);
+        try {
+          await audio.play();
+          if (requestId === playRequestId) {
+            document.getElementById("dockPlayBtn").textContent = "⏸";
+            document.getElementById("dockArtist").textContent = artist + (playMode === "full" ? " · 🎵 フル尺へ接続中..." : " · ⚡ 30秒試聴中");
           }
-        });
+        } catch (e) {
+          console.warn("Preview playback failed:", e);
+        }
       }
 
-      // フル尺ストリーム（3〜5分全編）をバックグラウンド取得して継ぎ目なくフル尺へ昇格
-      try {
-        const query = `${artist} ${title}`;
-        const res = await fetch(`${API_BASE}/api/tube/stream-info?q=${encodeURIComponent(query)}`);
-        const data = await res.json();
-        if (data.ok && data.audioUrl && audio.src === proxiedStreamUrl) {
-          const fullAudioUrl = (data.audioUrl.startsWith("http") && !data.audioUrl.includes("onrender.com"))
-            ? `${API_BASE}/api/music/stream?url=${encodeURIComponent(data.audioUrl)}`
-            : data.audioUrl;
-          
-          // 事前疎通確認をして403等の場合はプロキシ音源を維持
-          fetch(fullAudioUrl, { method: "HEAD" }).then(headResp => {
-            if (headResp.ok && audio.src === proxiedStreamUrl) {
-              const currentPos = audio.currentTime;
-              audio.src = fullAudioUrl;
-              audio.currentTime = currentPos;
-              audio.play().then(() => {
+      if (playMode === "full" && previewUrl) {
+        try {
+          const query = `${artist} ${title}`;
+          const res = await fetch(`${API_BASE}/api/tube/stream-info?q=${encodeURIComponent(query)}`, { cache: "no-store", signal: AbortSignal.timeout(12000) });
+          if (!res.ok) throw new Error(`stream-info HTTP ${res.status}`);
+          const data = await res.json();
+          if (requestId !== playRequestId) return;
+          const streamUrl = data.musicUrl || data.audioUrl;
+          if (!data.ok || !streamUrl) {
+            document.getElementById("dockArtist").textContent = artist + " · 30秒試聴のみ（フル尺を取得できません）";
+          } else {
+            const fullAudioUrl = absoluteAudioUrl(streamUrl);
+            if (fullAudioUrl !== previewUrl) {
+              const resumeAt = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+              await new Promise((resolve, reject) => {
+                let settled = false;
+                const finish = callback => {
+                  if (settled) return;
+                  settled = true;
+                  clearTimeout(timer);
+                  audio.removeEventListener("loadedmetadata", onMetadata);
+                  audio.removeEventListener("error", onError);
+                  callback();
+                };
+                const onMetadata = () => finish(resolve);
+                const onError = () => finish(() => reject(new Error("Full stream failed to load")));
+                const timer = setTimeout(() => finish(() => reject(new Error("Full stream timed out"))), 12000);
+                audio.addEventListener("loadedmetadata", onMetadata);
+                audio.addEventListener("error", onError);
+                setAudioSource(fullAudioUrl);
+              });
+              if (requestId !== playRequestId) return;
+              if (Number.isFinite(audio.duration) && audio.duration > 0) {
+                audio.currentTime = Math.min(resumeAt, Math.max(0, audio.duration - 1));
+              }
+              await audio.play();
+              if (requestId === playRequestId) {
                 document.getElementById("dockPlayBtn").textContent = "⏸";
                 document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺再生中";
-                if (data.duration) {
-                  const m = Math.floor(data.duration / 60);
-                  const s = Math.floor(data.duration % 60).toString().padStart(2, "0");
-                  document.getElementById("totTime").textContent = `${m}:${s}`;
-                }
-              }).catch(() => {
-                audio.src = proxiedStreamUrl;
-                audio.play().catch(() => {});
-              });
+              }
             }
-          }).catch(() => {});
-        } else if (preview) {
-          document.getElementById("dockArtist").textContent = artist + " · 🎵 再生中";
+          }
+        } catch (err) {
+          if (requestId !== playRequestId) return;
+          console.warn("Full stream resolution error:", err);
+          if (previewUrl && activeSourceUrl !== previewUrl) {
+            audioFallbackAttempted = true;
+            setAudioSource(previewUrl);
+            audio.play().catch(() => {});
+          }
+          document.getElementById("dockArtist").textContent = artist + " · 30秒試聴（フル尺に接続できません）";
         }
-      } catch (err) {
-        console.warn("Full stream resolution error:", err);
       }
 
       // MediaSession API連携 (iOSロック画面やコントロールセンターに表示)
@@ -600,17 +651,6 @@
       if (currentIndex < currentPlaylist.length - 1) playTrack(currentIndex + 1);
       else playTrack(0);
     }
-
-    audio.ontimeupdate = () => {
-      if (audio.duration) {
-        const pct = (audio.currentTime / audio.duration) * 100;
-        document.getElementById("progressFill").style.width = pct + "%";
-      }
-    };
-
-    audio.onended = () => {
-      nextTrack();
-    };
 
     function seekAudio(e) {
       const rect = e.currentTarget.getBoundingClientRect();

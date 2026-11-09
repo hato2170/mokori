@@ -2744,17 +2744,20 @@ app.all("/api/proxy", async (req, res) => {
     return res.status(400).send(renderProxyError("無効なURL形式です", "正しいURL（例: poki.com または https://duckduckgo.com）を入力してください。"));
   }
 
-    // プロキシ経由でYouTubeを開いた場合のエラー根絶 (若雪幸せTubeのMP4プレイヤーへ自動中継)
-  if (parsedTarget.hostname.includes("youtube.com") || parsedTarget.hostname === "youtu.be") {
-    let vid = parsedTarget.searchParams.get("v");
-    if (!vid && parsedTarget.hostname === "youtu.be") {
-      vid = parsedTarget.pathname.slice(1).split("/")[0];
+  // YouTubeのURL形式（watch / shorts / live / embed / youtu.be）をTubeへ中継
+  const youtubeHost = parsedTarget.hostname.toLowerCase();
+  const isYoutubeHost = youtubeHost === "youtu.be" || youtubeHost === "youtube.com" || youtubeHost.endsWith(".youtube.com") || youtubeHost === "youtube-nocookie.com" || youtubeHost.endsWith(".youtube-nocookie.com");
+  if (isYoutubeHost) {
+    const pathParts = parsedTarget.pathname.split("/").filter(Boolean);
+    let videoId = parsedTarget.searchParams.get("v") || "";
+    if (!videoId && youtubeHost === "youtu.be") videoId = pathParts[0] || "";
+    if (!videoId && ["shorts", "live", "embed", "v"].includes(pathParts[0])) videoId = pathParts[1] || "";
+    if (/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) {
+      return res.redirect(`/tube/?v=${encodeURIComponent(videoId)}`);
     }
-    if (vid) {
-      return res.redirect(`/tube/?v=${encodeURIComponent(vid)}`);
-    } else {
-      return res.redirect("/tube/");
-    }
+    const searchQuery = parsedTarget.searchParams.get("search_query") || (pathParts[0] === "results" ? parsedTarget.searchParams.get("q") : "");
+    if (searchQuery) return res.redirect(`/tube/?q=${encodeURIComponent(searchQuery)}`);
+    return res.redirect("/tube/");
   }
 
   if (isBlockedHost(parsedTarget.hostname)) {
@@ -3020,13 +3023,44 @@ app.all("/api/proxy", async (req, res) => {
   }
 
   function toProxy(u) {
-    if (!u || typeof u !== 'string' || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('javascript:') || u.startsWith('#') || u.includes('/api/proxy?url=')) return u;
+    if (!u || typeof u !== 'string' || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('javascript:') || u.startsWith('#') || u.includes('/api/proxy?url=') || /^\\/(?:tensai-proxy|tube|music)(?:\\/|$)/.test(u)) return u;
     try {
       return '/api/proxy?url=' + encodeURIComponent(new URL(u, baseUrl).href);
     } catch(_) {
       return u;
     }
   }
+
+  if (window.HTMLAnchorElement && window.HTMLAnchorElement.prototype) {
+    var anchorHref = Object.getOwnPropertyDescriptor(HTMLAnchorElement.prototype, 'href');
+    if (anchorHref && anchorHref.set) {
+      var setAnchorHref = anchorHref.set;
+      Object.defineProperty(HTMLAnchorElement.prototype, 'href', {
+        configurable: anchorHref.configurable,
+        enumerable: anchorHref.enumerable,
+        get: anchorHref.get,
+        set: function(val) { return setAnchorHref.call(this, toProxy(val)); }
+      });
+    }
+  }
+
+  if (window.open) {
+    var originalOpen = window.open;
+    window.open = function(url, name, features) {
+      return originalOpen.call(window, typeof url === 'string' ? toProxy(url) : url, name, features);
+    };
+  }
+
+  document.addEventListener('click', function(e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var target = e.target && e.target.nodeType === 1 ? e.target : e.target && e.target.parentElement;
+    var anchor = target && target.closest ? target.closest('a[href]') : null;
+    if (!anchor || (anchor.target && anchor.target !== '_self')) return;
+    var href = anchor.getAttribute('href') || '';
+    if (!href || href.startsWith('#') || /^\\/(?:tensai-proxy|tube|music)(?:\\/|$)/.test(href) || href.includes('/api/proxy?url=')) return;
+    e.preventDefault();
+    window.location.href = toProxy(href);
+  }, true);
 
   ['HTMLImageElement', 'HTMLIFrameElement', 'HTMLScriptElement', 'HTMLSourceElement'].forEach(function(cls) {
     if (window[cls] && window[cls].prototype) {
@@ -3467,7 +3501,8 @@ const streamInfoCache = new Map();
 
 app.get("/api/tube/stream-info", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Cache-Control", "public, max-age=1800");
+  // Signed media URLs expire; keep both server and browser caches short.
+  res.setHeader("Cache-Control", "public, max-age=300");
   let videoId = String(req.query.v || "").trim();
   const searchQuery = String(req.query.q || "").trim();
 
@@ -3509,7 +3544,7 @@ app.get("/api/tube/stream-info", async (req, res) => {
 
   if (streamInfoCache.has(videoId)) {
     const cached = streamInfoCache.get(videoId);
-    if (Date.now() - cached.time < 7200000) {
+    if (Date.now() - cached.time < 300000) {
       return res.json({ ok: true, eduEmbedUrl, ...cached.data });
     }
   }
@@ -3563,13 +3598,14 @@ app.get("/api/tube/stream-info", async (req, res) => {
           videoUrl = adaptiveMp4[0].url;
         }
 
-        const audioFormat = adaptive.find(format => format.url && format.type && format.type.includes("audio/mp4")) ||
-          adaptive.find(format => format.url && format.type && format.type.includes("audio"));
+        const audioFormat = adaptive.find(format => format.url && format.type && /^audio\/mp4\b/i.test(format.type));
         if (videoUrl && audioFormat) audioUrl = audioFormat.url;
       }
 
       const proxiedVideoUrl = videoUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(videoUrl)}` : "";
       const proxiedAudioUrl = audioUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(audioUrl)}` : "";
+      const musicSourceUrl = audioUrl || (muxedMp4.length > 0 ? videoUrl : "");
+      const proxiedMusicUrl = musicSourceUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(musicSourceUrl)}` : "";
 
       const durationSec = invData.lengthSeconds || 180;
       const resultData = {
@@ -3579,6 +3615,7 @@ app.get("/api/tube/stream-info", async (req, res) => {
         duration: durationSec,
         videoUrl: proxiedVideoUrl,
         audioUrl: proxiedAudioUrl,
+        musicUrl: proxiedMusicUrl,
         rawVideoUrl: videoUrl,
         rawAudioUrl: audioUrl,
         eduEmbedUrl,

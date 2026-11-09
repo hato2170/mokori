@@ -340,23 +340,62 @@
     });
 
     const mediaStatus = document.getElementById("currentStatus");
+    let usingYoutubeFallback = false;
+    let mediaLoadTimer = null;
     function setMp4Status(message) {
       if (currentMode === "mp4" && mediaStatus) mediaStatus.textContent = message;
+    }
+    function clearMediaLoadTimer() {
+      if (mediaLoadTimer) clearTimeout(mediaLoadTimer);
+      mediaLoadTimer = null;
+    }
+    function showYoutubeFallback(message) {
+      if (currentMode !== "mp4" || usingYoutubeFallback) return;
+      usingYoutubeFallback = true;
+      clearMediaLoadTimer();
+      mp4Video.pause();
+      syncAudio.pause();
+      mp4Video.removeAttribute("src");
+      mp4Video.load();
+      syncAudio.removeAttribute("src");
+      syncAudio.load();
+      const frame = document.getElementById("tubeFrame");
+      frame.style.display = "block";
+      frame.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(currentVideoId)}?autoplay=1&playsinline=1&controls=1`;
+      mp4Video.style.display = "none";
+      setMp4Status(message || "⚠️ MP4を再生できないため、YouTubeプレイヤーに切り替えました");
+    }
+    function scheduleYoutubeFallback(message) {
+      if (mediaLoadTimer || usingYoutubeFallback) return;
+      mediaLoadTimer = setTimeout(() => {
+        mediaLoadTimer = null;
+        if (currentMode === "mp4" && !usingYoutubeFallback && mp4Video.readyState < 3) showYoutubeFallback(message);
+      }, 15000);
     }
     mp4Video.addEventListener("loadstart", () => setMp4Status("⏳ MP4ストリームを読み込み中..."));
     mp4Video.addEventListener("loadedmetadata", () => setMp4Status("⏳ 動画を読み込みました。再生を準備中..."));
     mp4Video.addEventListener("canplay", () => {
+      clearMediaLoadTimer();
       if (mp4Video.paused) setMp4Status("▶️ 再生準備完了。再生ボタンを押してください");
     });
-    mp4Video.addEventListener("playing", () => setMp4Status("🎬 動画を再生中"));
-    mp4Video.addEventListener("waiting", () => setMp4Status("⏳ 動画をバッファリング中..."));
-    mp4Video.addEventListener("stalled", () => setMp4Status("⚠️ 動画の読み込みが停滞しています"));
+    mp4Video.addEventListener("playing", () => {
+      clearMediaLoadTimer();
+      setMp4Status("🎬 動画を再生中");
+    });
+    mp4Video.addEventListener("waiting", () => {
+      setMp4Status("⏳ 動画をバッファリング中...");
+      scheduleYoutubeFallback("⚠️ 動画が読み込めないため、YouTubeプレイヤーへ切り替え中...");
+    });
+    mp4Video.addEventListener("stalled", () => {
+      setMp4Status("⚠️ 動画の読み込みが停滞しています");
+      scheduleYoutubeFallback("⚠️ 動画の読み込みが停滞したため、YouTubeプレイヤーへ切り替え中...");
+    });
     mp4Video.addEventListener("pause", () => {
-      if (!mp4Video.ended) setMp4Status("⏸ 動画を一時停止中");
+      if (!mp4Video.ended && !usingYoutubeFallback) setMp4Status("⏸ 動画を一時停止中");
     });
     mp4Video.addEventListener("ended", () => setMp4Status("動画の再生が終了しました"));
     mp4Video.addEventListener("error", () => {
-      if (!mp4Video.currentSrc) return;
+      if (!mp4Video.currentSrc || usingYoutubeFallback) return;
       const errorMessages = {
         1: "再生が中断されました",
         2: "動画の読み込みに失敗しました",
@@ -364,7 +403,7 @@
         4: "この動画形式は再生できません"
       };
       const code = mp4Video.error && mp4Video.error.code;
-      setMp4Status("⚠️ " + (errorMessages[code] || "動画を再生できませんでした"));
+      showYoutubeFallback("⚠️ " + (errorMessages[code] || "動画を再生できませんでした") + "。YouTubeプレイヤーへ切り替え中...");
     });
 
     function renderCards(list) {
@@ -405,6 +444,7 @@
 
     async function updatePlayerSrc(autoplay = true) {
       const loadId = ++playerLoadId;
+      clearMediaLoadTimer();
       const frame = document.getElementById("tubeFrame");
       const videoEl = document.getElementById("mp4Video");
       const audioEl = document.getElementById("syncAudio");
@@ -421,6 +461,7 @@
         frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${param}&playlist=${currentVideoId}`;
         statusSpan.textContent = "🎓 学校iPad (埋め込みを読み込み中...)";
       } else if (currentMode === "mp4") {
+        usingYoutubeFallback = false;
         frame.style.display = "none";
         frame.src = "about:blank";
         videoEl.style.display = "block";
@@ -434,7 +475,7 @@
         statusSpan.textContent = "⏳ MP4ストリーム接続中...";
 
         try {
-          const res = await fetch(`${API_BASE}/api/tube/stream-info?v=${encodeURIComponent(currentVideoId)}`);
+          const res = await fetch(`${API_BASE}/api/tube/stream-info?v=${encodeURIComponent(currentVideoId)}`, { cache: "no-store" });
           if (!res.ok) throw new Error(`stream-info HTTP ${res.status}`);
           const data = await res.json();
           if (loadId !== playerLoadId) return;
@@ -449,6 +490,7 @@
               audioEl.src = new URL(data.audioUrl, API_BASE || window.location.origin).href;
               audioEl.load();
             }
+            scheduleYoutubeFallback("⚠️ MP4の読み込みがタイムアウトしました。YouTubeプレイヤーへ切り替え中...");
             videoEl.load();
             if (autoplay) {
               videoEl.play().catch(error => {
@@ -462,10 +504,10 @@
             }
             return;
           }
-          statusSpan.textContent = "⚠️ この動画の再生可能なストリームが見つかりません";
+          showYoutubeFallback("⚠️ MP4ストリームが見つかりません。YouTubeプレイヤーへ切り替え中...");
         } catch (e) {
           console.warn("MP4 stream resolution error:", e);
-          if (loadId === playerLoadId) statusSpan.textContent = "⚠️ MP4ストリームを取得できませんでした";
+          if (loadId === playerLoadId) showYoutubeFallback("⚠️ MP4ストリームを取得できません。YouTubeプレイヤーへ切り替え中...");
         }
       } else if (currentMode === "shiatube") {
         videoEl.style.display = "none";
