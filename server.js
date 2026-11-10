@@ -2746,45 +2746,66 @@ app.use(async (req, res, next) => {
           (function() {
             window.pokiDebug = true;
             window.poki_nobot = true;
-            window.PokiSDK = window.PokiSDK || {};
-            var p = window.PokiSDK;
-            p.init = function() { return Promise.resolve(); };
-            p.gameLoadingStart = function() {};
-            p.gameLoadingFinished = function() {};
-            p.gameLoadingProgress = function() {};
-            p.gameplayStart = function() {};
-            p.gameplayStop = function() {};
-            p.commercialBreak = function() { return Promise.resolve(); };
-            p.rewardedBreak = function() { return Promise.resolve(true); };
-            p.displayAd = function() { return Promise.resolve(); };
-            p.destroyAd = function() {};
-            p.setDebug = function() {};
-            p.happyTime = function() {};
-            p.showLeaderboard = function() { return Promise.resolve(); };
-            p.getLeaderboard = function() { return Promise.resolve([]); };
-            p.measure = function() {};
-            p.setPlayerAge = function() {};
-            p.toggleMute = function() {};
-            if (typeof p.dequeue === 'function') {
-              try { p.dequeue(); } catch(_) {}
-            }
+            var targetSDK = {
+              init: function() { return Promise.resolve(); },
+              gameLoadingStart: function() {},
+              gameLoadingFinished: function() {},
+              gameLoadingProgress: function() {},
+              gameplayStart: function() {},
+              gameplayStop: function() {},
+              commercialBreak: function() { return Promise.resolve(); },
+              rewardedBreak: function() { return Promise.resolve(true); },
+              displayAd: function() { return Promise.resolve(); },
+              destroyAd: function() {},
+              setDebug: function() {},
+              happyTime: function() {},
+              showLeaderboard: function() { return Promise.resolve(); },
+              getLeaderboard: function() { return Promise.resolve([]); },
+              measure: function() {},
+              setPlayerAge: function() {},
+              toggleMute: function() {},
+              captureError: function() {},
+              muteAd: function() {},
+              setPayload: function() {},
+              customEvent: function() {},
+              getPayload: function() { return Promise.resolve({}); },
+              isAdBlocked: function() { return false; },
+              getParam: function() { return null; },
+              shareableURL: function() { return Promise.resolve(window.location.href); },
+              dequeue: function() {}
+            };
+            window.PokiSDK = new Proxy(targetSDK, {
+              get: function(t, p) {
+                if (p in t) return t[p];
+                return function() { return Promise.resolve(); };
+              }
+            });
+            try {
+              if (typeof targetSDK.dequeue === 'function') targetSDK.dequeue();
+            } catch(_) {}
           })();
         `);
       }
 
       const referer = req.headers.referer || "";
-      if (referer.includes("/api/proxy?url=")) {
+      if (referer.includes("proxy?url=")) {
         try {
-          const rawTarget = decodeURIComponent(referer.split("/api/proxy?url=")[1].split("&")[0]);
+          const rawTarget = decodeURIComponent((referer.split("proxy?url=")[1] || "").split("&")[0]);
           const dir = rawTarget.substring(0, rawTarget.lastIndexOf("/") + 1);
           const candidates = [
             dir + filename,
             dir + "webapp/" + filename,
             new URL(filename, dir).href
           ];
+          const isPokiTarget = rawTarget.includes("poki");
+          const customHeaders = { "User-Agent": "Mozilla/5.0" };
+          if (isPokiTarget) {
+            customHeaders["Referer"] = "https://poki.com/";
+            customHeaders["Origin"] = "https://poki.com";
+          }
           for (const cand of candidates) {
             try {
-              const resp = await fetch(cand, { headers: { "User-Agent": "Mozilla/5.0" } });
+              const resp = await fetch(cand, { headers: customHeaders });
               if (resp.ok) {
                 const ct = resp.headers.get("content-type") || (filename.endsWith(".wasm") ? "application/wasm" : filename.endsWith(".js") ? "application/javascript" : "application/octet-stream");
                 res.setHeader("Content-Type", ct);
@@ -2891,11 +2912,18 @@ app.all("/api/proxy", async (req, res) => {
       }
     } catch (_) {}
 
+    let requestOrigin = origin;
+    if (parsedTarget.hostname.endsWith("poki.com") || parsedTarget.hostname.endsWith("poki-cdn.com")) {
+      virtualReferer = "https://poki.com/";
+      requestOrigin = "https://poki.com";
+    }
+
     const headers = {
       "User-Agent": req.headers["user-agent"] || "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
       "Accept": req.headers["accept"] || "*/*",
       "Accept-Language": req.headers["accept-language"] || "ja,en-US;q=0.9,en;q=0.8",
-      "Referer": virtualReferer
+      "Referer": virtualReferer,
+      "Origin": requestOrigin
     };
 
     if (req.headers.origin) {
@@ -3037,9 +3065,9 @@ app.all("/api/proxy", async (req, res) => {
     reload: function() { location.reload(); },
     toString: function() { return window.__proxy_href; }
   };
+  window.__proxy_location = mockLocation;
 
   try {
-    var origDefaultView = Object.getOwnPropertyDescriptor(Document.prototype, 'defaultView').get;
     var winProxy = new Proxy(window, {
       get: function(target, prop) {
         if (prop === 'location') return mockLocation;
@@ -3049,6 +3077,7 @@ app.all("/api/proxy", async (req, res) => {
     });
     Object.defineProperty(Document.prototype, 'defaultView', {
       configurable: true,
+      enumerable: true,
       get: function() { return winProxy; }
     });
   } catch(_) {}
@@ -3056,23 +3085,41 @@ app.all("/api/proxy", async (req, res) => {
   try {
     localStorage.setItem('poki_nobot', 'true');
     window.pokiDebug = true;
-    if (!window.PokiSDK) {
-      window.PokiSDK = {
-        init: function() { return Promise.resolve(); },
-        gameLoadingStart: function() {},
-        gameLoadingFinished: function() {},
-        gameLoadingProgress: function() {},
-        gameplayStart: function() {},
-        gameplayStop: function() {},
-        commercialBreak: function() { return Promise.resolve(); },
-        rewardedBreak: function() { return Promise.resolve(true); },
-        displayAd: function() { return Promise.resolve(); },
-        destroyAd: function() {},
-        setDebug: function() {},
-        happyTime: function() {},
-        showLeaderboard: function() { return Promise.resolve(); }
-      };
-    }
+    window.poki_nobot = true;
+    var targetSDK = {
+      init: function() { return Promise.resolve(); },
+      gameLoadingStart: function() {},
+      gameLoadingFinished: function() {},
+      gameLoadingProgress: function() {},
+      gameplayStart: function() {},
+      gameplayStop: function() {},
+      commercialBreak: function() { return Promise.resolve(); },
+      rewardedBreak: function() { return Promise.resolve(true); },
+      displayAd: function() { return Promise.resolve(); },
+      destroyAd: function() {},
+      setDebug: function() {},
+      happyTime: function() {},
+      showLeaderboard: function() { return Promise.resolve(); },
+      getLeaderboard: function() { return Promise.resolve([]); },
+      measure: function() {},
+      setPlayerAge: function() {},
+      toggleMute: function() {},
+      captureError: function() {},
+      muteAd: function() {},
+      setPayload: function() {},
+      customEvent: function() {},
+      getPayload: function() { return Promise.resolve({}); },
+      isAdBlocked: function() { return false; },
+      getParam: function() { return null; },
+      shareableURL: function() { return Promise.resolve(window.__proxy_href); },
+      dequeue: function() {}
+    };
+    window.PokiSDK = new Proxy(targetSDK, {
+      get: function(t, p) {
+        if (p in t) return t[p];
+        return function() { return Promise.resolve(); };
+      }
+    });
     window.pokiBotDetected = [];
     window.pokiBotScore = 0;
     window.pokiBotVerified = true;
@@ -3089,9 +3136,10 @@ app.all("/api/proxy", async (req, res) => {
       var contentUrl = null;
       try {
         var rawHTML = document.documentElement ? document.documentElement.innerHTML : '';
-        var m = rawHTML.match(/https?:(?:\\u002F|\/)+(?:\\u002F|\/)+games\.poki\.com(?:\\u002F|\/)+[a-zA-Z0-9_\-\\\/]+/);
+        var rx = new RegExp('https?:[/\\\\u002F]+games\\\\.poki\\\\.com[/\\\\u002F0-9a-zA-Z_\\\\-]+');
+        var m = rawHTML.match(rx);
         if (m) {
-          contentUrl = m[0].replace(/\\u002F/g, '/').replace(/\\\//g, '/').replace(/\\/g, '');
+          contentUrl = m[0].replace(/\\u002F/g, '/').replace(/\\/g, '');
         }
       } catch(_) {}
 
@@ -3366,10 +3414,12 @@ if (window !== window.top) {
 
     if (contentType.includes("javascript") || (response.url && response.url.includes(".js"))) {
       let js = await response.text();
-      // Poki等のゲームSitelock解除 & デバッグモード有効化
+      // Poki等のゲームSitelock解除 & デバッグモード有効化 & ロケーション参照解決
       if (response.url && (response.url.includes("poki") || response.url.includes("fancade") || response.url.includes("turbowarp"))) {
         js = js.replace(/\bvar\s+pokiDebug\s*=\s*false;/g, "var pokiDebug = true;");
         js = js.replace(/\bpokiDebug\s*=\s*false\b/g, "pokiDebug = true");
+        js = js.replace(/\bwindow\.location\b/g, "window.__proxy_location");
+        js = js.replace(/\bdocument\.location\b/g, "window.__proxy_location");
       }
       res.setHeader("Content-Type", "application/javascript; charset=utf-8");
       return res.send(js);
