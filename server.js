@@ -3029,10 +3029,10 @@ app.all("/api/proxy", async (req, res) => {
 
       // PokiのgameUri（games.poki.comのPARAMS）をプロキシURLに直接書き換え
       html = html.replace(/"gameUri"\s*:\s*"([^"]+)"/g, (match, val) => {
-        return `"gameUri":"${resolveUrl(val)}"`;
+        return `"gameUri":"${resolveUrl(val)}&_ts=${Date.now()}"`;
       });
       html = html.replace(/'gameUri'\s*:\s*'([^']+)'/g, (match, val) => {
-        return `'gameUri':'${resolveUrl(val)}'`;
+        return `'gameUri':'${resolveUrl(val)}&_ts=${Date.now()}'`;
       });
 
       const interceptScript = `
@@ -3195,7 +3195,7 @@ app.all("/api/proxy", async (req, res) => {
       }
 
       if (contentUrl) {
-        var proxyUrl = '/api/proxy?url=' + encodeURIComponent(contentUrl);
+        var proxyUrl = '/api/proxy?url=' + encodeURIComponent(contentUrl) + '&_ts=' + Date.now();
         var iframe = document.createElement('iframe');
         iframe.id = 'game-element';
         iframe.name = 'gameFrame';
@@ -3428,6 +3428,8 @@ if (window !== window.top) {
       } else {
         html = navBar + html;
       }
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
       return res.send(html);
     }
 
