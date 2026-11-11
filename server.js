@@ -3137,32 +3137,33 @@ app.all("/api/proxy", async (req, res) => {
 
   if (baseUrl.includes('poki.com')) {
     function tryMountPokiGame() {
-      var gp = document.getElementById('game-player');
       var errEl = document.getElementById('pageError');
       if (errEl) {
         errEl.style.display = 'none';
-        if (!gp) {
-          gp = document.createElement('div');
-          gp.id = 'game-player';
-          gp.style.width = '100%';
-          gp.style.height = 'calc(100vh - 80px)';
-          gp.style.minHeight = '600px';
-          gp.style.margin = '10px auto';
-          gp.style.maxWidth = '1200px';
-          gp.style.background = '#0f172a';
-          gp.style.borderRadius = '16px';
-          gp.style.overflow = 'hidden';
-          gp.style.position = 'relative';
-          if (errEl.parentElement) {
-            errEl.parentElement.insertBefore(gp, errEl);
-          } else {
-            document.body.prepend(gp);
-          }
+        errEl.innerHTML = '';
+      }
+      var gp = document.getElementById('game-player');
+      if (!gp && baseUrl.includes('/g/')) {
+        gp = document.createElement('div');
+        gp.id = 'game-player';
+        gp.style.width = '100%';
+        gp.style.height = 'calc(100vh - 50px)';
+        gp.style.minHeight = '650px';
+        gp.style.margin = '0 auto';
+        gp.style.maxWidth = '1200px';
+        gp.style.background = '#0f172a';
+        gp.style.borderRadius = '16px';
+        gp.style.overflow = 'hidden';
+        gp.style.position = 'relative';
+        if (errEl && errEl.parentElement) {
+          errEl.parentElement.insertBefore(gp, errEl);
+        } else if (document.body) {
+          document.body.prepend(gp);
         }
       }
 
       if (!gp) return false;
-      if (gp.querySelector('iframe')) return true;
+      if (gp.querySelector('iframe#game-element')) return true;
 
       var contentUrl = null;
       try {
@@ -3199,7 +3200,7 @@ app.all("/api/proxy", async (req, res) => {
         iframe.style.width = '100%';
         iframe.style.height = '100%';
         iframe.style.border = 'none';
-        iframe.style.minHeight = '600px';
+        iframe.style.minHeight = '650px';
         iframe.allowFullscreen = true;
         iframe.setAttribute('allow', 'autoplay; fullscreen; camera; focus-without-user-activation *; monetization; gamepad; keyboard-map *; xr-spatial-tracking; clipboard-write; web-share; accelerometer; magnetometer; gyroscope; microphone *; screen-wake-lock');
         iframe.setAttribute('sandbox', 'allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-same-origin allow-downloads');
@@ -3215,12 +3216,8 @@ app.all("/api/proxy", async (req, res) => {
     } else {
       tryMountPokiGame();
     }
-    var checkTimer = setInterval(function() {
-      if (tryMountPokiGame()) {
-        clearInterval(checkTimer);
-      }
-    }, 250);
-    setTimeout(function() { clearInterval(checkTimer); }, 12000);
+    var checkTimer = setInterval(tryMountPokiGame, 400);
+    setTimeout(function() { clearInterval(checkTimer); }, 25000);
   }
 
   function toProxy(u) {
