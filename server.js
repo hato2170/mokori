@@ -3024,20 +3024,12 @@ app.all("/api/proxy", async (req, res) => {
         return `url("${resolveUrl(val)}")`;
       });
 
-      // PokiのgameUriおよびcontent埋め込みURLをプロキシURLに直接書き換え
+      // PokiのgameUri（games.poki.comのPARAMS）をプロキシURLに直接書き換え
       html = html.replace(/"gameUri"\s*:\s*"([^"]+)"/g, (match, val) => {
         return `"gameUri":"${resolveUrl(val)}"`;
       });
       html = html.replace(/'gameUri'\s*:\s*'([^']+)'/g, (match, val) => {
         return `'gameUri':'${resolveUrl(val)}'`;
-      });
-      html = html.replace(/"content"\s*:\s*"(https?:\\u002F\\u002Fgames\.poki\.com\\u002F[^"]+)"/g, (match, val) => {
-        const raw = val.replace(/\\u002F/g, '/');
-        const resolved = resolveUrl(raw);
-        return `"content":"${resolved.replace(/\//g, '\\u002F')}"`;
-      });
-      html = html.replace(/"content"\s*:\s*"(https:\/\/games\.poki\.com\/[^"]+)"/g, (match, val) => {
-        return `"content":"${resolveUrl(val)}"`;
       });
 
       const interceptScript = `
@@ -3457,12 +3449,13 @@ if (window !== window.top) {
       if (response.url && (response.url.includes("poki") || response.url.includes("fancade") || response.url.includes("turbowarp"))) {
         js = js.replace(/\bvar\s+pokiDebug\s*=\s*false;/g, "var pokiDebug = true;");
         js = js.replace(/\bpokiDebug\s*=\s*false\b/g, "pokiDebug = true");
+        js = js.replace(/\bself\.location\b/g, "window.__proxy_location");
         js = js.replace(/\bwindow\.location\b/g, "window.__proxy_location");
         js = js.replace(/\bdocument\.location\b/g, "window.__proxy_location");
-        js = js.replace(/\blocation\.pathname\b/g, "(window.__proxy_location ? window.__proxy_location.pathname : location.pathname)");
-        js = js.replace(/\blocation\.search\b/g, "(window.__proxy_location ? window.__proxy_location.search : location.search)");
-        js = js.replace(/\blocation\.hash\b/g, "(window.__proxy_location ? window.__proxy_location.hash : location.hash)");
-        js = js.replace(/\blocation\.href\b/g, "(window.__proxy_location ? window.__proxy_location.href : location.href)");
+        js = js.replace(/(?<![\.\w\$])location\.pathname\b/g, "(window.__proxy_location ? window.__proxy_location.pathname : location.pathname)");
+        js = js.replace(/(?<![\.\w\$])location\.search\b/g, "(window.__proxy_location ? window.__proxy_location.search : location.search)");
+        js = js.replace(/(?<![\.\w\$])location\.hash\b/g, "(window.__proxy_location ? window.__proxy_location.hash : location.hash)");
+        js = js.replace(/(?<![\.\w\$])location\.href\b/g, "(window.__proxy_location ? window.__proxy_location.href : location.href)");
       }
       res.setHeader("Content-Type", "application/javascript; charset=utf-8");
       return res.send(js);
