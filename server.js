@@ -2997,8 +2997,11 @@ app.all("/api/proxy", async (req, res) => {
           return rel;
         }
         try {
-          const abs = new URL(rel, baseUrl).href;
-          return proxyBase + encodeURIComponent(abs);
+          const absUrl = new URL(rel, baseUrl);
+          if (absUrl.pathname.endsWith(".js") && !absUrl.searchParams.has("_v")) {
+            absUrl.searchParams.set("_v", "101");
+          }
+          return proxyBase + encodeURIComponent(absUrl.href);
         } catch (_) {
           return rel;
         }
@@ -3223,7 +3226,11 @@ app.all("/api/proxy", async (req, res) => {
   function toProxy(u) {
     if (!u || typeof u !== 'string' || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('javascript:') || u.startsWith('#') || u.includes('/api/proxy?url=') || /^\\/(?:tensai-proxy|tube|music)(?:\\/|$)/.test(u)) return u;
     try {
-      return '/api/proxy?url=' + encodeURIComponent(new URL(u, baseUrl).href);
+      var absUrl = new URL(u, baseUrl);
+      if (absUrl.pathname.endsWith('.js') && !absUrl.searchParams.has('_v')) {
+        absUrl.searchParams.set('_v', '101');
+      }
+      return '/api/proxy?url=' + encodeURIComponent(absUrl.href);
     } catch(_) {
       return u;
     }
