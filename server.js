@@ -3146,33 +3146,56 @@ app.all("/api/proxy", async (req, res) => {
   if (baseUrl.includes('poki.com')) {
     function tryMountPokiGame() {
       var gp = document.getElementById('game-player');
+      var errEl = document.getElementById('pageError');
+      if (errEl) {
+        errEl.style.display = 'none';
+        if (!gp) {
+          gp = document.createElement('div');
+          gp.id = 'game-player';
+          gp.style.width = '100%';
+          gp.style.height = 'calc(100vh - 80px)';
+          gp.style.minHeight = '600px';
+          gp.style.margin = '10px auto';
+          gp.style.maxWidth = '1200px';
+          gp.style.background = '#0f172a';
+          gp.style.borderRadius = '16px';
+          gp.style.overflow = 'hidden';
+          gp.style.position = 'relative';
+          if (errEl.parentElement) {
+            errEl.parentElement.insertBefore(gp, errEl);
+          } else {
+            document.body.prepend(gp);
+          }
+        }
+      }
+
       if (!gp) return false;
       if (gp.querySelector('iframe')) return true;
 
       var contentUrl = null;
       try {
-        var rawHTML = document.documentElement ? document.documentElement.innerHTML : '';
-        var rx = new RegExp('https?:[/\\\\u002F]+games\\\\.poki\\\\.com[/\\\\u002F0-9a-zA-Z_\\\\-]+');
-        var m = rawHTML.match(rx);
-        if (m) {
-          contentUrl = m[0].split('\\\\u002F').join('/').split('\\\\').join('');
-        }
-      } catch(_) {}
-
-      if (!contentUrl) {
-        try {
-          if (window.INITIAL_STATE && window.INITIAL_STATE.api && window.INITIAL_STATE.api.queries) {
-            for (var k in window.INITIAL_STATE.api.queries) {
-              if (k.startsWith('getGame(')) {
-                var qData = window.INITIAL_STATE.api.queries[k].data;
-                if (qData && (qData.content || (qData.file && qData.file.content))) {
-                  contentUrl = qData.content || qData.file.content;
-                  break;
-                }
+        if (window.INITIAL_STATE && window.INITIAL_STATE.api && window.INITIAL_STATE.api.queries) {
+          for (var k in window.INITIAL_STATE.api.queries) {
+            if (k.startsWith('getGame(')) {
+              var qData = window.INITIAL_STATE.api.queries[k].data;
+              if (qData && (qData.content || (qData.file && qData.file.content))) {
+                contentUrl = qData.content || qData.file.content;
+                break;
               }
             }
           }
-        } catch(e) {}
+        }
+      } catch(e) {}
+
+      if (!contentUrl) {
+        try {
+          var rawHTML = document.documentElement ? document.documentElement.innerHTML : '';
+          var rx = new RegExp('https?:[/\\\\u002F]+games\\\\.poki\\\\.com[/\\\\u002F0-9a-zA-Z_\\\\-]+');
+          var m = rawHTML.match(rx);
+          if (m) {
+            contentUrl = m[0].split('\\\\u002F').join('/').split('\\\\').join('');
+          }
+        } catch(_) {}
       }
 
       if (contentUrl) {
@@ -3184,7 +3207,7 @@ app.all("/api/proxy", async (req, res) => {
         iframe.style.width = '100%';
         iframe.style.height = '100%';
         iframe.style.border = 'none';
-        iframe.style.minHeight = '550px';
+        iframe.style.minHeight = '600px';
         iframe.allowFullscreen = true;
         iframe.setAttribute('allow', 'autoplay; fullscreen; camera; focus-without-user-activation *; monetization; gamepad; keyboard-map *; xr-spatial-tracking; clipboard-write; web-share; accelerometer; magnetometer; gyroscope; microphone *; screen-wake-lock');
         iframe.setAttribute('sandbox', 'allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-same-origin allow-downloads');
@@ -3436,6 +3459,10 @@ if (window !== window.top) {
         js = js.replace(/\bpokiDebug\s*=\s*false\b/g, "pokiDebug = true");
         js = js.replace(/\bwindow\.location\b/g, "window.__proxy_location");
         js = js.replace(/\bdocument\.location\b/g, "window.__proxy_location");
+        js = js.replace(/\blocation\.pathname\b/g, "(window.__proxy_location ? window.__proxy_location.pathname : location.pathname)");
+        js = js.replace(/\blocation\.search\b/g, "(window.__proxy_location ? window.__proxy_location.search : location.search)");
+        js = js.replace(/\blocation\.hash\b/g, "(window.__proxy_location ? window.__proxy_location.hash : location.hash)");
+        js = js.replace(/\blocation\.href\b/g, "(window.__proxy_location ? window.__proxy_location.href : location.href)");
       }
       res.setHeader("Content-Type", "application/javascript; charset=utf-8");
       return res.send(js);
