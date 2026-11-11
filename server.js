@@ -3455,6 +3455,8 @@ if (window !== window.top) {
         js = js.replace(/(?<![\.\w\$])location\.href\b/g, "(window.__proxy_location ? window.__proxy_location.href : location.href)");
       }
       res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
       return res.send(js);
     }
 
