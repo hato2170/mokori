@@ -3024,6 +3024,22 @@ app.all("/api/proxy", async (req, res) => {
         return `url("${resolveUrl(val)}")`;
       });
 
+      // PokiのgameUriおよびcontent埋め込みURLをプロキシURLに直接書き換え
+      html = html.replace(/"gameUri"\s*:\s*"([^"]+)"/g, (match, val) => {
+        return `"gameUri":"${resolveUrl(val)}"`;
+      });
+      html = html.replace(/'gameUri'\s*:\s*'([^']+)'/g, (match, val) => {
+        return `'gameUri':'${resolveUrl(val)}'`;
+      });
+      html = html.replace(/"content"\s*:\s*"(https?:\\u002F\\u002Fgames\.poki\.com\\u002F[^"]+)"/g, (match, val) => {
+        const raw = val.replace(/\\u002F/g, '/');
+        const resolved = resolveUrl(raw);
+        return `"content":"${resolved.replace(/\//g, '\\u002F')}"`;
+      });
+      html = html.replace(/"content"\s*:\s*"(https:\/\/games\.poki\.com\/[^"]+)"/g, (match, val) => {
+        return `"content":"${resolveUrl(val)}"`;
+      });
+
       const interceptScript = `
 <script>
 (function() {
@@ -3139,7 +3155,7 @@ app.all("/api/proxy", async (req, res) => {
         var rx = new RegExp('https?:[/\\\\u002F]+games\\\\.poki\\\\.com[/\\\\u002F0-9a-zA-Z_\\\\-]+');
         var m = rawHTML.match(rx);
         if (m) {
-          contentUrl = m[0].replace(/\\u002F/g, '/').replace(/\\/g, '');
+          contentUrl = m[0].split('\\\\u002F').join('/').split('\\\\').join('');
         }
       } catch(_) {}
 
