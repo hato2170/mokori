@@ -459,11 +459,14 @@
       if (statusEl) statusEl.textContent = "呼び出し中… (マイク未許可・受信専用)";
     }
 
+    // WebRTC PeerConnection の初期化 (発信側)
+    setupWebRTC(chatId, true);
+
     // サーバーへ通話開始を送信
     try {
       const res = await window.api(`/api/calls/${chatId}/start`, { method: "POST" });
       activeCallSession = res.call;
-      startCallWatcher(chatId);
+      startCallWatcher(chatId, true);
     } catch (err) {
       stopRingtoneSound();
       alert("通話の開始に失敗しました: " + err.message);
@@ -471,8 +474,74 @@
     }
   };
 
+  // WebRTC ピア接続管理
+  let rtcPeerConnection = null;
+  let remoteAudioElement = null;
+
+  function ensureRemoteAudioElement() {
+    if (!remoteAudioElement) {
+      remoteAudioElement = document.createElement("audio");
+      remoteAudioElement.autoplay = true;
+      remoteAudioElement.style.display = "none";
+      document.body.appendChild(remoteAudioElement);
+    }
+    return remoteAudioElement;
+  }
+
+  function setupWebRTC(chatId, isCaller) {
+    if (rtcPeerConnection) {
+      try { rtcPeerConnection.close(); } catch(_) {}
+    }
+    try {
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" }
+        ]
+      });
+      rtcPeerConnection = pc;
+
+      if (callMediaStream) {
+        callMediaStream.getTracks().forEach(track => pc.addTrack(track, callMediaStream));
+      }
+
+      pc.ontrack = (event) => {
+        const audioEl = ensureRemoteAudioElement();
+        if (event.streams && event.streams[0]) {
+          audioEl.srcObject = event.streams[0];
+          audioEl.play().catch(() => {});
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          window.api(`/api/calls/${chatId}/signal`, {
+            method: "POST",
+            body: JSON.stringify({ signal: { type: "candidate", candidate: event.candidate } })
+          }).catch(() => {});
+        }
+      };
+
+      if (isCaller) {
+        pc.createOffer().then(offer => {
+          return pc.setLocalDescription(offer).then(() => {
+            window.api(`/api/calls/${chatId}/signal`, {
+              method: "POST",
+              body: JSON.stringify({ signal: { type: "offer", sdp: offer.sdp } })
+            }).catch(() => {});
+          });
+        }).catch(e => console.warn("WebRTC createOffer error:", e));
+      }
+
+      return pc;
+    } catch (e) {
+      console.warn("WebRTC setup error:", e);
+      return null;
+    }
+  }
+
   // 通話監視 & シグナリングポーリング
-  function startCallWatcher(chatId) {
+  function startCallWatcher(chatId, isCaller = false) {
     if (callPollerTimer) clearInterval(callPollerTimer);
     callPollerTimer = setInterval(async () => {
       try {
@@ -494,6 +563,31 @@
         }
 
         activeCallSession = call;
+
+        // WebRTCシグナリング処理 (offer/answer/candidate)
+        if (Array.isArray(res.signals) && rtcPeerConnection) {
+          for (const item of res.signals) {
+            const sig = item.signal;
+            if (!sig) continue;
+            try {
+              if (sig.type === "offer" && !isCaller) {
+                await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: sig.sdp }));
+                const answer = await rtcPeerConnection.createAnswer();
+                await rtcPeerConnection.setLocalDescription(answer);
+                await window.api(`/api/calls/${chatId}/signal`, {
+                  method: "POST",
+                  body: JSON.stringify({ signal: { type: "answer", sdp: answer.sdp } })
+                });
+              } else if (sig.type === "answer" && isCaller) {
+                await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: sig.sdp }));
+              } else if (sig.type === "candidate" && sig.candidate) {
+                await rtcPeerConnection.addIceCandidate(new RTCIceCandidate(sig.candidate)).catch(() => {});
+              }
+            } catch (sigErr) {
+              console.warn("Signal process error:", sigErr);
+            }
+          }
+        }
 
         // 相手が応答した瞬間
         if (call.status === "connected" && !callTimer) {
@@ -525,6 +619,14 @@
     callTimer = null;
     if (callPollerTimer) clearInterval(callPollerTimer);
     callPollerTimer = null;
+
+    if (rtcPeerConnection) {
+      try { rtcPeerConnection.close(); } catch(_) {}
+      rtcPeerConnection = null;
+    }
+    if (remoteAudioElement) {
+      try { remoteAudioElement.srcObject = null; } catch(_) {}
+    }
 
     if (callMediaStream) {
       try {
@@ -870,9 +972,21 @@
   // ----------------------------------------------------
   // 9. VOOM (タイムライン)
   // ----------------------------------------------------
+  window.closeVoomTab = function () {
+    const chatsArea = document.getElementById("chatListSection") || document.getElementById("chatListArea");
+    const friendsArea = document.getElementById("friendsSection") || document.getElementById("friendsArea");
+    const voomArea = document.getElementById("voomArea");
+    if (voomArea) voomArea.classList.add("hidden");
+    if (chatsArea) chatsArea.classList.remove("hidden");
+    if (friendsArea) friendsArea.classList.add("hidden");
+    document.querySelectorAll(".nav-tab").forEach(t => t.classList.remove("active"));
+    const cTab = document.getElementById("tabChats");
+    if (cTab) cTab.classList.add("active");
+  };
+
   window.openVoomTab = function () {
-    const chatsArea = document.getElementById("chatListArea");
-    const friendsArea = document.getElementById("friendsArea");
+    const chatsArea = document.getElementById("chatListSection") || document.getElementById("chatListArea");
+    const friendsArea = document.getElementById("friendsSection") || document.getElementById("friendsArea");
     let voomArea = document.getElementById("voomArea");
 
     if (!voomArea) {
@@ -901,9 +1015,14 @@
     area.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
         <h3 style="margin:0; font-size:16px; color:#1e293b;">🌏 VOOM タイムライン</h3>
-        <button onclick="window.createVoomPost()" style="background:#06c755; color:#fff; border:0; padding:6px 14px; border-radius:20px; font-weight:700; font-size:12px; cursor:pointer;">
-          ✏️ 投稿する
-        </button>
+        <div style="display:flex; gap:6px;">
+          <button onclick="window.createVoomPost()" style="background:#06c755; color:#fff; border:0; padding:6px 14px; border-radius:20px; font-weight:700; font-size:12px; cursor:pointer;">
+            ✏️ 投稿する
+          </button>
+          <button onclick="window.closeVoomTab()" style="background:#e2e8f0; color:#475569; border:0; padding:6px 10px; border-radius:12px; font-weight:700; font-size:12px; cursor:pointer;" title="VOOMを閉じる">
+            ✕ 閉じる
+          </button>
+        </div>
       </div>
       <div id="voomPostsList"><div style="text-align:center;padding:24px;color:#94a3b8;">読み込み中…</div></div>
     `;
@@ -919,24 +1038,34 @@
         return;
       }
 
+      const myUid = window.currentUser ? window.currentUser.uid : null;
       list.innerHTML = "";
       posts.forEach(post => {
+        const isMine = myUid && post.authorUid === myUid;
         const card = document.createElement("div");
         card.className = "voom-card";
         card.innerHTML = `
-          <div class="voom-header">
-            <div style="width:36px; height:36px; border-radius:50%; background:#06c755; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:bold;">
-              ${post.authorName ? post.authorName.charAt(0) : '🐐'}
+          <div class="voom-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="width:36px; height:36px; border-radius:50%; background:#06c755; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:bold;">
+                ${post.authorName ? post.authorName.charAt(0) : '🐐'}
+              </div>
+              <div>
+                <div style="font-weight:700; font-size:13px; color:#1e293b;">${window.escapeHtml(post.authorName || 'ユーザー')}</div>
+                <div style="font-size:11px; color:#94a3b8;">${new Date(post.createdAt).toLocaleString()}</div>
+              </div>
             </div>
-            <div>
-              <div style="font-weight:700; font-size:13px; color:#1e293b;">${window.escapeHtml(post.authorName || 'ユーザー')}</div>
-              <div style="font-size:11px; color:#94a3b8;">${new Date(post.createdAt).toLocaleString()}</div>
-            </div>
+            ${isMine ? `
+              <div style="display:flex; gap:4px;">
+                <button class="voom-edit-btn" style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:6px; font-size:11px; padding:2px 6px; cursor:pointer;">✏️ 編集</button>
+                <button class="voom-del-btn" style="background:#fee2e2; border:1px solid #fca5a5; color:#b91c1c; border-radius:6px; font-size:11px; padding:2px 6px; cursor:pointer;">🗑️ 削除</button>
+              </div>
+            ` : ''}
           </div>
-          <div class="voom-body">${window.escapeHtml(post.text || '')}</div>
-          ${post.imageUrl ? `<img src="${post.imageUrl}" class="voom-img">` : ''}
-          <div class="voom-footer">
-            <button class="voom-like-btn" style="background:none; border:none; cursor:pointer; color:#ef4444; font-weight:bold;">
+          <div class="voom-body" style="margin:8px 0; font-size:13px; color:#1e293b; white-space:pre-wrap;">${window.escapeHtml(post.text || '')}</div>
+          ${post.imageUrl ? `<img src="${post.imageUrl}" class="voom-img" style="width:100%; max-height:280px; object-fit:cover; border-radius:8px; margin-bottom:8px;">` : ''}
+          <div class="voom-footer" style="display:flex; justify-content:space-between; align-items:center;">
+            <button class="voom-like-btn" style="background:none; border:none; cursor:pointer; color:#ef4444; font-weight:bold; font-size:12px;">
               ❤️ いいね (${(post.likes || []).length})
             </button>
           </div>
@@ -946,6 +1075,32 @@
           await window.api(`/api/voom/posts/${post.id}/like`, { method: "POST" });
           window.loadVoomPosts();
         };
+
+        if (isMine) {
+          card.querySelector(".voom-del-btn").onclick = async () => {
+            if (!confirm("この投稿を削除しますか？")) return;
+            try {
+              await window.api(`/api/voom/posts/${post.id}`, { method: "DELETE" });
+              window.loadVoomPosts();
+            } catch (err) {
+              alert("削除に失敗しました: " + err.message);
+            }
+          };
+
+          card.querySelector(".voom-edit-btn").onclick = async () => {
+            const newText = prompt("編集後のメッセージを入力してください:", post.text || "");
+            if (newText === null) return;
+            try {
+              await window.api(`/api/voom/posts/${post.id}`, {
+                method: "PUT",
+                body: JSON.stringify({ text: newText })
+              });
+              window.loadVoomPosts();
+            } catch (err) {
+              alert("編集に失敗しました: " + err.message);
+            }
+          };
+        }
 
         list.appendChild(card);
       });
@@ -957,8 +1112,23 @@
 
   window.createVoomPost = async function () {
     const text = prompt("VOOMに投稿するメッセージを入力してください:");
-    if (!text) return;
-    const imageUrl = prompt("画像URL (空欄ならテキストのみ):");
+    if (!text && text !== "") return;
+
+    let imageUrl = "";
+    if (confirm("写真を添付しますか？（「キャンセル」でテキストのみ投稿）")) {
+      const file = await new Promise(resolve => {
+        const inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = "image/*";
+        inp.onchange = (e) => resolve(e.target.files && e.target.files[0]);
+        inp.click();
+      });
+      if (file && window.compressImageFile) {
+        try {
+          imageUrl = await window.compressImageFile(file, 960, 960, 0.8);
+        } catch (_) {}
+      }
+    }
 
     try {
       await window.api("/api/voom/posts", {
@@ -967,7 +1137,7 @@
       });
       window.loadVoomPosts();
     } catch(e) {
-      alert("投稿に失敗しました。");
+      alert("投稿に失敗しました: " + e.message);
     }
   };
 

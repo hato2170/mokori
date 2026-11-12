@@ -596,10 +596,11 @@
             const query = `${artist} ${title}`;
             const sRes = await fetch(`${API_BASE}/api/tube/search?q=${encodeURIComponent(query)}`);
             const sData = await sRes.json();
-            if (sData && sData.results && sData.results[0]) {
+            const list = (sData && (sData.videos || sData.results || sData.tracks)) || [];
+            if (list.length > 0 && list[0].id) {
               const bgFrame = document.getElementById("fullMusicFrame");
               if (bgFrame) {
-                bgFrame.src = `${API_BASE}/api/tube/stream?v=${encodeURIComponent(sData.results[0].id)}&autoplay=1`;
+                bgFrame.src = `${API_BASE}/api/tube/stream?v=${encodeURIComponent(list[0].id)}&autoplay=1`;
                 document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺ストリーミング中 (Education)";
                 document.getElementById("dockPlayBtn").textContent = "⏸";
                 return;

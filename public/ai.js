@@ -1,6 +1,3 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js";
-
 const firebaseConfig = {
   apiKey: "AIzaSyAXv7r2M0q22JLa0s4XcpPomf-KW19CPPE",
   authDomain: "mokori-by-riona-iwakami.firebaseapp.com",
@@ -10,8 +7,10 @@ const firebaseConfig = {
   appId: "1:78875890394:web:ee631706d895893ec10be3"
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
+if (!firebase.apps || !firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+}
+const auth = firebase.auth();
 
 // Cloudflare Worker API URL
 const WORKER_URL = window.MYYAJUU_AI_WORKER_URL || "https://myyajuu-ai-worker.harumei-260329.workers.dev";
@@ -163,42 +162,67 @@ if (imageGenBtn) {
   });
 }
 
+// 画像のクライアント側自動リサイズ・圧縮 (2MB制限を完全に突破)
+function compressImageForAi(file, maxWidth = 1024, maxHeight = 1024, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let w = img.width;
+        let h = img.height;
+        if (w > maxWidth || h > maxHeight) {
+          if (w > h) {
+            h = Math.round((h * maxWidth) / w);
+            w = maxWidth;
+          } else {
+            w = Math.round((w * maxHeight) / h);
+            h = maxHeight;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // ファイル添付ボタン
 if (attachBtn && fileInput) {
   attachBtn.addEventListener("click", () => fileInput.click());
-  fileInput.addEventListener("change", (e) => {
+  fileInput.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
-    if (file.size > 2 * 1024 * 1024) {
-      alert("ファイルサイズは2MB以内で指定してください。");
-      fileInput.value = "";
-      return;
-    }
 
     currentAttachment = null;
     attachmentPreviewArea.hidden = true;
     if (file.type.startsWith("image/")) {
-      const imgReader = new FileReader();
       const readVersion = ++attachmentReadVersion;
       const uidForRead = currentUid;
       const authVersionForRead = authStateVersion;
-      imgReader.onerror = () => {
-        if (readVersion === attachmentReadVersion && currentUid === uidForRead && authStateVersion === authVersionForRead) {
-          showError("画像を読み込めませんでした。");
-        }
-      };
-      imgReader.onload = (evt) => {
+      try {
+        const compressedDataUrl = await compressImageForAi(file);
         if (readVersion !== attachmentReadVersion || currentUid !== uidForRead || authStateVersion !== authVersionForRead) return;
         currentAttachment = {
           name: file.name,
           type: "image",
-          content: evt.target.result,
+          content: compressedDataUrl,
           isImage: true,
         };
         showAttachmentPreview(file.name, "🖼️");
-      };
-      imgReader.readAsDataURL(file);
+      } catch (err) {
+        if (readVersion === attachmentReadVersion && currentUid === uidForRead && authStateVersion === authVersionForRead) {
+          showError("画像の読み込み・最適化に失敗しました。");
+        }
+      }
       return;
     }
 
@@ -894,7 +918,7 @@ renderHistory();
 syncUI();
 
 // 認証監視
-onAuthStateChanged(auth, async (user) => {
+auth.onAuthStateChanged(async (user) => {
   const nextUid = user?.uid || null;
   const identityChanged = nextUid !== currentUid;
 
@@ -990,9 +1014,7 @@ try {
   if (savedSession) {
     const parsed = JSON.parse(savedSession);
     if (parsed.email && parsed.pass && !auth.currentUser) {
-      import("https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js").then(({ signInWithEmailAndPassword }) => {
-        signInWithEmailAndPassword(auth, parsed.email, parsed.pass).catch(() => {});
-      });
+      auth.signInWithEmailAndPassword(parsed.email, parsed.pass).catch(() => {});
     }
   }
 } catch (e) {}

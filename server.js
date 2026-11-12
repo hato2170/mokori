@@ -1459,11 +1459,89 @@ app.get("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
 
   try {
     // インメモリ超高速取得 (Firestoreクォータ枯渇・遅延・ハングを完全排除)
-    const messages = await getChatMessagesFast(chatId);
+    let messages = await getChatMessagesFast(chatId);
+
+    // 途中からグループ・全体グループに入ってきたメンバーへの過去ログ保護
+    if (db && (chatId === "all_members" || chatId.startsWith("group_") || chatId.startsWith("grp_"))) {
+      try {
+        const chatDoc = await db.collection("chats").doc(chatId).get();
+        if (chatDoc.exists) {
+          const cData = chatDoc.data();
+          const myInfo = cData.memberInfo && cData.memberInfo[myUid];
+          const myJoinedAt = myInfo && myInfo.joinedAt;
+          if (myJoinedAt) {
+            const joinMs = myJoinedAt.toMillis ? myJoinedAt.toMillis() : (typeof myJoinedAt === "number" ? myJoinedAt : 0);
+            if (joinMs > 0) {
+              messages = messages.filter(m => {
+                if (!m.createdAt) return true;
+                const mMs = m.createdAt.toMillis ? m.createdAt.toMillis() : (typeof m.createdAt === "number" ? m.createdAt : (m.createdAt._seconds ? m.createdAt._seconds * 1000 : 0));
+                return mMs >= (joinMs - 2000); // 参加直前2秒以降のみ表示
+              });
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
     return res.json({ messages });
   } catch (error) {
     console.error("メッセージ取得エラー:", error);
     return res.status(500).json({ error: "メッセージの取得に失敗しました。" });
+  }
+});
+
+// 既読API (個別・グループ・全体・AIチャットの未読通知解除 & 既読者リスト更新)
+app.post("/api/chats/:chatId/read", requireLogin, async (req, res) => {
+  const chatId = req.params.chatId;
+  const myUid = req.user.uid;
+  const now = admin.firestore.Timestamp.now();
+
+  try {
+    // 1. メモリ内メッセージのreadByを即時更新
+    let updatedCount = 0;
+    if (memoryChatMessages.has(chatId)) {
+      const list = memoryChatMessages.get(chatId) || [];
+      for (const m of list) {
+        if (!m.readBy) m.readBy = [];
+        if (!m.readBy.includes(myUid)) {
+          m.readBy.push(myUid);
+          updatedCount++;
+        }
+      }
+    }
+
+    // 2. FirestoreのチャットreadStatusを更新 (未読バッジの即時消去)
+    if (db) {
+      const chatRef = db.collection("chats").doc(chatId);
+      chatRef.set({
+        readStatus: { [myUid]: now }
+      }, { merge: true }).catch(() => {});
+
+      // メッセージのreadByもバッチ更新 (直近50件)
+      chatRef.collection("messages")
+        .orderBy("createdAt", "desc")
+        .limit(50)
+        .get()
+        .then(snap => {
+          const batch = db.batch();
+          let count = 0;
+          snap.docs.forEach(doc => {
+            const data = doc.data();
+            const readBy = Array.isArray(data.readBy) ? data.readBy : [];
+            if (!readBy.includes(myUid)) {
+              batch.update(doc.ref, {
+                readBy: admin.firestore.FieldValue.arrayUnion(myUid)
+              });
+              count++;
+            }
+          });
+          if (count > 0) batch.commit().catch(() => {});
+        }).catch(() => {});
+    }
+
+    return res.json({ ok: true, updatedCount });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -1777,7 +1855,14 @@ app.post("/api/games/rooms/:roomId/update", requireLogin, async (req, res) => {
   let room = memoryGameRooms.get(roomId);
   if (!room) return res.status(404).json({ error: "ルームが見つかりません。" });
 
-  if (req.body.state) room.state = req.body.state;
+  if (req.body.state) {
+    room.state = {
+      ...(room.state || {}),
+      ...req.body.state,
+      updatedBy: myUid,
+      updatedAt: Date.now()
+    };
+  }
   if (req.body.status) room.status = req.body.status;
   room.updatedAt = Date.now();
   memoryGameRooms.set(roomId, room);
@@ -2740,6 +2825,48 @@ app.post("/api/voom/posts/:postId/like", requireLogin, async (req, res) => {
     }
     await postRef.update({ likes });
     return res.json({ ok: true, likes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// VOOM 投稿削除
+app.delete("/api/voom/posts/:postId", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  try {
+    const docRef = db.collection("voom_posts").doc(req.params.postId);
+    const snap = await docRef.get();
+    if (!snap.exists) return res.status(404).json({ error: "投稿が見つかりません" });
+    const post = snap.data();
+    if (post.authorUid !== myUid) {
+      return res.status(403).json({ error: "自分の投稿のみ削除できます" });
+    }
+    await docRef.delete();
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// VOOM 投稿編集
+app.put("/api/voom/posts/:postId", requireLogin, async (req, res) => {
+  if (!db) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const { text, imageUrl } = req.body;
+  try {
+    const docRef = db.collection("voom_posts").doc(req.params.postId);
+    const snap = await docRef.get();
+    if (!snap.exists) return res.status(404).json({ error: "投稿が見つかりません" });
+    const post = snap.data();
+    if (post.authorUid !== myUid) {
+      return res.status(403).json({ error: "自分の投稿のみ編集できます" });
+    }
+    const updateData = { updatedAt: Date.now() };
+    if (text !== undefined) updateData.text = String(text).slice(0, 1000);
+    if (imageUrl !== undefined) updateData.imageUrl = String(imageUrl);
+    await docRef.update(updateData);
+    return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

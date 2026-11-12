@@ -403,6 +403,8 @@
     let myRole = 1; // 1: 黒(ホスト), 2: 白(参加者)
     let opponentName = "対戦相手";
     let othelloCpuDifficulty = "normal";
+    let othelloMoveSeq = 0;
+    let isMoveInFlight = false;
 
     container.innerHTML = `
       <div style="padding:16px; max-width:400px; margin:0 auto; text-align:center;">
@@ -559,9 +561,13 @@
     }
 
     async function makeMove(r, c, flips) {
-      if (isGameOver) return;
+      if (isGameOver || isMoveInFlight) return;
       if (isOnline && turn !== myRole) return;
       if (!isOnline && turn !== 1) return;
+
+      isMoveInFlight = true;
+      othelloMoveSeq += 1;
+      const thisMoveSeq = othelloMoveSeq;
 
       playTone(440, "sine", 0.08);
 
@@ -580,7 +586,8 @@
         const myMovesAgain = getValidMoves(board, movingRole);
         if (myMovesAgain.length > 0) {
           nextTurn = movingRole;
-          document.getElementById("othStatusBanner").textContent = "置けるマスがないためパスされました！";
+          const banner = document.getElementById("othStatusBanner");
+          if (banner) banner.textContent = "置けるマスがないため相手はパスされました！";
         } else {
           over = true;
           isGameOver = true;
@@ -598,14 +605,18 @@
               state: {
                 board,
                 turn,
-                isGameOver: over
+                isGameOver: over,
+                moveCount: thisMoveSeq
               }
             })
           });
         } catch (e) {
           console.warn("Move sync error:", e);
+        } finally {
+          isMoveInFlight = false;
         }
       } else {
+        isMoveInFlight = false;
         setTimeout(runCpuMove, 500);
       }
     }
@@ -747,12 +758,18 @@
       }
 
       if (room.state) {
-        if (room.state.board) board = room.state.board;
-        if (room.state.turn) turn = room.state.turn;
-        if (room.state.isGameOver !== undefined) isGameOver = room.state.isGameOver;
+        const remoteSeq = Number(room.state.moveCount || 0);
+        // ローカルで打った直後や、サーバーから古い状態が返った場合は巻き戻さない
+        if (remoteSeq >= othelloMoveSeq || !isMoveInFlight) {
+          if (remoteSeq > othelloMoveSeq) {
+            othelloMoveSeq = remoteSeq;
+          }
+          if (room.state.board) board = room.state.board;
+          if (room.state.turn) turn = room.state.turn;
+          if (room.state.isGameOver !== undefined) isGameOver = room.state.isGameOver;
+          renderBoard();
+        }
       }
-
-      renderBoard();
     }
 
     function switchToCpu() {

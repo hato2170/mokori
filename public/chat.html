@@ -2062,6 +2062,14 @@
       console.warn("Chat info error:", err);
     }
 
+    // 既読APIの送信 (未読バッジの即時消去 & 相手への既読通知)
+    api("/api/chats/" + chatId + "/read", { method: "POST" }).catch(() => {});
+    const targetChat = allChats.find(c => c.id === chatId);
+    if (targetChat) {
+      targetChat.unread = false;
+      updateTotalUnread();
+    }
+
     renderChatList();
     await loadMessages(true);
   }
@@ -2069,12 +2077,16 @@
 
   function updateRoomHeader() {
     if (!activeChatData) return;
-    const isGroup = activeChatData.type === "group";
+    const isAll = activeChatData.type === "all" || activeChatData.id === "all_members";
+    const isGroup = activeChatData.type === "group" || isAll;
+    const count = activeChatData.members ? activeChatData.members.length : 0;
     document.getElementById("roomTitle").textContent = activeChatData.name || "トーク";
-    document.getElementById("roomAvatar").textContent = isGroup ? "👥" : (activeChatData.name ? activeChatData.name.charAt(0) : "🐐");
-    document.getElementById("roomSubtitle").textContent = isGroup
-      ? `${activeChatData.members.length}人のメンバー`
-      : "1対1トーク";
+    document.getElementById("roomAvatar").textContent = isAll ? "🐐" : (isGroup ? "👥" : (activeChatData.name ? activeChatData.name.charAt(0) : "🐐"));
+    document.getElementById("roomSubtitle").textContent = isAll
+      ? `全メンバー参加 (${count}人)`
+      : (activeChatData.type === "ai"
+        ? "専用AIアシスタント"
+        : (isGroup ? `${count}人のメンバー` : "1対1トーク"));
   }
 
   function updateAnnouncement() {
@@ -2368,7 +2380,7 @@
 
       // 自分のメッセージの既読表示 (LINEと同じ)
       if (mine && !msg.unsent && activeChatData) {
-        const isGroup = activeChatData.type === "group";
+        const isGroup = activeChatData.type === "group" || activeChatData.type === "all" || activeChatData.id === "all_members";
         const readBy = Array.isArray(msg.readBy) ? msg.readBy : [];
         const otherReaders = readBy.filter((u) => u !== currentUser.uid);
 
@@ -2377,6 +2389,12 @@
             const readTag = document.createElement("div");
             readTag.className = "read-badge";
             readTag.textContent = `既読 ${otherReaders.length}`;
+            readTag.style.cursor = "pointer";
+            readTag.title = "タップして既読をつけた人を確認";
+            readTag.onclick = (e) => {
+              e.stopPropagation();
+              window.showReadersModal(otherReaders, activeChatData);
+            };
             meta.appendChild(readTag);
           }
         } else {
@@ -2386,6 +2404,13 @@
             const readTag = document.createElement("div");
             readTag.className = "read-badge";
             readTag.textContent = "既読";
+            readTag.style.cursor = "pointer";
+            readTag.title = "タップして既読をつけた人を確認";
+            readTag.onclick = (e) => {
+              e.stopPropagation();
+              const pInfo = activeChatData.memberInfo && activeChatData.memberInfo[partnerUid];
+              alert(`既読者: ${pInfo ? pInfo.username : (activeChatData.name || "相手")}`);
+            };
             meta.appendChild(readTag);
           }
         }
@@ -2629,25 +2654,102 @@
     }
   });
 
-  // 画像アップロード (Base64)
+  // 画像のクライアント側自動リサイズ・圧縮 (2MB制限・Payload Too Large完全根絶)
+  window.compressImageFile = function (file, maxWidth = 1024, maxHeight = 1024, quality = 0.8) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          let w = img.width;
+          let h = img.height;
+          if (w > maxWidth || h > maxHeight) {
+            if (w > h) {
+              h = Math.round((h * maxWidth) / w);
+              w = maxWidth;
+            } else {
+              w = Math.round((w * maxHeight) / h);
+              h = maxHeight;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/jpeg", quality));
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // 既読者一覧モーダル表示
+  window.showReadersModal = function (readerUids, chatData) {
+    let modal = document.getElementById("readersModal");
+    if (!modal) {
+      modal = document.createElement("div");
+      modal.id = "readersModal";
+      modal.className = "modal-backdrop";
+      modal.innerHTML = `
+        <div class="modal-card" style="max-width:340px;">
+          <div class="modal-header">
+            <span id="readersModalTitle">既読をつけたメンバー</span>
+            <button class="close-modal-btn" onclick="document.getElementById('readersModal').classList.add('hidden')">✕</button>
+          </div>
+          <div class="modal-body" style="padding:16px;">
+            <div id="readersListItems" style="max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;"></div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    }
+
+    document.getElementById("readersModalTitle").textContent = `既読をつけたメンバー (${readerUids.length}人)`;
+    const listEl = document.getElementById("readersListItems");
+    listEl.innerHTML = "";
+
+    if (!readerUids || readerUids.length === 0) {
+      listEl.innerHTML = `<div style="text-align:center; color:#94a3b8; font-size:13px; padding:12px;">まだ既読をつけたメンバーはいません</div>`;
+    } else {
+      readerUids.forEach(uid => {
+        const info = (chatData && chatData.memberInfo && chatData.memberInfo[uid]) || {};
+        const name = info.username || (uid === "ai_assistant" ? "AIアシスタント" : "ユーザー (" + uid.slice(0, 5) + ")");
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:8px; background:#f8fafc;";
+        row.innerHTML = `
+          <div style="width:32px; height:32px; border-radius:50%; background:#06c755; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px;">
+            ${name.charAt(0)}
+          </div>
+          <div style="font-weight:600; font-size:13px; color:#1e293b;">${escapeHtml(name)}</div>
+        `;
+        listEl.appendChild(row);
+      });
+    }
+
+    modal.classList.remove("hidden");
+  };
+
+  // 画像アップロード (最適化圧縮付き)
   const imageInput = document.getElementById("imageFileInput");
   document.getElementById("imageUploadBtn").addEventListener("click", () => imageInput.click());
-  imageInput.addEventListener("change", (e) => {
+  imageInput.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (file.size > 8 * 1024 * 1024) {
-      alert("画像サイズは8MB以下にしてください。");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
+    try {
+      const compressedDataUrl = await window.compressImageFile(file, 1024, 1024, 0.8);
       sendMessage({
         type: "image",
-        imageUrl: ev.target.result
+        imageUrl: compressedDataUrl
       });
+    } catch (err) {
+      alert("画像の送信に失敗しました: " + err.message);
+    } finally {
       imageInput.value = "";
-    };
-    reader.readAsDataURL(file);
+    }
   });
 
   // スタンプドロワーのトグル
@@ -2700,6 +2802,10 @@
   document.getElementById("tabChats").addEventListener("click", () => {
     document.getElementById("tabChats").classList.add("active");
     document.getElementById("tabFriends").classList.remove("active");
+    const vTab = document.getElementById("tabVoom");
+    if (vTab) vTab.classList.remove("active");
+    const voomArea = document.getElementById("voomArea");
+    if (voomArea) voomArea.classList.add("hidden");
     document.getElementById("chatListSection").classList.remove("hidden");
     document.getElementById("friendsSection").classList.add("hidden");
   });
@@ -2707,6 +2813,10 @@
   document.getElementById("tabFriends").addEventListener("click", () => {
     document.getElementById("tabFriends").classList.add("active");
     document.getElementById("tabChats").classList.remove("active");
+    const vTab = document.getElementById("tabVoom");
+    if (vTab) vTab.classList.remove("active");
+    const voomArea = document.getElementById("voomArea");
+    if (voomArea) voomArea.classList.add("hidden");
     document.getElementById("friendsSection").classList.remove("hidden");
     document.getElementById("chatListSection").classList.add("hidden");
   });
@@ -3098,12 +3208,38 @@
     }
   };
 
+  window.selectedProfilePhotoUrl = null;
+
+  window.handleProfilePhotoUpload = async function (event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    try {
+      const compressedDataUrl = await window.compressImageFile(file, 400, 400, 0.85);
+      window.selectedProfilePhotoUrl = compressedDataUrl;
+      const preview = document.getElementById("myProfileAvatarPreview");
+      if (preview) {
+        preview.innerHTML = `<img src="${compressedDataUrl}" style="width:100%;height:100%;object-fit:cover;">`;
+      }
+    } catch (err) {
+      alert("画像の読み込み・最適化に失敗しました。");
+    }
+  };
+
+  window.clearProfilePhoto = function () {
+    window.selectedProfilePhotoUrl = null;
+    const preview = document.getElementById("myProfileAvatarPreview");
+    if (preview) preview.textContent = "🐐";
+    const input = document.getElementById("myProfilePhotoFileInput");
+    if (input) input.value = "";
+  };
+
   window.closeProfileModal = function () {
     const modal = document.getElementById("profileModal");
     if (modal) modal.classList.add("hidden");
   };
 
   window.setAvatarPreset = function (emoji) {
+    window.selectedProfilePhotoUrl = null;
     myProfileAvatarPreset = emoji;
     const preview = document.getElementById("myProfileAvatarPreview");
     if (preview) preview.textContent = emoji;
@@ -3134,7 +3270,7 @@
           username: newUsername,
           statusMessage: newStatus,
           bio: document.getElementById("myProfileBioInput") ? document.getElementById("myProfileBioInput").value.trim() : "",
-          photoURL: myProfileAvatarPreset
+          photoURL: window.selectedProfilePhotoUrl || myProfileAvatarPreset
         })
       });
 
