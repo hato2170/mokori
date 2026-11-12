@@ -440,10 +440,8 @@
         audioEl.pause();
         frame.style.display = "block";
         frame.style.zIndex = "10";
-        const param = liveEduParam || EDU_PARAMS;
-        frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${param}&playlist=${currentVideoId}`;
-        statusSpan.textContent = "🎬 学校iPad (アンブロック再生中)";
-        if (!liveEduParam) loadLiveEduParam();
+        frame.src = `https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&rel=0`;
+        statusSpan.textContent = "🎬 学校iPad (アンブロック高速再生中)";
       } else if (currentMode === "mp4") {
         frame.style.display = "none";
         frame.src = "about:blank";
