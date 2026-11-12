@@ -417,6 +417,13 @@
       } catch (_) {}
     }
 
+    function clearMediaLoadTimer() {
+      if (bufferStallTimer) {
+        clearTimeout(bufferStallTimer);
+        bufferStallTimer = null;
+      }
+    }
+
     let playerLoadId = 0;
 
     async function updatePlayerSrc(autoplay = true) {
