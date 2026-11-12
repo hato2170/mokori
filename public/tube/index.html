@@ -309,7 +309,7 @@
     ];
 
     let currentVideoId = "";
-    let currentMode = "mp4";
+    let currentMode = "edu";
     let liveEduParam = "";
     const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori.onrender.com";
 
@@ -360,16 +360,16 @@
       bufferStallTimer = setTimeout(() => {
         if (mp4Video.paused || mp4Video.readyState < 3) {
           console.warn("Buffer stall detected, auto-switching to high-speed mirror player");
-          switchPlayerMode("shiatube");
+          switchPlayerMode("edu");
         }
-      }, 2500);
+      }, 1500);
     });
     mp4Video.addEventListener("stalled", () => {
       setMp4Status("⚠️ 動画の読み込みが停滞しています");
       clearTimeout(bufferStallTimer);
       bufferStallTimer = setTimeout(() => {
-        switchPlayerMode("shiatube");
-      }, 2000);
+        switchPlayerMode("edu");
+      }, 1500);
     });
     mp4Video.addEventListener("pause", () => {
       if (!mp4Video.ended) setMp4Status("⏸ 動画を一時停止中");
@@ -379,7 +379,7 @@
       clearTimeout(bufferStallTimer);
       if (!mp4Video.currentSrc) return;
       console.warn("MP4 video stream error, auto-switching to mirror player");
-      switchPlayerMode("shiatube");
+      switchPlayerMode("edu");
     });
 
     function renderCards(list) {

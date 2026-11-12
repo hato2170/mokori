@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>📬 捨てメアド発行 · mokori</title>
+  <style>
+    :root {
+      --primary: #06c755;
+      --primary-hover: #05a847;
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 16px;
+      color: #fff;
+      text-decoration: none;
+    }
+    .back-btn {
+      background: var(--border);
+      color: #fff;
+      border: 0;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    main {
+      flex: 1;
+      max-width: 720px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 20px 16px 40px;
+    }
+    .hero {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .hero h1 {
+      font-size: 22px;
+      font-weight: 800;
+      margin-bottom: 6px;
+      color: #fff;
+    }
+    .hero p {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .mail-box {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    }
+    .mail-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .mail-display-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .mail-address-input {
+      flex: 1;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 15px;
+      font-family: monospace;
+      color: var(--accent);
+      outline: none;
+      user-select: all;
+    }
+    .btn {
+      background: var(--primary);
+      color: #fff;
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--primary-hover); }
+    .btn-secondary {
+      background: #334155;
+    }
+    .btn-secondary:hover { background: #475569; }
+    .action-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .action-row .btn {
+      flex: 1;
+      justify-content: center;
+    }
+
+    /* 認証コード強調表示カード */
+    .code-card {
+      background: linear-gradient(135deg, rgba(6,199,85,0.15), rgba(56,189,248,0.15));
+      border: 2px solid var(--primary);
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 24px;
+      display: none;
+      animation: pulseBorder 2s infinite;
+    }
+    @keyframes pulseBorder {
+      0% { box-shadow: 0 0 0 0 rgba(6,199,85,0.4); }
+      70% { box-shadow: 0 0 0 10px rgba(6,199,85,0); }
+      100% { box-shadow: 0 0 0 0 rgba(6,199,85,0); }
+    }
+    .code-header {
+      font-size: 12px;
+      color: #86efac;
+      font-weight: 700;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .code-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .code-digits {
+      font-size: 32px;
+      font-weight: 900;
+      letter-spacing: 4px;
+      color: #ffffff;
+      font-family: monospace;
+    }
+    .code-copy-btn {
+      background: var(--primary);
+      color: #fff;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    /* ガイド */
+    .guide-card {
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 24px;
+      font-size: 13px;
+      color: #cbd5e1;
+      line-height: 1.6;
+    }
+    .guide-card strong { color: #fff; }
+    .quick-links {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .quick-link-btn {
+      flex: 1;
+      background: #1e293b;
+      border: 1px solid #475569;
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      text-decoration: none;
+      text-align: center;
+      font-weight: 600;
+      display: block;
+    }
+    .quick-link-btn:hover { background: #334155; }
+
+    /* 受信トレイ */
+    .inbox-section {
+      margin-top: 10px;
+    }
+    .inbox-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .inbox-title {
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .status-badge {
+      font-size: 11px;
+      padding: 3px 8px;
+      background: rgba(6,199,85,0.15);
+      color: #86efac;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      background: #86efac;
+      border-radius: 50%;
+      animation: blink 1.5s infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .inbox-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .inbox-empty {
+      text-align: center;
+      padding: 40px 20px;
+      background: var(--card-bg);
+      border: 1px dashed var(--border);
+      border-radius: 12px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .msg-item {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: transform 0.1s, border-color 0.15s;
+    }
+    .msg-item:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .msg-item-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .msg-sender {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .msg-time {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .msg-subject {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .msg-intro {
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .msg-code-badge {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 10px;
+      background: rgba(6,199,85,0.2);
+      border: 1px solid var(--primary);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #86efac;
+      font-family: monospace;
+    }
+
+    /* メール詳細モーダル */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 1000;
+    }
+    .modal {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: 100%;
+      max-width: 600px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .modal-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-title { font-size: 15px; font-weight: bold; }
+    .modal-close {
+      background: 0; border: 0; color: #fff; font-size: 18px; cursor: pointer;
+    }
+    .modal-body {
+      padding: 18px;
+      overflow-y: auto;
+      flex: 1;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .modal-body iframe {
+      width: 100%;
+      min-height: 300px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(6, 199, 85, 0.95);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: bold;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 2000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/chat.html" class="brand">
+      <span>🐐</span>
+      <span>mokori 捨てメアド</span>
+    </a>
+    <a href="/chat.html" class="back-btn">💬 トークへ戻る</a>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>📬 捨てメアド即時発行</h1>
+      <p>Instagram、TikTokなどの新規登録・認証コード受信にそのまま使えます</p>
+    </div>
+
+    <!-- 認証コード強調表示カード（コード検出時に表示） -->
+    <div id="codeCard" class="code-card">
+      <div class="code-header">
+        <span>🔑</span>
+        <span id="codeService">最新の認証コード</span>
+      </div>
+      <div class="code-content">
+        <div class="code-digits" id="codeDigits">123456</div>
+        <button class="code-copy-btn" onclick="copyCode()">📋 コードをコピー</button>
+      </div>
+    </div>
+
+    <div class="mail-box">
+      <div class="mail-label">
+        <span>現在の使い捨てメールアドレス</span>
+        <span id="domainTag" style="color:var(--accent);">自動割り当て</span>
+      </div>
+      <div class="mail-display-row">
+        <input type="text" id="mailAddress" class="mail-address-input" readonly value="メアドを生成中...">
+        <button class="btn" onclick="copyEmail()">📋 コピー</button>
+      </div>
+      <div class="action-row">
+        <button class="btn btn-secondary" onclick="generateNewMail()">🎲 新しいメアドを発行</button>
+        <button class="btn btn-secondary" onclick="fetchMessages(true)">🔄 受信を確認</button>
+      </div>
+    </div>
+
+    <div class="guide-card">
+      <strong>💡 使い方ガイド</strong>
+      <p>① 上のメールアドレスを「コピー」します。<br>
+      ② InstagramやTikTokの新規登録画面のメールアドレス欄に貼り付けます。<br>
+      ③ 送信されると、約2〜5秒でこの画面に<strong>認証コード（数字）</strong>が大きく表示されます！</p>
+      <div class="quick-links">
+        <a href="/api/proxy?url=https%3A%2F%2Fwww.instagram.com%2Faccounts%2Femailsignup%2F" class="quick-link-btn">📸 Instagram 登録を開く</a>
+        <a href="/api/proxy?url=https%3A%2F%2Fwww.tiktok.com%2Fsignup" class="quick-link-btn">🎵 TikTok 登録を開く</a>
+      </div>
+    </div>
+
+    <div class="inbox-section">
+      <div class="inbox-header">
+        <div class="inbox-title">
+          <span>📥 受信トレイ</span>
+          <span id="inboxCount" style="color:var(--text-muted); font-size:13px;">(0)</span>
+        </div>
+        <div class="status-badge">
+          <div class="status-dot"></div>
+          <span id="pollStatus">受信待機中 (自動更新 3秒毎)</span>
+        </div>
+      </div>
+      <div id="inboxList" class="inbox-list">
+        <div class="inbox-empty">メールはまだ届いていません。<br>登録画面でメアドを入力すると自動でここに表示されます。</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- メール詳細モーダル -->
+  <div id="msgModal" class="modal-overlay" onclick="closeModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div id="modalSubject" class="modal-title">メール詳細</div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        読み込み中...
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast">コピーしました！</div>
+
+  <script>
+    let currentEmail = localStorage.getItem("mokori_tempmail_addr") || "";
+    let currentToken = localStorage.getItem("mokori_tempmail_token") || "";
+    let pollInterval = null;
+    let latestCode = null;
+
+    function showToast(text) {
+      const t = document.getElementById("toast");
+      t.textContent = text;
+      t.style.opacity = "1";
+      setTimeout(() => { t.style.opacity = "0"; }, 2000);
+    }
+
+    function copyEmail() {
+      const el = document.getElementById("mailAddress");
+      if (!el.value || el.value.includes("生成中")) return;
+      navigator.clipboard.writeText(el.value).then(() => {
+        showToast("メールアドレスをコピーしました！");
+      }).catch(() => {
+        el.select();
+        document.execCommand("copy");
+        showToast("コピーしました！");
+      });
+    }
+
+    function copyCode() {
+      if (!latestCode) return;
+      navigator.clipboard.writeText(latestCode).then(() => {
+        showToast(`認証コード「${latestCode}」をコピーしました！`);
+      });
+    }
+
+    async function generateNewMail() {
+      const input = document.getElementById("mailAddress");
+      input.value = "新しいメアドを生成中...";
+      document.getElementById("codeCard").style.display = "none";
+      latestCode = null;
+
+      try {
+        const res = await fetch("/api/tempmail/create", { method: "POST" });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "生成失敗");
+
+        currentEmail = data.email;
+        currentToken = data.token;
+        localStorage.setItem("mokori_tempmail_addr", currentEmail);
+        localStorage.setItem("mokori_tempmail_token", currentToken);
+
+        input.value = currentEmail;
+        showToast("新しいメアドを発行しました！");
+        startPolling();
+        fetchMessages(true);
+      } catch (err) {
+        input.value = "生成エラー: " + err.message;
+        alert("メアド発行エラー: " + err.message);
+      }
+    }
+
+    async function fetchMessages(isManual = false) {
+      if (!currentToken) return;
+      try {
+        const res = await fetch(`/api/tempmail/messages?token=${encodeURIComponent(currentToken)}`);
+        const data = await res.json();
+        if (!data.ok) return;
+
+        renderInbox(data.messages || []);
+        if (isManual) showToast("受信トレイを更新しました");
+      } catch (_) {}
+    }
+
+    function renderInbox(messages) {
+      const list = document.getElementById("inboxList");
+      const count = document.getElementById("inboxCount");
+      count.textContent = `(${messages.length})`;
+
+      if (messages.length === 0) {
+        list.innerHTML = `<div class="inbox-empty">メールはまだ届いていません。<br>登録画面でメアドを入力すると自動でここに表示されます。</div>`;
+        return;
+      }
+
+      list.innerHTML = "";
+      messages.forEach((m, idx) => {
+        if (idx === 0 && m.code) {
+          latestCode = m.code;
+          const card = document.getElementById("codeCard");
+          const digits = document.getElementById("codeDigits");
+          const srv = document.getElementById("codeService");
+          digits.textContent = m.code;
+          srv.textContent = `最新の認証コード (${m.from})`;
+          card.style.display = "block";
+        }
+
+        const item = document.createElement("div");
+        item.className = "msg-item";
+        item.onclick = () => openMessageDetail(m.id);
+
+        const timeStr = new Date(m.createdAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+        item.innerHTML = `
+          <div class="msg-item-top">
+            <span class="msg-sender">${escapeHtml(m.from)}</span>
+            <span class="msg-time">${timeStr}</span>
+          </div>
+          <div class="msg-subject">${escapeHtml(m.subject)}</div>
+          <div class="msg-intro">${escapeHtml(m.intro)}</div>
+          ${m.code ? `<div class="msg-code-badge">🔑 認証コード: ${m.code}</div>` : ""}
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    async function openMessageDetail(id) {
+      const modal = document.getElementById("msgModal");
+      const body = document.getElementById("modalBody");
+      const subj = document.getElementById("modalSubject");
+      modal.style.display = "flex";
+      body.innerHTML = "読み込み中...";
+
+      try {
+        const res = await fetch(`/api/tempmail/messages/${id}?token=${encodeURIComponent(currentToken)}`);
+        const data = await res.json();
+        if (!data.ok) throw new Error("詳細取得エラー");
+
+        const m = data.message;
+        subj.textContent = m.subject;
+        body.innerHTML = `
+          <div style="margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #334155;">
+            <div><strong>差出人:</strong> ${escapeHtml(m.from)}</div>
+            <div><strong>受信時刻:</strong> ${new Date(m.createdAt).toLocaleString("ja-JP")}</div>
+            ${m.code ? `<div style="margin-top:8px; font-size:18px; font-weight:bold; color:#86efac; background:rgba(6,199,85,0.2); padding:6px 12px; border-radius:6px; display:inline-block;">認証コード: ${m.code}</div>` : ""}
+          </div>
+          ${m.html ? `<iframe srcdoc="${escapeHtml(m.html)}" sandbox="allow-same-origin"></iframe>` : `<pre style="white-space:pre-wrap; font-family:inherit;">${escapeHtml(m.text)}</pre>`}
+        `;
+      } catch (err) {
+        body.textContent = "エラー: " + err.message;
+      }
+    }
+
+    function closeModal(e) {
+      if (!e || e.target.id === "msgModal" || e.target.classList.contains("modal-close")) {
+        document.getElementById("msgModal").style.display = "none";
+      }
+    }
+
+    function escapeHtml(str) {
+      return (str || "").replace(/[&<>"']/g, m => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[m]);
+    }
+
+    function startPolling() {
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(fetchMessages, 3000);
+    }
+
+    // 初期化
+    if (currentEmail && currentToken) {
+      document.getElementById("mailAddress").value = currentEmail;
+      startPolling();
+      fetchMessages();
+    } else {
+      generateNewMail();
+    }
+  </script>
+</body>
+</html>

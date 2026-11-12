@@ -169,6 +169,33 @@ app.use(express.static("public", {
   }
 }));
 
+// ====================================================
+// ⚡ プロキシ内相対リンク・Instagram/TikTok遷移の自動救済
+// ====================================================
+app.use((req, res, next) => {
+  // 1. Instagramの典型的なパス（/accounts/...）
+  if (req.path.startsWith("/accounts/")) {
+    const targetUrl = new URL(req.originalUrl, "https://www.instagram.com").href;
+    return res.redirect(`/api/proxy?url=${encodeURIComponent(targetUrl)}`);
+  }
+
+  // 2. Refererがプロキシの場合の相対リクエスト救済
+  const referer = req.headers.referer || "";
+  if (referer.includes("proxy?url=") && !req.path.startsWith("/api/")) {
+    try {
+      const prevTarget = decodeURIComponent((referer.split("proxy?url=")[1] || "").split("&")[0]);
+      if (prevTarget) {
+        const targetUrl = new URL(req.originalUrl, prevTarget).href;
+        if (req.accepts("html") && req.method === "GET") {
+          return res.redirect(`/api/proxy?url=${encodeURIComponent(targetUrl)}`);
+        }
+      }
+    } catch (_) {}
+  }
+
+  next();
+});
+
 let db;
 let auth;
 
@@ -3148,7 +3175,7 @@ app.all("/api/proxy", async (req, res) => {
     if (!videoId && youtubeHost === "youtu.be") videoId = pathParts[0] || "";
     if (!videoId && ["shorts", "live", "embed", "v"].includes(pathParts[0])) videoId = pathParts[1] || "";
     if (/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) {
-      return res.redirect(`/api/tube/mirror/shiatube?v=${encodeURIComponent(videoId)}`);
+      return res.redirect(`/tube/?v=${encodeURIComponent(videoId)}&mode=edu`);
     }
     const searchQuery = parsedTarget.searchParams.get("search_query") || (pathParts[0] === "results" ? parsedTarget.searchParams.get("q") : "");
     if (searchQuery) return res.redirect(`/tube/?q=${encodeURIComponent(searchQuery)}`);
@@ -3189,9 +3216,11 @@ app.all("/api/proxy", async (req, res) => {
       requestOrigin = "https://www.instagram.com";
     }
 
-    const defaultUA = (isTiktok || isInstagram)
-      ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-      : (req.headers["user-agent"] || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+    const defaultUA = isInstagram
+      ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+      : (isTiktok
+        ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        : (req.headers["user-agent"] || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"));
 
     const headers = {
       "User-Agent": defaultUA,
@@ -4199,9 +4228,7 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
   const eduEmbedUrl = `https://www.youtubeeducation.com/embed/${videoId}${eduParam}&playlist=${videoId}&autoplay=1&playsinline=1&enablejsapi=1`;
 
   // 学校iPad(i-filter@cloud)でも斜線エラーなく確実に再生する統合プレイヤー
-  const defaultEmbedSrc = (service === "wakametube" || service === "yukitube" || service === "shiatube" || service === "youtubeplus")
-    ? currentTheme.externalUrl
-    : eduEmbedUrl;
+  const defaultEmbedSrc = eduEmbedUrl;
 
   const html = `<!DOCTYPE html>
 <html lang="ja">
@@ -4273,6 +4300,118 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   return res.send(html);
+});
+
+// ====================================================
+// 📬 捨てメアド (インスタ・TikTok登録用 臨時メールAPI)
+// ====================================================
+app.post("/api/tempmail/create", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  try {
+    const domRes = await fetch("https://api.mail.tm/domains");
+    if (!domRes.ok) throw new Error("ドメインの取得に失敗しました");
+    const domData = await domRes.json();
+    const domains = (domData["hydra:member"] || []).filter(d => d.isActive).map(d => d.domain);
+    const domain = domains[0] || "fldubai.com";
+
+    const randId = Math.random().toString(36).substring(2, 9) + Math.floor(Math.random() * 900 + 100);
+    const address = `user_${randId}@${domain}`;
+    const password = "Pass_" + Math.random().toString(36).substring(2, 10);
+
+    const accRes = await fetch("https://api.mail.tm/accounts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address, password })
+    });
+    if (!accRes.ok) {
+      const errTxt = await accRes.text();
+      throw new Error(`アカウント作成失敗: ${errTxt}`);
+    }
+    const accData = await accRes.json();
+
+    const tokRes = await fetch("https://api.mail.tm/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address, password })
+    });
+    if (!tokRes.ok) throw new Error("認証トークンの取得に失敗しました");
+    const tokData = await tokRes.json();
+
+    return res.json({
+      ok: true,
+      email: address,
+      token: tokData.token,
+      id: accData.id
+    });
+  } catch (err) {
+    console.error("TempMail作成エラー:", err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/api/tempmail/messages", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const token = req.query.token;
+  if (!token) return res.status(400).json({ ok: false, error: "トークンが必要です" });
+
+  try {
+    const msgRes = await fetch("https://api.mail.tm/messages", {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!msgRes.ok) throw new Error("メッセージ取得失敗");
+    const msgData = await msgRes.json();
+    const list = (msgData["hydra:member"] || []).map(m => {
+      const combined = `${m.subject || ""} ${m.intro || ""}`;
+      const codeMatch = combined.match(/(?:コード|code|verification|認証|pin)[\s:：#\-_]*([0-9]{4,8})/i) ||
+                        combined.match(/\b([0-9]{6})\b/) ||
+                        combined.match(/\b([0-9]{4,8})\b/);
+      return {
+        id: m.id,
+        from: m.from ? (m.from.name ? `${m.from.name} <${m.from.address}>` : m.from.address) : "不明",
+        subject: m.subject || "（件名なし）",
+        intro: m.intro || "",
+        createdAt: m.createdAt,
+        code: codeMatch ? codeMatch[1] : null
+      };
+    });
+    return res.json({ ok: true, messages: list, total: list.length });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/api/tempmail/messages/:id", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const token = req.query.token;
+  const msgId = req.params.id;
+  if (!token || !msgId) return res.status(400).json({ ok: false, error: "パラメータが不足しています" });
+
+  try {
+    const msgRes = await fetch(`https://api.mail.tm/messages/${msgId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!msgRes.ok) throw new Error("詳細取得失敗");
+    const m = await msgRes.json();
+    const combined = `${m.subject || ""} ${m.intro || ""} ${m.text || ""}`;
+    const codeMatch = combined.match(/(?:コード|code|verification|認証|pin)[\s:：#\-_]*([0-9]{4,8})/i) ||
+                      combined.match(/\b([0-9]{6})\b/) ||
+                      combined.match(/\b([0-9]{4,8})\b/);
+    return res.json({
+      ok: true,
+      message: {
+        id: m.id,
+        from: m.from ? (m.from.name ? `${m.from.name} <${m.from.address}>` : m.from.address) : "不明",
+        subject: m.subject || "（件名なし）",
+        intro: m.intro || "",
+        text: m.text || "",
+        html: m.html && m.html.length > 0 ? m.html[0] : "",
+        createdAt: m.createdAt,
+        code: codeMatch ? codeMatch[1] : null
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 app.listen(port, () => {
