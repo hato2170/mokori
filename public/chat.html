@@ -2108,7 +2108,13 @@
     try {
       const res = await api(`/api/chats/${activeChatId}/messages`);
       const msgs = res.messages || [];
-      const currentSig = activeChatId + "_" + msgs.map(m => m.id + "_" + (m.unsent ? "1" : "0") + "_" + (m.reactions ? JSON.stringify(m.reactions) : "")).join("|");
+
+      // 開いているチャットで未読メッセージがあれば自動で既読送信
+      if (currentUser && msgs.some(m => m.senderUid !== currentUser.uid && (!m.readBy || !m.readBy.includes(currentUser.uid)))) {
+        api(`/api/chats/${activeChatId}/read`, { method: "POST" }).catch(() => {});
+      }
+
+      const currentSig = activeChatId + "_" + msgs.map(m => m.id + "_" + (m.unsent ? "1" : "0") + "_" + (m.readBy ? m.readBy.length + ":" + m.readBy.join(",") : "") + "_" + (m.reactions ? JSON.stringify(m.reactions) : "")).join("|");
       if (currentSig === lastRenderedMessagesSig && !forceScrollBottom) {
         return;
       }

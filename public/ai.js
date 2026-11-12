@@ -54,37 +54,68 @@ const MODEL_CATALOG = {
 };
 
 const $ = (id) => document.getElementById(id);
-const statusEl = $("status");
-const errorEl = $("error");
-const promptEl = $("prompt");
-const sendButton = $("sendButton");
-const messagesEl = $("messages");
-const welcomeEl = $("welcome");
-const authGateEl = $("authGate");
-const authGateTitleEl = $("authGateTitle");
-const authMessageEl = $("authMessage");
-const modelSelectEl = $("modelSelect");
+let statusEl = $("status");
+let errorEl = $("error");
+let promptEl = $("prompt");
+let sendButton = $("sendButton");
+let messagesEl = $("messages");
+let welcomeEl = $("welcome");
+let authGateEl = $("authGate");
+let authGateTitleEl = $("authGateTitle");
+let authMessageEl = $("authMessage");
+let modelSelectEl = $("modelSelect");
 
 // Sessions / Project elements
-const sessionTitleDisplay = $("sessionTitleDisplay");
-const sessionsBtn = $("sessionsBtn");
-const newChatBtn = $("newChatBtn");
-const sessionsDrawer = $("sessionsDrawer");
-const drawerOverlay = $("drawerOverlay");
-const closeDrawerBtn = $("closeDrawerBtn");
-const drawerNewChatBtn = $("drawerNewChatBtn");
-const sessionsList = $("sessionsList");
+let sessionTitleDisplay = $("sessionTitleDisplay");
+let sessionsBtn = $("sessionsBtn");
+let newChatBtn = $("newChatBtn");
+let sessionsDrawer = $("sessionsDrawer");
+let drawerOverlay = $("drawerOverlay");
+let closeDrawerBtn = $("closeDrawerBtn");
+let drawerNewChatBtn = $("drawerNewChatBtn");
+let sessionsList = $("sessionsList");
 
 // Toolbar elements
-const webSearchToggle = $("webSearchToggle");
-const webSearchState = $("webSearchStatus") || $("webSearchState");
-const imageGenBtn = $("genImageBtn") || $("imageGenBtn");
-const attachBtn = $("attachBtn");
-const fileInput = $("fileInput");
-const clearChatBtn = $("clearChatBtn");
-const attachmentPreviewArea = $("attachmentPreviewArea");
-const attachmentName = $("attachmentName");
-const removeAttachmentBtn = $("removeAttachmentBtn");
+let webSearchToggle = $("webSearchToggle");
+let webSearchState = $("webSearchStatus") || $("webSearchState");
+let imageGenBtn = $("genImageBtn") || $("imageGenBtn");
+let attachBtn = $("attachBtn");
+let fileInput = $("fileInput");
+let clearChatBtn = $("clearChatBtn");
+let attachmentPreviewArea = $("attachmentPreviewArea");
+let attachmentName = $("attachmentName");
+let removeAttachmentBtn = $("removeAttachmentBtn");
+
+function ensureDomElements() {
+  if (!statusEl) statusEl = $("status");
+  if (!errorEl) errorEl = $("error");
+  if (!promptEl) promptEl = $("prompt");
+  if (!sendButton) sendButton = $("sendButton");
+  if (!messagesEl) messagesEl = $("messages");
+  if (!welcomeEl) welcomeEl = $("welcome");
+  if (!authGateEl) authGateEl = $("authGate");
+  if (!authGateTitleEl) authGateTitleEl = $("authGateTitle");
+  if (!authMessageEl) authMessageEl = $("authMessage");
+  if (!modelSelectEl) modelSelectEl = $("modelSelect");
+  if (!sessionTitleDisplay) sessionTitleDisplay = $("sessionTitleDisplay");
+  if (!sessionsBtn) sessionsBtn = $("sessionsBtn");
+  if (!newChatBtn) newChatBtn = $("newChatBtn");
+  if (!sessionsDrawer) sessionsDrawer = $("sessionsDrawer");
+  if (!drawerOverlay) drawerOverlay = $("drawerOverlay");
+  if (!closeDrawerBtn) closeDrawerBtn = $("closeDrawerBtn");
+  if (!drawerNewChatBtn) drawerNewChatBtn = $("drawerNewChatBtn");
+  if (!sessionsList) sessionsList = $("sessionsList");
+  if (!webSearchToggle) webSearchToggle = $("webSearchToggle");
+  if (!webSearchState) webSearchState = $("webSearchStatus") || $("webSearchState");
+  if (!imageGenBtn) imageGenBtn = $("genImageBtn") || $("imageGenBtn");
+  if (!attachBtn) attachBtn = $("attachBtn");
+  if (!fileInput) fileInput = $("fileInput");
+  if (!clearChatBtn) clearChatBtn = $("clearChatBtn");
+  if (!attachmentPreviewArea) attachmentPreviewArea = $("attachmentPreviewArea");
+  if (!attachmentName) attachmentName = $("attachmentName");
+  if (!removeAttachmentBtn) removeAttachmentBtn = $("removeAttachmentBtn");
+}
+document.addEventListener("DOMContentLoaded", ensureDomElements);
 
 // 会話データ・セッションデータはメモリ上にのみ保持（LocalStorage, SessionStorage, IndexedDB, Cache API には一切保存しない）
 let history = [];
@@ -500,11 +531,12 @@ async function deleteSession(id) {
 }
 
 function syncUI() {
+  ensureDomElements();
   const signedIn = Boolean(currentUid);
   const busy = generating || loadingHistory || sessionMutationPending;
-  authGateEl.hidden = signedIn;
-  promptEl.disabled = !signedIn || busy;
-  sendButton.disabled = !signedIn || busy;
+  if (authGateEl) authGateEl.hidden = signedIn;
+  if (promptEl) promptEl.disabled = !signedIn || busy;
+  if (sendButton) sendButton.disabled = !signedIn || busy;
   if (modelSelectEl) modelSelectEl.disabled = !signedIn || busy;
   if (attachBtn) attachBtn.disabled = !signedIn || busy;
   if (imageGenBtn) imageGenBtn.disabled = !signedIn || busy;
@@ -515,7 +547,7 @@ function syncUI() {
   if (clearChatBtn) clearChatBtn.disabled = !signedIn || busy;
 
   if (!signedIn) {
-    welcomeEl.hidden = true;
+    if (welcomeEl) welcomeEl.hidden = true;
     closeDrawer();
   }
 }
@@ -938,27 +970,28 @@ auth.onAuthStateChanged(async (user) => {
     closeDrawer();
   }
 
+  ensureDomElements();
   currentUser = user;
   currentUid = nextUid;
   if (identityChanged) {
-    sessionTitleDisplay.textContent = currentSessionTitle;
+    if (sessionTitleDisplay) sessionTitleDisplay.textContent = currentSessionTitle;
     renderHistory();
     renderSessionsList();
   }
 
   if (!currentUid || !user) {
-    authGateTitleEl.textContent = "SNSのログインが必要です";
-    authMessageEl.textContent = "AIチャットを利用するには、SNSにログインしてください。ログイン後、このページに戻ってください。";
-    errorEl.hidden = true;
-    statusEl.textContent = "SNSへのログインが必要です。";
+    if (authGateTitleEl) authGateTitleEl.textContent = "SNSのログインが必要です";
+    if (authMessageEl) authMessageEl.textContent = "AIチャットを利用するには、SNSにログインしてください。ログイン後、このページに戻ってください。";
+    if (errorEl) errorEl.hidden = true;
+    if (statusEl) statusEl.textContent = "SNSへのログインが必要です。";
     syncUI();
     return;
   }
 
   const uidForRequest = currentUid;
   const authVersionForRequest = authStateVersion;
-  authGateTitleEl.textContent = "SNSにログインしています";
-  authMessageEl.textContent = "SNSのログインを確認しました。";
+  if (authGateTitleEl) authGateTitleEl.textContent = "SNSにログインしています";
+  if (authMessageEl) authMessageEl.textContent = "SNSのログインを確認しました。";
   syncUI();
 
   const listLoaded = await fetchSessionsList(user, authVersionForRequest);

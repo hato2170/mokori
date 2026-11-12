@@ -301,12 +301,11 @@
 
   <script>
     const INITIAL_VIDEOS = [
-      { id: "_PHDivmHk_0", title: "STUTS - 夜を使いはたして feat. PUNPEE", author: "STUTS", views: "1,200万回" },
-      { id: "UHGqi7HekoY", title: "Kaneee - Canvas (Official Music Video)", author: "Kaneee", views: "450万回" },
-      { id: "kjVoa56_4x4", title: "LEX - なんでも言っちゃって feat. JP THE WAVY", author: "LEX", views: "890万回" },
+      { id: "dQw4w9WgXcQ", title: "人気ミュージックビデオ · 4K", author: "Official Music", views: "15億回" },
       { id: "P7p3yW5Gg4U", title: "ブロスタ世界大会ハイライト 2026", author: "Brawl Esports", views: "240万回" },
-      { id: "HmHjP7DkuOQ", title: "Kaneee - Born 2 Win (Official Music Video)", author: "Kaneee", views: "180万回" },
-      { id: "jfKfPfyJRdk", title: "作業用BGM · 集中できるチルビート 1時間", author: "Lofi Beats", views: "320万回" }
+      { id: "jfKfPfyJRdk", title: "作業用BGM · 集中できるチルビート 1時間", author: "Lofi Beats", views: "320万回" },
+      { id: "fJ9rUzIMcZQ", title: "QUEEN - Bohemian Rhapsody (Official Video)", author: "Queen Official", views: "17億回" },
+      { id: "kJQP7kiw5Fk", title: "Luis Fonsi - Despacito ft. Daddy Yankee", author: "Luis Fonsi", views: "83億回" }
     ];
 
     let currentVideoId = "";
@@ -344,34 +343,43 @@
       if (mediaStatus) mediaStatus.textContent = message;
     }
 
+    let bufferStallTimer = null;
     mp4Video.addEventListener("loadstart", () => setMp4Status("⏳ MP4ストリームを読み込み中..."));
     mp4Video.addEventListener("loadedmetadata", () => setMp4Status("⏳ 動画を読み込みました。再生を準備中..."));
     mp4Video.addEventListener("canplay", () => {
+      clearTimeout(bufferStallTimer);
       if (mp4Video.paused) setMp4Status("▶️ 再生準備完了。再生ボタンを押してください");
     });
     mp4Video.addEventListener("playing", () => {
+      clearTimeout(bufferStallTimer);
       setMp4Status("🎬 動画を再生中");
     });
     mp4Video.addEventListener("waiting", () => {
       setMp4Status("⏳ 動画をバッファリング中...");
+      clearTimeout(bufferStallTimer);
+      bufferStallTimer = setTimeout(() => {
+        if (mp4Video.paused || mp4Video.readyState < 3) {
+          console.warn("Buffer stall detected, auto-switching to high-speed mirror player");
+          switchPlayerMode("shiatube");
+        }
+      }, 2500);
     });
     mp4Video.addEventListener("stalled", () => {
       setMp4Status("⚠️ 動画の読み込みが停滞しています");
+      clearTimeout(bufferStallTimer);
+      bufferStallTimer = setTimeout(() => {
+        switchPlayerMode("shiatube");
+      }, 2000);
     });
     mp4Video.addEventListener("pause", () => {
       if (!mp4Video.ended) setMp4Status("⏸ 動画を一時停止中");
     });
     mp4Video.addEventListener("ended", () => setMp4Status("動画の再生が終了しました"));
     mp4Video.addEventListener("error", () => {
+      clearTimeout(bufferStallTimer);
       if (!mp4Video.currentSrc) return;
-      const errorMessages = {
-        1: "再生が中断されました",
-        2: "動画の読み込みに失敗しました",
-        3: "動画をデコードできませんでした",
-        4: "この動画形式は再生できません"
-      };
-      const code = mp4Video.error && mp4Video.error.code;
-      setMp4Status("⚠️ " + (errorMessages[code] || "動画を再生できませんでした") + "。上部のミラー（⚡ しあTube / 🥬 わかめTube / ❄️ YukiTube / 🚀 YouTube＋）からも直接再生できます");
+      console.warn("MP4 video stream error, auto-switching to mirror player");
+      switchPlayerMode("shiatube");
     });
 
     function renderCards(list) {
@@ -612,7 +620,7 @@
       document.getElementById("searchInput").value = qParam;
       searchVideos();
     } else {
-      fetch(`${API_BASE}/api/tube/search?q=STUTS+Kaneee+LEX`)
+      fetch(`${API_BASE}/api/tube/search?q=アニメ+ゲーム+音楽+BGM`)
         .then(r => r.json())
         .then(d => {
           if (d.videos && d.videos.length > 0) {

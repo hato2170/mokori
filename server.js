@@ -1497,16 +1497,20 @@ app.post("/api/chats/:chatId/read", requireLogin, async (req, res) => {
   const now = admin.firestore.Timestamp.now();
 
   try {
-    // 1. メモリ内メッセージのreadByを即時更新
+    // 1. メモリ内メッセージのreadByを即時更新 (未キャッシュなら取得して同期)
     let updatedCount = 0;
-    if (memoryChatMessages.has(chatId)) {
-      const list = memoryChatMessages.get(chatId) || [];
-      for (const m of list) {
-        if (!m.readBy) m.readBy = [];
-        if (!m.readBy.includes(myUid)) {
-          m.readBy.push(myUid);
-          updatedCount++;
-        }
+    if (!memoryChatMessages.has(chatId)) {
+      await getChatMessagesFast(chatId);
+    }
+    const list = memoryChatMessages.get(chatId) || [];
+    for (const m of list) {
+      if (!m.readBy) m.readBy = [];
+      if (!m.readBy.includes(myUid)) {
+        m.readBy.push(myUid);
+        updatedCount++;
+      }
+      if (chatId.startsWith("ai_") && !m.readBy.includes("ai_assistant")) {
+        m.readBy.push("ai_assistant");
       }
     }
 
@@ -1650,22 +1654,52 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
     if (chatId.startsWith("ai_") || chatData.isAi) {
       setTimeout(async () => {
         try {
+          // 1. AIがユーザーのメッセージを既読にする (即時反映)
+          if (memoryChatMessages.has(chatId)) {
+            const list = memoryChatMessages.get(chatId) || [];
+            for (const m of list) {
+              if (!m.readBy) m.readBy = [];
+              if (!m.readBy.includes("ai_assistant")) {
+                m.readBy.push("ai_assistant");
+              }
+            }
+          }
+          if (db) {
+            chatRef.collection("messages").doc(msgDoc.id).update({
+              readBy: admin.firestore.FieldValue.arrayUnion("ai_assistant")
+            }).catch(() => {});
+          }
+
           const authHeader = req.headers.authorization || "";
           let aiText = "";
           try {
-            const aiConvId = chatData.aiConversationId || `mokori_${chatId}`;
-            const aiResp = await fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
+            let aiPayload = {
+              message: text,
+              model: "@cf/meta/llama-3.2-3b-instruct"
+            };
+            if (chatData.aiConversationId) {
+              aiPayload.conversationId = chatData.aiConversationId;
+            }
+            let aiResp = await fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
                 Authorization: authHeader
               },
-              body: JSON.stringify({
-                message: text,
-                model: "@cf/meta/llama-3.2-3b-instruct",
-                conversationId: aiConvId
-              })
+              body: JSON.stringify(aiPayload)
             });
+            // 既存の会話IDで失敗した場合は新規会話として即座に自動再試行
+            if (!aiResp.ok && aiPayload.conversationId) {
+              delete aiPayload.conversationId;
+              aiResp = await fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: authHeader
+                },
+                body: JSON.stringify(aiPayload)
+              });
+            }
             if (aiResp.ok) {
               const aiData = await aiResp.json();
               aiText = aiData.reply || aiData.assistantMessage?.content || aiData.response || aiData.message || "";
@@ -1677,7 +1711,18 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
             console.warn("AI fetch fallback:", e.message);
           }
           if (!aiText) {
-            aiText = "こんにちは！メッセージありがとうございます。何でも気軽に質問してくださいね！";
+            const t = text.trim();
+            if (/^(こんにちは|はじめまして|やあ|hello|hi)/i.test(t)) {
+              aiText = "こんにちは！メッセージありがとうございます！何か調べたいことや学校の課題、雑談など何でも気軽に聞いてくださいね。";
+            } else if (/^(おはよう|おっは)/i.test(t)) {
+              aiText = "おはようございます！今日も一日楽しくいきましょう！何かあればいつでも質問してくださいね。";
+            } else if (/^(おやすみ|寝る)/i.test(t)) {
+              aiText = "今日もお疲れ様でした！ゆっくり休んでくださいね。おやすみなさい🌙";
+            } else if (/\?|？|教えて|どういう|何|なぜ|どうやって|オススメ|おすすめ/.test(t)) {
+              aiText = `「${t.slice(0, 30)}」についてですね！上部の🤖「AIスタジオ」を開くと、最新のLlama 3.2モデルによる長文解説やリアルタイムWeb検索、画像生成機能も使えますよ！`;
+            } else {
+              aiText = `「${t.slice(0, 30)}」ですね！しっかり届きました。もっと詳しく聞きたいことや画像を作りたいときは、ぜひAIスタジオも使ってみてくださいね！`;
+            }
           }
           const aiNow = admin.firestore.FieldValue.serverTimestamp();
           const aiMsg = {
@@ -1728,31 +1773,6 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
   } catch (error) {
     console.error("メッセージ送信エラー:", error);
     return res.status(500).json({ error: "メッセージの送信に失敗しました。" });
-  }
-});
-
-// 既読にする
-app.post("/api/chats/:chatId/read", requireLogin, async (req, res) => {
-  if (!db) {
-    return res.status(503).json({ error: "データベースが利用できません。" });
-  }
-
-  const chatId = req.params.chatId;
-  const myUid = req.user.uid;
-
-  try {
-    if (!(await checkChatAccess(chatId, myUid))) {
-      return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
-    }
-    const chatRef = db.collection("chats").doc(chatId);
-    await chatRef.update({
-      [`readStatus.${myUid}`]: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    return res.json({ ok: true });
-  } catch (error) {
-    console.error("既読更新エラー:", error);
-    return res.status(500).json({ error: "既読更新に失敗しました。" });
   }
 });
 
@@ -3128,7 +3148,7 @@ app.all("/api/proxy", async (req, res) => {
     if (!videoId && youtubeHost === "youtu.be") videoId = pathParts[0] || "";
     if (!videoId && ["shorts", "live", "embed", "v"].includes(pathParts[0])) videoId = pathParts[1] || "";
     if (/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) {
-      return res.redirect(`/tube/?v=${encodeURIComponent(videoId)}`);
+      return res.redirect(`/api/tube/mirror/shiatube?v=${encodeURIComponent(videoId)}`);
     }
     const searchQuery = parsedTarget.searchParams.get("search_query") || (pathParts[0] === "results" ? parsedTarget.searchParams.get("q") : "");
     if (searchQuery) return res.redirect(`/tube/?q=${encodeURIComponent(searchQuery)}`);
@@ -3141,6 +3161,9 @@ app.all("/api/proxy", async (req, res) => {
 
   try {
     const origin = parsedTarget.origin;
+    const hostLower = parsedTarget.hostname.toLowerCase();
+    const isTiktok = hostLower.includes("tiktok.com");
+    const isInstagram = hostLower.includes("instagram.com");
 
     let virtualReferer = origin + "/";
     try {
@@ -3158,11 +3181,21 @@ app.all("/api/proxy", async (req, res) => {
     if (parsedTarget.hostname.endsWith("poki.com") || parsedTarget.hostname.endsWith("poki-cdn.com")) {
       virtualReferer = "https://poki.com/";
       requestOrigin = "https://poki.com";
+    } else if (isTiktok) {
+      virtualReferer = "https://www.tiktok.com/";
+      requestOrigin = "https://www.tiktok.com";
+    } else if (isInstagram) {
+      virtualReferer = "https://www.instagram.com/";
+      requestOrigin = "https://www.instagram.com";
     }
 
+    const defaultUA = (isTiktok || isInstagram)
+      ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+      : (req.headers["user-agent"] || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+
     const headers = {
-      "User-Agent": req.headers["user-agent"] || "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-      "Accept": req.headers["accept"] || "*/*",
+      "User-Agent": defaultUA,
+      "Accept": req.headers["accept"] || "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
       "Accept-Language": req.headers["accept-language"] || "ja,en-US;q=0.9,en;q=0.8",
       "Referer": virtualReferer,
       "Origin": requestOrigin
@@ -3210,11 +3243,18 @@ app.all("/api/proxy", async (req, res) => {
     // Iframe busting 解除
     res.removeHeader("X-Frame-Options");
     res.removeHeader("Content-Security-Policy");
+    res.removeHeader("Cross-Origin-Opener-Policy");
+    res.removeHeader("Cross-Origin-Embedder-Policy");
 
     for (const [key, val] of response.headers.entries()) {
       const lower = key.toLowerCase();
-      if (!["content-security-policy", "x-frame-options", "content-encoding", "transfer-encoding", "content-length", "connection"].includes(lower)) {
-        res.setHeader(key, val);
+      if (!["content-security-policy", "x-frame-options", "cross-origin-opener-policy", "cross-origin-embedder-policy", "content-encoding", "transfer-encoding", "content-length", "connection"].includes(lower)) {
+        if (lower === "set-cookie") {
+          const rewritten = val.replace(/domain=[^;]+;?/gi, "").replace(/samesite=[^;]+;?/gi, "SameSite=None; Secure;");
+          res.append("Set-Cookie", rewritten);
+        } else {
+          res.setHeader(key, val);
+        }
       }
     }
 
