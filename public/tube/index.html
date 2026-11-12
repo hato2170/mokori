@@ -428,8 +428,6 @@
       const statusSpan = document.getElementById("currentStatus");
 
       if (currentMode === "edu") {
-        if (!liveEduParam) await loadLiveEduParam();
-        if (loadId !== playerLoadId) return;
         videoEl.style.display = "none";
         videoEl.pause();
         audioEl.pause();
@@ -438,6 +436,7 @@
         const param = liveEduParam || EDU_PARAMS;
         frame.src = `https://www.youtubeeducation.com/embed/${currentVideoId}${param}&playlist=${currentVideoId}`;
         statusSpan.textContent = "🎬 学校iPad (アンブロック再生中)";
+        if (!liveEduParam) loadLiveEduParam();
       } else if (currentMode === "mp4") {
         frame.style.display = "none";
         frame.src = "about:blank";
