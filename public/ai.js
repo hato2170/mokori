@@ -950,7 +950,7 @@ renderHistory();
 syncUI();
 
 // 認証監視
-auth.onAuthStateChanged(async (user) => {
+async function handleAuthChange(user) {
   const nextUid = user?.uid || null;
   const identityChanged = nextUid !== currentUid;
 
@@ -992,6 +992,8 @@ auth.onAuthStateChanged(async (user) => {
   const authVersionForRequest = authStateVersion;
   if (authGateTitleEl) authGateTitleEl.textContent = "SNSにログインしています";
   if (authMessageEl) authMessageEl.textContent = "SNSのログインを確認しました。";
+  if (authGateEl) authGateEl.hidden = true;
+  if (welcomeEl && history.length === 0) welcomeEl.hidden = false;
   syncUI();
 
   const listLoaded = await fetchSessionsList(user, authVersionForRequest);
@@ -999,7 +1001,7 @@ auth.onAuthStateChanged(async (user) => {
   if (listLoaded && !currentSessionId && sessions.length > 0) {
     currentSessionId = sessions[0].id;
     currentSessionTitle = sessions[0].title || "チャット";
-    sessionTitleDisplay.textContent = currentSessionTitle;
+    if (sessionTitleDisplay) sessionTitleDisplay.textContent = currentSessionTitle;
     renderSessionsList();
   }
 
@@ -1012,10 +1014,12 @@ auth.onAuthStateChanged(async (user) => {
 
   history = fetched;
   renderHistory();
-  statusEl.textContent = "準備完了。会話はCloudflare D1にサーバー保存されています。";
+  if (statusEl) statusEl.textContent = "準備完了。会話はCloudflare D1にサーバー保存されています。";
   syncUI();
-  promptEl.focus();
-}, (error) => {
+  if (promptEl) promptEl.focus();
+}
+
+auth.onAuthStateChanged(handleAuthChange, (error) => {
   authStateVersion += 1;
   navigationRequestVersion += 1;
   sessionOperationVersion += 1;
@@ -1033,12 +1037,17 @@ auth.onAuthStateChanged(async (user) => {
   closeDrawer();
   renderHistory();
   renderSessionsList();
-  authGateTitleEl.textContent = "ログイン状態を確認できません";
-  authMessageEl.textContent = "ログイン状態を確認できませんでした。SNSにログインし直してください。";
-  statusEl.textContent = "Firebase Authenticationの確認に失敗しました。";
+  if (authGateTitleEl) authGateTitleEl.textContent = "ログイン状態を確認できません";
+  if (authMessageEl) authMessageEl.textContent = "ログイン状態を確認できませんでした。SNSにログインし直してください。";
+  if (statusEl) statusEl.textContent = "Firebase Authenticationの確認に失敗しました。";
   showError(error?.message || "認証状態を確認できませんでした。");
   syncUI();
 });
+
+// 既にcurrentUserが解決している場合は即座に初期化
+if (auth.currentUser) {
+  handleAuthChange(auth.currentUser);
+}
 
 
 // プライベートブラウズ対応: セッション自動復元
