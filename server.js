@@ -4307,74 +4307,126 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
 // ====================================================
 app.post("/api/tempmail/create", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
+
+  // 1. まず Mail.tm を試行
   try {
-    const domRes = await fetch("https://api.mail.tm/domains");
-    if (!domRes.ok) throw new Error("ドメインの取得に失敗しました");
-    const domData = await domRes.json();
-    const domains = (domData["hydra:member"] || []).filter(d => d.isActive).map(d => d.domain);
-    const domain = domains[0] || "fldubai.com";
+    const domRes = await fetch("https://api.mail.tm/domains", { signal: AbortSignal.timeout(4000) });
+    if (domRes.ok) {
+      const domData = await domRes.json();
+      const domains = (domData["hydra:member"] || []).filter(d => d.isActive).map(d => d.domain);
+      if (domains.length > 0) {
+        const domain = domains[0];
+        const randId = Math.random().toString(36).substring(2, 9) + Math.floor(Math.random() * 900 + 100);
+        const address = `user_${randId}@${domain}`;
+        const password = "Pass_" + Math.random().toString(36).substring(2, 10);
 
-    const randId = Math.random().toString(36).substring(2, 9) + Math.floor(Math.random() * 900 + 100);
-    const address = `user_${randId}@${domain}`;
-    const password = "Pass_" + Math.random().toString(36).substring(2, 10);
+        const accRes = await fetch("https://api.mail.tm/accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address, password }),
+          signal: AbortSignal.timeout(4000)
+        });
 
-    const accRes = await fetch("https://api.mail.tm/accounts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address, password })
-    });
-    if (!accRes.ok) {
-      const errTxt = await accRes.text();
-      throw new Error(`アカウント作成失敗: ${errTxt}`);
+        if (accRes.ok) {
+          const accData = await accRes.json();
+          const tokRes = await fetch("https://api.mail.tm/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ address, password }),
+            signal: AbortSignal.timeout(4000)
+          });
+          if (tokRes.ok) {
+            const tokData = await tokRes.json();
+            return res.json({
+              ok: true,
+              provider: "mailtm",
+              email: address,
+              token: tokData.token,
+              id: accData.id
+            });
+          }
+        }
+      }
     }
-    const accData = await accRes.json();
-
-    const tokRes = await fetch("https://api.mail.tm/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address, password })
-    });
-    if (!tokRes.ok) throw new Error("認証トークンの取得に失敗しました");
-    const tokData = await tokRes.json();
-
-    return res.json({
-      ok: true,
-      email: address,
-      token: tokData.token,
-      id: accData.id
-    });
   } catch (err) {
-    console.error("TempMail作成エラー:", err);
-    return res.status(500).json({ ok: false, error: err.message });
+    console.warn("Mail.tm fallback to GuerrillaMail:", err.message);
   }
+
+  // 2. フォールバック: GuerrillaMail (即時発行・レート制限なし)
+  try {
+    const gRes = await fetch("https://api.guerrillamail.com/ajax.php?f=get_email_address", {
+      headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)" },
+      signal: AbortSignal.timeout(4000)
+    });
+    if (gRes.ok) {
+      const gData = await gRes.json();
+      return res.json({
+        ok: true,
+        provider: "guerrilla",
+        email: gData.email_addr,
+        token: gData.sid_token,
+        id: gData.alias
+      });
+    }
+  } catch (gErr) {
+    console.error("GuerrillaMail error:", gErr.message);
+  }
+
+  return res.status(500).json({ ok: false, error: "メアド発行サービスが混雑しています。数秒後に再試行してください。" });
 });
 
 app.get("/api/tempmail/messages", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const token = req.query.token;
+  const provider = req.query.provider || (token && token.length > 50 ? "mailtm" : "guerrilla");
   if (!token) return res.status(400).json({ ok: false, error: "トークンが必要です" });
 
   try {
-    const msgRes = await fetch("https://api.mail.tm/messages", {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!msgRes.ok) throw new Error("メッセージ取得失敗");
-    const msgData = await msgRes.json();
-    const list = (msgData["hydra:member"] || []).map(m => {
-      const combined = `${m.subject || ""} ${m.intro || ""}`;
-      const codeMatch = combined.match(/(?:コード|code|verification|認証|pin)[\s:：#\-_]*([0-9]{4,8})/i) ||
-                        combined.match(/\b([0-9]{6})\b/) ||
-                        combined.match(/\b([0-9]{4,8})\b/);
-      return {
-        id: m.id,
-        from: m.from ? (m.from.name ? `${m.from.name} <${m.from.address}>` : m.from.address) : "不明",
-        subject: m.subject || "（件名なし）",
-        intro: m.intro || "",
-        createdAt: m.createdAt,
-        code: codeMatch ? codeMatch[1] : null
-      };
-    });
-    return res.json({ ok: true, messages: list, total: list.length });
+    if (provider === "guerrilla") {
+      const gRes = await fetch(`https://api.guerrillamail.com/ajax.php?f=check_email&seq=0&sid_token=${encodeURIComponent(token)}`, {
+        headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)" },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!gRes.ok) throw new Error("Guerrilla check_email failed");
+      const gData = await gRes.json();
+      const list = (gData.list || []).map(m => {
+        const combined = `${m.mail_subject || ""} ${m.mail_excerpt || ""}`;
+        const codeMatch = combined.match(/(?:コード|code|verification|認証|pin)[\s:：#\-_]*([0-9]{4,8})/i) ||
+                          combined.match(/\b([0-9]{6})\b/) ||
+                          combined.match(/\b([0-9]{4,8})\b/);
+        return {
+          id: String(m.mail_id),
+          from: m.mail_from || "不明",
+          subject: m.mail_subject || "（件名なし）",
+          intro: m.mail_excerpt || "",
+          createdAt: m.mail_timestamp ? new Date(m.mail_timestamp * 1000).toISOString() : new Date().toISOString(),
+          code: codeMatch ? codeMatch[1] : null
+        };
+      });
+      return res.json({ ok: true, messages: list, total: list.length });
+    } else {
+      const msgRes = await fetch("https://api.mail.tm/messages", {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!msgRes.ok) throw new Error("Mail.tm messages failed");
+      const msgData = await msgRes.json();
+      const list = (msgData["hydra:member"] || []).map(m => {
+        const combined = `${m.subject || ""} ${m.intro || ""}`;
+        const codeMatch = combined.match(/(?:コード|code|verification|認証|pin)[\s:：#\-_]*([0-9]{4,8})/i) ||
+                          combined.match(/\b([0-9]{6})\b/) ||
+                          combined.match(/\b([0-9]{4,8})\b/);
+        return {
+          id: m.id,
+          from: m.from ? (m.from.name ? `${m.from.name} <${m.from.address}>` : m.from.address) : "不明",
+          subject: m.subject || "（件名なし）",
+          intro: m.intro || "",
+          createdAt: m.createdAt,
+          code: codeMatch ? codeMatch[1] : null
+        };
+      });
+      return res.json({ ok: true, messages: list, total: list.length });
+    }
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }
@@ -4384,31 +4436,59 @@ app.get("/api/tempmail/messages/:id", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const token = req.query.token;
   const msgId = req.params.id;
+  const provider = req.query.provider || (token && token.length > 50 ? "mailtm" : "guerrilla");
   if (!token || !msgId) return res.status(400).json({ ok: false, error: "パラメータが不足しています" });
 
   try {
-    const msgRes = await fetch(`https://api.mail.tm/messages/${msgId}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!msgRes.ok) throw new Error("詳細取得失敗");
-    const m = await msgRes.json();
-    const combined = `${m.subject || ""} ${m.intro || ""} ${m.text || ""}`;
-    const codeMatch = combined.match(/(?:コード|code|verification|認証|pin)[\s:：#\-_]*([0-9]{4,8})/i) ||
-                      combined.match(/\b([0-9]{6})\b/) ||
-                      combined.match(/\b([0-9]{4,8})\b/);
-    return res.json({
-      ok: true,
-      message: {
-        id: m.id,
-        from: m.from ? (m.from.name ? `${m.from.name} <${m.from.address}>` : m.from.address) : "不明",
-        subject: m.subject || "（件名なし）",
-        intro: m.intro || "",
-        text: m.text || "",
-        html: m.html && m.html.length > 0 ? m.html[0] : "",
-        createdAt: m.createdAt,
-        code: codeMatch ? codeMatch[1] : null
-      }
-    });
+    if (provider === "guerrilla") {
+      const gRes = await fetch(`https://api.guerrillamail.com/ajax.php?f=fetch_email&email_id=${encodeURIComponent(msgId)}&sid_token=${encodeURIComponent(token)}`, {
+        headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)" },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!gRes.ok) throw new Error("Guerrilla fetch_email failed");
+      const m = await gRes.json();
+      const combined = `${m.mail_subject || ""} ${m.mail_body || ""}`;
+      const codeMatch = combined.match(/(?:コード|code|verification|認証|pin)[\s:：#\-_]*([0-9]{4,8})/i) ||
+                        combined.match(/\b([0-9]{6})\b/) ||
+                        combined.match(/\b([0-9]{4,8})\b/);
+      return res.json({
+        ok: true,
+        message: {
+          id: String(m.mail_id),
+          from: m.mail_from || "不明",
+          subject: m.mail_subject || "（件名なし）",
+          intro: m.mail_excerpt || "",
+          text: m.mail_body || "",
+          html: m.mail_body || "",
+          createdAt: m.mail_timestamp ? new Date(m.mail_timestamp * 1000).toISOString() : new Date().toISOString(),
+          code: codeMatch ? codeMatch[1] : null
+        }
+      });
+    } else {
+      const msgRes = await fetch(`https://api.mail.tm/messages/${msgId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!msgRes.ok) throw new Error("Mail.tm fetch message failed");
+      const m = await msgRes.json();
+      const combined = `${m.subject || ""} ${m.intro || ""} ${m.text || ""}`;
+      const codeMatch = combined.match(/(?:コード|code|verification|認証|pin)[\s:：#\-_]*([0-9]{4,8})/i) ||
+                        combined.match(/\b([0-9]{6})\b/) ||
+                        combined.match(/\b([0-9]{4,8})\b/);
+      return res.json({
+        ok: true,
+        message: {
+          id: m.id,
+          from: m.from ? (m.from.name ? `${m.from.name} <${m.from.address}>` : m.from.address) : "不明",
+          subject: m.subject || "（件名なし）",
+          intro: m.intro || "",
+          text: m.text || "",
+          html: m.html && m.html.length > 0 ? m.html[0] : "",
+          createdAt: m.createdAt,
+          code: codeMatch ? codeMatch[1] : null
+        }
+      });
+    }
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }

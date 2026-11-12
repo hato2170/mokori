@@ -484,6 +484,7 @@
   <script>
     let currentEmail = localStorage.getItem("mokori_tempmail_addr") || "";
     let currentToken = localStorage.getItem("mokori_tempmail_token") || "";
+    let currentProvider = localStorage.getItem("mokori_tempmail_provider") || "";
     let pollInterval = null;
     let latestCode = null;
 
@@ -526,8 +527,10 @@
 
         currentEmail = data.email;
         currentToken = data.token;
+        currentProvider = data.provider || "mailtm";
         localStorage.setItem("mokori_tempmail_addr", currentEmail);
         localStorage.setItem("mokori_tempmail_token", currentToken);
+        localStorage.setItem("mokori_tempmail_provider", currentProvider);
 
         input.value = currentEmail;
         showToast("新しいメアドを発行しました！");
@@ -542,7 +545,7 @@
     async function fetchMessages(isManual = false) {
       if (!currentToken) return;
       try {
-        const res = await fetch(`/api/tempmail/messages?token=${encodeURIComponent(currentToken)}`);
+        const res = await fetch(`/api/tempmail/messages?token=${encodeURIComponent(currentToken)}&provider=${encodeURIComponent(currentProvider)}`);
         const data = await res.json();
         if (!data.ok) return;
 
@@ -599,7 +602,7 @@
       body.innerHTML = "読み込み中...";
 
       try {
-        const res = await fetch(`/api/tempmail/messages/${id}?token=${encodeURIComponent(currentToken)}`);
+        const res = await fetch(`/api/tempmail/messages/${id}?token=${encodeURIComponent(currentToken)}&provider=${encodeURIComponent(currentProvider)}`);
         const data = await res.json();
         if (!data.ok) throw new Error("詳細取得エラー");
 
