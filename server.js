@@ -1,3 +1,6 @@
+const fs = require("fs");
+const path = require("path");
+const https = require("https");
 const express = require("express");
 const admin = require("firebase-admin");
 const bcrypt = require("bcryptjs");
@@ -42,6 +45,118 @@ app.use((req, res, next) => {
     res.setHeader("Expires", "0");
   }
   next();
+});
+
+// geniusOS Live ISO (x86_64) 実機PC起動ストリーミング配信
+const geniusPatchesDir = path.join(__dirname, "data", "geniusos_patches");
+let geniusPatches = null;
+
+function loadGeniusPatches() {
+  if (geniusPatches) return geniusPatches;
+  try {
+    const manifestPath = path.join(geniusPatchesDir, "manifest.json");
+    if (!fs.existsSync(manifestPath)) return [];
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    geniusPatches = manifest.map((item) => ({
+      name: item.name,
+      offset: item.offset,
+      buffer: fs.readFileSync(path.join(geniusPatchesDir, item.file))
+    }));
+    return geniusPatches;
+  } catch (e) {
+    console.error("Failed to load geniusOS patches:", e.message);
+    return [];
+  }
+}
+
+app.get("/downloads/geniusos-v1.0.0-x86_64.iso", (req, res) => {
+  const TOTAL_SIZE = 965738496;
+  const patches = loadGeniusPatches();
+  const upstreamUrl = "https://media.githubusercontent.com/media/ata56789/ata-dosyalar/master/android-x86_64-9.0-r2.iso";
+
+  const range = req.headers.range;
+  let start = 0;
+  let end = TOTAL_SIZE - 1;
+
+  if (range) {
+    const parts = range.replace(/bytes=/, "").split("-");
+    start = parseInt(parts[0], 10);
+    end = parts[1] ? parseInt(parts[1], 10) : TOTAL_SIZE - 1;
+    if (isNaN(start)) start = 0;
+    if (isNaN(end) || end >= TOTAL_SIZE) end = TOTAL_SIZE - 1;
+
+    res.writeHead(206, {
+      "Content-Range": `bytes ${start}-${end}/${TOTAL_SIZE}`,
+      "Accept-Ranges": "bytes",
+      "Content-Length": end - start + 1,
+      "Content-Type": "application/x-iso9660-image",
+      "Content-Disposition": 'attachment; filename="geniusos-v1.0.0-x86_64.iso"'
+    });
+  } else {
+    res.writeHead(200, {
+      "Accept-Ranges": "bytes",
+      "Content-Length": TOTAL_SIZE,
+      "Content-Type": "application/x-iso9660-image",
+      "Content-Disposition": 'attachment; filename="geniusos-v1.0.0-x86_64.iso"'
+    });
+  }
+
+  const clientReq = https.get(upstreamUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Range": `bytes=${start}-${end}`
+    }
+  }, (upstreamRes) => {
+    if (upstreamRes.statusCode !== 200 && upstreamRes.statusCode !== 206) {
+      if (!res.headersSent) {
+        return res.status(502).send("Upstream mirror error");
+      }
+      return res.end();
+    }
+
+    let curOffset = start;
+
+    upstreamRes.on("data", (chunk) => {
+      const chunkStart = curOffset;
+      const chunkEnd = curOffset + chunk.length;
+
+      for (const p of patches) {
+        const pStart = p.offset;
+        const pEnd = p.offset + p.buffer.length;
+        if (Math.max(chunkStart, pStart) < Math.min(chunkEnd, pEnd)) {
+          const chunkOverlapStart = Math.max(0, pStart - chunkStart);
+          const patchOverlapStart = Math.max(0, chunkStart - pStart);
+          const overlapLen = Math.min(chunkEnd, pEnd) - Math.max(chunkStart, pStart);
+          p.buffer.copy(chunk, chunkOverlapStart, patchOverlapStart, patchOverlapStart + overlapLen);
+        }
+      }
+
+      res.write(chunk);
+      curOffset += chunk.length;
+    });
+
+    upstreamRes.on("end", () => {
+      res.end();
+    });
+
+    upstreamRes.on("error", (err) => {
+      console.error("Upstream stream error:", err.message);
+      res.end();
+    });
+  });
+
+  clientReq.on("error", (err) => {
+    console.error("geniusOS download request error:", err.message);
+    if (!res.headersSent) {
+      res.status(500).send("Download service unavailable");
+    } else {
+      res.end();
+    }
+  });
+
+  req.on("close", () => {
+    clientReq.destroy();
+  });
 });
 
 app.use(express.static("public", {

@@ -1,0 +1,38 @@
+[
+  {
+    "name": "initrd",
+    "offset": 4354048,
+    "file": "initrd.img",
+    "length": 1358743
+  },
+  {
+    "name": "ramdisk",
+    "offset": 16748544,
+    "file": "ramdisk.img",
+    "length": 1914143
+  },
+  {
+    "name": "android_cfg",
+    "offset": 962551808,
+    "file": "android.cfg",
+    "length": 3179
+  },
+  {
+    "name": "grub_splash",
+    "offset": 964388864,
+    "file": "splash.png",
+    "length": 32411
+  },
+  {
+    "name": "isolinux_splash",
+    "offset": 964720640,
+    "file": "splash.png",
+    "length": 32411
+  },
+  {
+    "name": "isolinux_cfg",
+    "offset": 964777984,
+    "file": "isolinux.cfg",
+    "length": 1875
+  }
+]
