@@ -1430,10 +1430,10 @@ app.get("/api/chats/:chatId", requireLogin, async (req, res) => {
 
     let name = data.name;
     let partnerUid = null;
-    if (data.type === "direct") {
-      partnerUid = data.members.find((u) => u !== myUid) || myUid;
+    if (data.type === "direct" || data.type === "ai") {
+      partnerUid = (data.members && data.members.find((u) => u !== myUid)) || (data.type === "ai" ? "ai_assistant" : myUid);
       const pInfo = data.memberInfo && data.memberInfo[partnerUid];
-      name = pInfo ? pInfo.username : "ユーザー";
+      name = pInfo ? pInfo.username : (data.name || "ユーザー");
     }
 
     return res.json({

@@ -2404,9 +2404,9 @@
             meta.appendChild(readTag);
           }
         } else {
-          // 1対1
-          const partnerUid = activeChatData.partnerUid;
-          if (partnerUid && readBy.includes(partnerUid)) {
+          // 1対1 または AI
+          const partnerUid = activeChatData.partnerUid || (activeChatData.type === "ai" ? "ai_assistant" : (activeChatData.members && activeChatData.members.find((u) => u !== currentUser.uid)));
+          if (otherReaders.length > 0 || (partnerUid && readBy.includes(partnerUid))) {
             const readTag = document.createElement("div");
             readTag.className = "read-badge";
             readTag.textContent = "既読";
