@@ -2385,8 +2385,8 @@
       meta.className = "msg-meta";
 
       // 自分のメッセージの既読表示 (LINEと同じ)
-      if (mine && !msg.unsent && activeChatData) {
-        const isGroup = activeChatData.type === "group" || activeChatData.type === "all" || activeChatData.id === "all_members";
+      if (mine && !msg.unsent) {
+        const isGroup = activeChatData && (activeChatData.type === "group" || activeChatData.type === "all" || activeChatData.id === "all_members");
         const readBy = Array.isArray(msg.readBy) ? msg.readBy : [];
         const otherReaders = readBy.filter((u) => u !== currentUser.uid);
 
@@ -2405,8 +2405,7 @@
           }
         } else {
           // 1対1 または AI
-          const partnerUid = activeChatData.partnerUid || (activeChatData.type === "ai" ? "ai_assistant" : (activeChatData.members && activeChatData.members.find((u) => u !== currentUser.uid)));
-          if (otherReaders.length > 0 || (partnerUid && readBy.includes(partnerUid))) {
+          if (otherReaders.length > 0) {
             const readTag = document.createElement("div");
             readTag.className = "read-badge";
             readTag.textContent = "既読";
@@ -2414,8 +2413,9 @@
             readTag.title = "タップして既読をつけた人を確認";
             readTag.onclick = (e) => {
               e.stopPropagation();
-              const pInfo = activeChatData.memberInfo && activeChatData.memberInfo[partnerUid];
-              alert(`既読者: ${pInfo ? pInfo.username : (activeChatData.name || "相手")}`);
+              const partnerUid = activeChatData && (activeChatData.partnerUid || (activeChatData.members && activeChatData.members.find((u) => u !== currentUser.uid)));
+              const pInfo = activeChatData && activeChatData.memberInfo && activeChatData.memberInfo[partnerUid];
+              alert(`既読者: ${pInfo ? pInfo.username : (activeChatData?.name || "相手")}`);
             };
             meta.appendChild(readTag);
           }
