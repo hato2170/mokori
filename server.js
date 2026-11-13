@@ -3209,22 +3209,6 @@ app.all("/api/proxy", async (req, res) => {
     return res.status(400).send(renderProxyError("無効なURL形式です", "正しいURL（例: poki.com または https://duckduckgo.com）を入力してください。"));
   }
 
-  // YouTubeのURL形式（watch / shorts / live / embed / youtu.be）をTubeへ中継
-  const youtubeHost = parsedTarget.hostname.toLowerCase();
-  const isYoutubeHost = youtubeHost === "youtu.be" || youtubeHost === "youtube.com" || youtubeHost.endsWith(".youtube.com") || youtubeHost === "youtube-nocookie.com" || youtubeHost.endsWith(".youtube-nocookie.com");
-  if (isYoutubeHost) {
-    const pathParts = parsedTarget.pathname.split("/").filter(Boolean);
-    let videoId = parsedTarget.searchParams.get("v") || "";
-    if (!videoId && youtubeHost === "youtu.be") videoId = pathParts[0] || "";
-    if (!videoId && ["shorts", "live", "embed", "v"].includes(pathParts[0])) videoId = pathParts[1] || "";
-    if (/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) {
-      return res.redirect(`/tube/?v=${encodeURIComponent(videoId)}&mode=edu`);
-    }
-    const searchQuery = parsedTarget.searchParams.get("search_query") || (pathParts[0] === "results" ? parsedTarget.searchParams.get("q") : "");
-    if (searchQuery) return res.redirect(`/tube/?q=${encodeURIComponent(searchQuery)}`);
-    return res.redirect("/tube/");
-  }
-
   if (isBlockedHost(parsedTarget.hostname)) {
     return res.status(403).send(renderProxyError("アクセス制限", "安全保護のため、内部ネットワークやプライベートIPへの接続はブロックされています。"));
   }
