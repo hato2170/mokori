@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>🎮 Webロブロックス · 学タブ・PC完全対応</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    header {
+      height: 48px;
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      z-index: 100;
+      flex-shrink: 0;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .back-btn {
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      border: 0;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .logo {
+      font-weight: 900;
+      font-size: 15px;
+      background: linear-gradient(135deg, #ef4444, #f59e0b);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .header-tabs {
+      display: flex;
+      gap: 6px;
+      background: rgba(0,0,0,0.4);
+      padding: 3px;
+      border-radius: 10px;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      background: transparent;
+      color: #94a3b8;
+      border: 0;
+      padding: 5px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .tab-btn.active {
+      background: #ef4444;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(239,68,68,0.4);
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .action-btn {
+      border: 0;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .stealth-btn {
+      background: #dc2626;
+      color: #fff;
+    }
+    .fullscreen-btn {
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+    }
+    main {
+      flex: 1;
+      position: relative;
+      width: 100%;
+      height: calc(100% - 48px);
+      overflow: hidden;
+      background: #000;
+    }
+    .view-panel {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: none;
+    }
+    .view-panel.active {
+      display: block;
+    }
+    iframe.cloud-frame {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #000;
+    }
+    /* 3D Canvas View */
+    #canvasContainer {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      background: linear-gradient(180deg, #38bdf8 0%, #bae6fd 60%, #e2e8f0 100%);
+    }
+    #gameCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .ui-overlay {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 10;
+    }
+    .hud-card {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 12px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .controls-hint {
+      position: absolute;
+      bottom: 14px;
+      left: 14px;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(8px);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 11px;
+      color: #cbd5e1;
+      pointer-events: none;
+      z-index: 10;
+    }
+    /* Mobile Touch Controls */
+    .touch-controls {
+      position: absolute;
+      bottom: 20px;
+      width: 100%;
+      padding: 0 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      pointer-events: none;
+      z-index: 20;
+    }
+    .joystick-zone {
+      width: 120px;
+      height: 120px;
+      background: rgba(255,255,255,0.15);
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      position: relative;
+      pointer-events: auto;
+      touch-action: none;
+    }
+    .joystick-knob {
+      width: 50px;
+      height: 50px;
+      background: rgba(255,255,255,0.85);
+      border-radius: 50%;
+      position: absolute;
+      top: 35px;
+      left: 35px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      pointer-events: none;
+    }
+    .jump-btn {
+      width: 76px;
+      height: 76px;
+      background: rgba(239, 68, 68, 0.85);
+      border: 3px solid rgba(255,255,255,0.4);
+      border-radius: 50%;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      touch-action: none;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(239,68,68,0.5);
+    }
+    .jump-btn:active {
+      transform: scale(0.92);
+      background: #dc2626;
+    }
+    /* Emergency Fake Document View */
+    #stealthView {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #fff;
+      color: #1e293b;
+      z-index: 99999;
+      display: none;
+      padding: 30px;
+      overflow-y: auto;
+      font-family: serif;
+      line-height: 1.8;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-left">
+      <a href="/tensai-proxy/" class="back-btn">← プロキシ</a>
+      <div class="logo">
+        <span>🎮</span>
+        <span>Webロブロックス</span>
+      </div>
+    </div>
+
+    <div class="header-tabs">
+      <button class="tab-btn active" onclick="switchView('3d')">🧱 3D Obby アスレチック (即時プレイ)</button>
+      <button class="tab-btn" onclick="switchView('nowgg')">☁️ Now.gg クラウド</button>
+      <button class="tab-btn" onclick="switchView('easyfun')">⚡ EasyFun クラウド</button>
+      <button class="tab-btn" onclick="switchView('roblox')">🌐 公式Roblox Web</button>
+    </div>
+
+    <div class="header-right">
+      <button class="action-btn stealth-btn" onclick="toggleStealth()">🚨 緊急回避</button>
+      <button class="action-btn fullscreen-btn" onclick="toggleFullScreen()">⛶ 全画面</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- 1. 3D Webロブロ (Three.js Obby) -->
+    <div id="view3d" class="view-panel active">
+      <div id="canvasContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div class="ui-overlay">
+          <div class="hud-card">
+            <span>🚩 チェックポイント:</span>
+            <span id="hudCheckpoint" style="color:#4ade80;">1 / 5</span>
+          </div>
+          <div class="hud-card">
+            <span>🪙 コイン:</span>
+            <span id="hudCoins" style="color:#fbbf24;">0</span>
+          </div>
+          <div class="hud-card">
+            <span>⏱️ タイム:</span>
+            <span id="hudTimer" style="color:#38bdf8;">00:00</span>
+          </div>
+        </div>
+
+        <div class="controls-hint">
+          ⌨️ PC・Surface: <strong>WASD / 矢印キー</strong> 移動 · <strong>スペース</strong> ジャンプ · マウスドラッグで視点回転<br>
+          📱 iPad・スマホ: 左下ジョイスティック移動 · 右下ジャンプボタン
+        </div>
+
+        <div class="touch-controls" id="touchControls">
+          <div class="joystick-zone" id="joystickZone">
+            <div class="joystick-knob" id="joystickKnob"></div>
+          </div>
+          <div class="jump-btn" id="touchJumpBtn">JUMP</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Now.gg Cloud Roblox -->
+    <div id="viewNowgg" class="view-panel">
+      <iframe class="cloud-frame" id="nowggFrame" src="" allow="autoplay; fullscreen; gamepad; camera; microphone; clipboard-write; web-share" allowfullscreen sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-same-origin allow-downloads"></iframe>
+    </div>
+
+    <!-- 3. EasyFun Cloud Roblox -->
+    <div id="viewEasyfun" class="view-panel">
+      <iframe class="cloud-frame" id="easyfunFrame" src="" allow="autoplay; fullscreen; gamepad; camera; microphone; clipboard-write; web-share" allowfullscreen sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-same-origin allow-downloads"></iframe>
+    </div>
+
+    <!-- 4. Official Roblox Web -->
+    <div id="viewRoblox" class="view-panel">
+      <iframe class="cloud-frame" id="robloxFrame" src="" allow="autoplay; fullscreen; gamepad; camera; microphone; clipboard-write; web-share" allowfullscreen sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-same-origin allow-downloads"></iframe>
+    </div>
+  </main>
+
+  <!-- 緊急回避用の偽装学習画面 -->
+  <div id="stealthView" onclick="toggleStealth()">
+    <h1 style="border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 16px;">情報科学とネットワークプログラミング演習</h1>
+    <p><strong>第4章: 分散コンピューティングとプロトコル設計</strong></p>
+    <p>Webアプリケーションにおけるリアルタイム通信では、WebSocketやWebRTCを用いた低レイテンシなストリーミング技術が中核を成している。パケット損失やバッファリング制御においては、クライアントとサーバー間の協調的なシーケンス管理が不可欠である。</p>
+    <p style="margin-top: 14px; color: #64748b; font-size: 12px;">（画面タップで復帰します）</p>
+  </div>
+
+  <script src="/three.min.js"></script>
+  <script>
+    let currentView = "3d";
+
+    function switchView(view) {
+      currentView = view;
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+
+      const tabIndex = { "3d": 0, "nowgg": 1, "easyfun": 2, "roblox": 3 }[view];
+      const tabs = document.querySelectorAll(".tab-btn");
+      if (tabs[tabIndex]) tabs[tabIndex].classList.add("active");
+
+      if (view === "3d") {
+        document.getElementById("view3d").classList.add("active");
+      } else if (view === "nowgg") {
+        const frame = document.getElementById("nowggFrame");
+        if (!frame.src || frame.src === "about:blank") {
+          frame.src = "/api/proxy?url=" + encodeURIComponent("https://now.gg/apps/roblox-corporation/5349/roblox.html");
+        }
+        document.getElementById("viewNowgg").classList.add("active");
+      } else if (view === "easyfun") {
+        const frame = document.getElementById("easyfunFrame");
+        if (!frame.src || frame.src === "about:blank") {
+          frame.src = "/api/proxy?url=" + encodeURIComponent("https://www.easyfun.gg/games/roblox.html");
+        }
+        document.getElementById("viewEasyfun").classList.add("active");
+      } else if (view === "roblox") {
+        const frame = document.getElementById("robloxFrame");
+        if (!frame.src || frame.src === "about:blank") {
+          frame.src = "/api/proxy?url=" + encodeURIComponent("https://www.roblox.com/home");
+        }
+        document.getElementById("viewRoblox").classList.add("active");
+      }
+    }
+
+    function toggleStealth() {
+      const sv = document.getElementById("stealthView");
+      sv.style.display = sv.style.display === "block" ? "none" : "block";
+    }
+
+    function toggleFullScreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+
+    // Web Audio Synthesizer for Retro Game Sounds
+    let audioCtx = null;
+    function getAudioContext() {
+      if (!audioCtx) {
+        const AudioClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioClass) audioCtx = new AudioClass();
+      }
+      if (audioCtx && audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    }
+
+    function playSound(type) {
+      try {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        if (type === "jump") {
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(240, now);
+          osc.frequency.exponentialRampToValueAtTime(480, now + 0.15);
+          gain.gain.setValueAtTime(0.2, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+          osc.start(now);
+          osc.stop(now + 0.15);
+        } else if (type === "coin") {
+          osc.type = "triangle";
+          osc.frequency.setValueAtTime(987, now);
+          osc.frequency.setValueAtTime(1318, now + 0.08);
+          gain.gain.setValueAtTime(0.25, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+          osc.start(now);
+          osc.stop(now + 0.2);
+        } else if (type === "checkpoint") {
+          osc.type = "sine";
+          [523, 659, 783, 1046].forEach((f, i) => {
+            osc.frequency.setValueAtTime(f, now + i * 0.08);
+          });
+          gain.gain.setValueAtTime(0.3, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+          osc.start(now);
+          osc.stop(now + 0.4);
+        } else if (type === "oof") {
+          osc.type = "sawtooth";
+          osc.frequency.setValueAtTime(220, now);
+          osc.frequency.exponentialRampToValueAtTime(80, now + 0.18);
+          gain.gain.setValueAtTime(0.35, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.18);
+          osc.start(now);
+          osc.stop(now + 0.18);
+        }
+      } catch (_) {}
+    }
+
+    // ==========================================
+    // 🧱 3D ROBLOX OBBY ENGINE (THREE.JS)
+    // ==========================================
+    let scene, camera, renderer, playerGroup;
+    let coins = 0;
+    let currentCheckpoint = 1;
+    let startTime = Date.now();
+
+    const keys = { w: false, a: false, s: false, d: false, space: false };
+    const joystick = { x: 0, y: 0 };
+    let playerVelocity = { x: 0, y: 0, z: 0 };
+    let isGrounded = false;
+    let cameraAngle = { yaw: 0, pitch: 0.3 };
+
+    const GRAVITY = -24;
+    const JUMP_FORCE = 11;
+    const SPEED = 12;
+
+    const platforms = [];
+    const lavaBlocks = [];
+    const checkpoints = [
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 3, z: -35 },
+      { x: 0, y: 7, z: -75 },
+      { x: 0, y: 12, z: -120 },
+      { x: 0, y: 18, z: -170 }
+    ];
+    const coinMeshes = [];
+
+    function init3dGame() {
+      const container = document.getElementById("canvasContainer");
+      const canvas = document.getElementById("gameCanvas");
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x38bdf8);
+      scene.fog = new THREE.FogExp2(0x38bdf8, 0.008);
+
+      camera = new THREE.PerspectiveCamera(65, container.clientWidth / container.clientHeight, 0.1, 500);
+
+      renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+
+      // Lights
+      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.85);
+      scene.add(hemiLight);
+
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+      dirLight.position.set(30, 60, 20);
+      dirLight.castShadow = true;
+      scene.add(dirLight);
+
+      // Build Obby Course
+      buildCourse();
+
+      // Create Classic Roblox Player Character
+      createPlayer();
+
+      // Events
+      window.addEventListener("resize", onWindowResize);
+      window.addEventListener("keydown", (e) => {
+        const k = e.key.toLowerCase();
+        if (k === "w" || k === "arrowup") keys.w = true;
+        if (k === "s" || k === "arrowdown") keys.s = true;
+        if (k === "a" || k === "arrowleft") keys.a = true;
+        if (k === "d" || k === "arrowright") keys.d = true;
+        if (e.code === "Space") {
+          keys.space = true;
+          triggerJump();
+        }
+      });
+      window.addEventListener("keyup", (e) => {
+        const k = e.key.toLowerCase();
+        if (k === "w" || k === "arrowup") keys.w = false;
+        if (k === "s" || k === "arrowdown") keys.s = false;
+        if (k === "a" || k === "arrowleft") keys.a = false;
+        if (k === "d" || k === "arrowright") keys.d = false;
+        if (e.code === "Space") keys.space = false;
+      });
+
+      // Mouse drag camera orbit
+      let isDragging = false;
+      let prevMouseX = 0;
+      canvas.addEventListener("mousedown", (e) => {
+        isDragging = true;
+        prevMouseX = e.clientX;
+      });
+      window.addEventListener("mousemove", (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - prevMouseX;
+        cameraAngle.yaw -= dx * 0.005;
+        prevMouseX = e.clientX;
+      });
+      window.addEventListener("mouseup", () => { isDragging = false; });
+
+      setupTouchControls();
+
+      // Start Loop
+      requestAnimationFrame(animate);
+    }
+
+    function createPlayer() {
+      playerGroup = new THREE.Group();
+
+      const matYellow = new THREE.MeshLambertMaterial({ color: 0xfacc15 });
+      const matBlue = new THREE.MeshLambertMaterial({ color: 0x2563eb });
+      const matGreen = new THREE.MeshLambertMaterial({ color: 0x16a34a });
+
+      // Head
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), matYellow);
+      head.position.y = 1.65;
+      head.castShadow = true;
+      playerGroup.add(head);
+
+      // Torso
+      const torso = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.0, 0.5), matBlue);
+      torso.position.y = 0.85;
+      torso.castShadow = true;
+      playerGroup.add(torso);
+
+      // Left Arm & Right Arm
+      const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.0, 0.4), matYellow);
+      leftArm.position.set(-0.7, 0.85, 0);
+      playerGroup.add(leftArm);
+
+      const rightArm = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.0, 0.4), matYellow);
+      rightArm.position.set(0.7, 0.85, 0);
+      playerGroup.add(rightArm);
+
+      // Left Leg & Right Leg
+      const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.8, 0.45), matGreen);
+      leftLeg.position.set(-0.25, 0.4, 0);
+      playerGroup.add(leftLeg);
+
+      const rightLeg = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.8, 0.45), matGreen);
+      rightLeg.position.set(0.25, 0.4, 0);
+      playerGroup.add(rightLeg);
+
+      playerGroup.position.set(0, 1.2, 0);
+      scene.add(playerGroup);
+    }
+
+    function addPlatform(x, y, z, w, h, d, color = 0x64748b, isLava = false, isCp = false) {
+      const mat = new THREE.MeshLambertMaterial({
+        color: color,
+        emissive: isLava ? 0xef4444 : (isCp ? 0x16a34a : 0x000000),
+        emissiveIntensity: isLava ? 0.6 : (isCp ? 0.3 : 0)
+      });
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      mesh.position.set(x, y, z);
+      mesh.receiveShadow = true;
+      mesh.castShadow = true;
+      scene.add(mesh);
+
+      const box = {
+        minX: x - w/2, maxX: x + w/2,
+        minY: y - h/2, maxY: y + h/2,
+        minZ: z - d/2, maxZ: z + d/2,
+        mesh: mesh,
+        isLava: isLava,
+        isCp: isCp
+      };
+
+      if (isLava) {
+        lavaBlocks.push(box);
+      } else {
+        platforms.push(box);
+      }
+      return box;
+    }
+
+    function addCoin(x, y, z) {
+      const geom = new THREE.CylinderGeometry(0.4, 0.4, 0.12, 16);
+      const mat = new THREE.MeshLambertMaterial({ color: 0xfbbf24, emissive: 0xf59e0b, emissiveIntensity: 0.5 });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position.set(x, y, z);
+      scene.add(mesh);
+      coinMeshes.push({ mesh: mesh, collected: false });
+    }
+
+    function buildCourse() {
+      // Stage 1: Spawn Island
+      addPlatform(0, 0, 0, 10, 1, 10, 0x10b981, false, true);
+
+      // Jumps
+      addPlatform(0, 0.5, -9, 4, 0.8, 4, 0x3b82f6);
+      addPlatform(-3, 1.2, -16, 3, 0.8, 3, 0x8b5cf6);
+      addPlatform(3, 1.8, -23, 3, 0.8, 3, 0xec4899);
+
+      addCoin(0, 2.5, -9);
+      addCoin(-3, 3.2, -16);
+      addCoin(3, 3.8, -23);
+
+      // Checkpoint 2
+      addPlatform(0, 3, -35, 8, 1, 8, 0x10b981, false, true);
+
+      // Stage 2: Lava jumps
+      addPlatform(0, 3.5, -45, 12, 0.5, 4, 0x475569);
+      addPlatform(0, 3.8, -45, 2, 0.6, 3.5, 0xef4444, true); // Lava block in middle
+
+      addPlatform(-3, 4.8, -55, 3, 0.8, 3, 0x0284c7);
+      addPlatform(3, 5.8, -63, 3, 0.8, 3, 0x0284c7);
+      addCoin(0, 5.5, -45);
+      addCoin(3, 7.5, -63);
+
+      // Checkpoint 3
+      addPlatform(0, 7, -75, 8, 1, 8, 0x10b981, false, true);
+
+      // Stage 3: Disappearing stepping stones
+      for (let i = 0; i < 6; i++) {
+        const side = (i % 2 === 0) ? -2 : 2;
+        addPlatform(side, 8 + i * 0.8, -85 - i * 6, 2.5, 0.6, 2.5, (i % 2 === 0 ? 0xf59e0b : 0x10b981));
+        if (i % 2 === 0) addCoin(side, 9.8 + i * 0.8, -85 - i * 6);
+      }
+
+      // Checkpoint 4
+      addPlatform(0, 12, -120, 8, 1, 8, 0x10b981, false, true);
+
+      // Stage 4: High altitude beam walk
+      addPlatform(0, 13.5, -132, 1.4, 0.6, 12, 0x64748b);
+      addPlatform(0, 14.5, -145, 1.2, 0.6, 10, 0xef4444, true); // Lava beam
+      addPlatform(-2, 15.5, -145, 1.2, 0.6, 10, 0x3b82f6); // Safe beam
+
+      addPlatform(0, 16.5, -158, 3, 0.8, 3, 0xa855f7);
+      addCoin(-2, 17.5, -145);
+      addCoin(0, 18.5, -158);
+
+      // Winner Tower (Goal / Checkpoint 5)
+      addPlatform(0, 18, -170, 12, 1.2, 12, 0xfacc15, false, true);
+      addCoin(0, 21, -170);
+    }
+
+    function setupTouchControls() {
+      const zone = document.getElementById("joystickZone");
+      const knob = document.getElementById("joystickKnob");
+      const jumpBtn = document.getElementById("touchJumpBtn");
+
+      let touchId = null;
+      let startX = 0, startY = 0;
+
+      zone.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+        const t = e.changedTouches[0];
+        touchId = t.identifier;
+        const rect = zone.getBoundingClientRect();
+        startX = rect.left + rect.width / 2;
+        startY = rect.top + rect.height / 2;
+      }, { passive: false });
+
+      window.addEventListener("touchmove", (e) => {
+        if (touchId === null) return;
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          const t = e.changedTouches[i];
+          if (t.identifier === touchId) {
+            const dx = t.clientX - startX;
+            const dy = t.clientY - startY;
+            const dist = Math.min(45, Math.hypot(dx, dy));
+            const angle = Math.atan2(dy, dx);
+            const kx = Math.cos(angle) * dist;
+            const ky = Math.sin(angle) * dist;
+            knob.style.transform = `translate(${kx}px, ${ky}px)`;
+            joystick.x = kx / 45;
+            joystick.y = ky / 45;
+          }
+        }
+      }, { passive: false });
+
+      function endJoystick() {
+        touchId = null;
+        knob.style.transform = "translate(0px, 0px)";
+        joystick.x = 0;
+        joystick.y = 0;
+      }
+      window.addEventListener("touchend", endJoystick);
+      window.addEventListener("touchcancel", endJoystick);
+
+      jumpBtn.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+        triggerJump();
+      }, { passive: false });
+    }
+
+    function triggerJump() {
+      if (isGrounded) {
+        playerVelocity.y = JUMP_FORCE;
+        isGrounded = false;
+        playSound("jump");
+      }
+    }
+
+    function respawnPlayer() {
+      playSound("oof");
+      const cp = checkpoints[currentCheckpoint - 1] || checkpoints[0];
+      playerGroup.position.set(cp.x, cp.y + 1.2, cp.z);
+      playerVelocity.x = 0;
+      playerVelocity.y = 0;
+      playerVelocity.z = 0;
+    }
+
+    let lastFrameTime = performance.now();
+
+    function animate(time) {
+      requestAnimationFrame(animate);
+
+      const dt = Math.min(0.05, (time - lastFrameTime) / 1000);
+      lastFrameTime = time;
+
+      if (currentView !== "3d" || !playerGroup) return;
+
+      // Input direction
+      let moveX = 0;
+      let moveZ = 0;
+      if (keys.w) moveZ -= 1;
+      if (keys.s) moveZ += 1;
+      if (keys.a) moveX -= 1;
+      if (keys.d) moveX += 1;
+
+      if (joystick.x !== 0 || joystick.y !== 0) {
+        moveX = joystick.x;
+        moveZ = joystick.y;
+      }
+
+      // Rotate movement by camera yaw
+      const forward = new THREE.Vector3(-Math.sin(cameraAngle.yaw), 0, -Math.cos(cameraAngle.yaw));
+      const right = new THREE.Vector3(Math.cos(cameraAngle.yaw), 0, -Math.sin(cameraAngle.yaw));
+
+      const dir = new THREE.Vector3();
+      dir.addScaledVector(forward, -moveZ);
+      dir.addScaledVector(right, moveX);
+      if (dir.lengthSq() > 1) dir.normalize();
+
+      playerVelocity.x = dir.x * SPEED;
+      playerVelocity.z = dir.z * SPEED;
+
+      // Apply Gravity
+      playerVelocity.y += GRAVITY * dt;
+
+      // Move player
+      playerGroup.position.x += playerVelocity.x * dt;
+      playerGroup.position.z += playerVelocity.z * dt;
+      playerGroup.position.y += playerVelocity.y * dt;
+
+      // Turn character towards move direction
+      if (dir.lengthSq() > 0.01) {
+        const targetRot = Math.atan2(dir.x, dir.z);
+        playerGroup.rotation.y = targetRot;
+      }
+
+      // Collision Detection with Platforms
+      const pPos = playerGroup.position;
+      isGrounded = false;
+
+      for (const p of platforms) {
+        if (pPos.x >= p.minX - 0.4 && pPos.x <= p.maxX + 0.4 &&
+            pPos.z >= p.minZ - 0.4 && pPos.z <= p.maxZ + 0.4) {
+          if (pPos.y >= p.maxY && pPos.y <= p.maxY + 0.8 && playerVelocity.y <= 0) {
+            pPos.y = p.maxY + 0.02;
+            playerVelocity.y = 0;
+            isGrounded = true;
+
+            if (p.isCp) {
+              checkpoints.forEach((cp, idx) => {
+                if (Math.hypot(cp.x - p.mesh.position.x, cp.z - p.mesh.position.z) < 2) {
+                  if (currentCheckpoint < idx + 1) {
+                    currentCheckpoint = idx + 1;
+                    document.getElementById("hudCheckpoint").textContent = `${currentCheckpoint} / ${checkpoints.length}`;
+                    playSound("checkpoint");
+                  }
+                }
+              });
+            }
+          }
+        }
+      }
+
+      // Lava Collision
+      for (const l of lavaBlocks) {
+        if (pPos.x >= l.minX - 0.3 && pPos.x <= l.maxX + 0.3 &&
+            pPos.y >= l.minY && pPos.y <= l.maxY + 0.8 &&
+            pPos.z >= l.minZ - 0.3 && pPos.z <= l.maxZ + 0.3) {
+          respawnPlayer();
+          break;
+        }
+      }
+
+      // Fall off void
+      if (pPos.y < -15) {
+        respawnPlayer();
+      }
+
+      // Coin pickup & animation
+      coinMeshes.forEach(c => {
+        if (!c.collected) {
+          c.mesh.rotation.z += 0.05;
+          if (playerGroup.position.distanceTo(c.mesh.position) < 1.4) {
+            c.collected = true;
+            c.mesh.visible = false;
+            coins++;
+            document.getElementById("hudCoins").textContent = coins;
+            playSound("coin");
+          }
+        }
+      });
+
+      // Camera Follow Third Person
+      const camDist = 6.5;
+      const camHeight = 3.2;
+      const camTarget = new THREE.Vector3(playerGroup.position.x, playerGroup.position.y + 1.2, playerGroup.position.z);
+      camera.position.x = camTarget.x + Math.sin(cameraAngle.yaw) * camDist;
+      camera.position.z = camTarget.z + Math.cos(cameraAngle.yaw) * camDist;
+      camera.position.y = camTarget.y + camHeight;
+      camera.lookAt(camTarget);
+
+      // Timer update
+      const elapsedSec = Math.floor((Date.now() - startTime) / 1000);
+      const mins = String(Math.floor(elapsedSec / 60)).padStart(2, "0");
+      const secs = String(elapsedSec % 60).padStart(2, "0");
+      document.getElementById("hudTimer").textContent = `${mins}:${secs}`;
+
+      renderer.render(scene, camera);
+    }
+
+    function onWindowResize() {
+      const container = document.getElementById("canvasContainer");
+      if (!camera || !renderer) return;
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    // Initialize 3D on load
+    window.addEventListener("DOMContentLoaded", () => {
+      init3dGame();
+    });
+  </script>
+</body>
+</html>

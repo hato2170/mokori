@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>💻 geniusOS v1.0.0 Live ISO · Surface & PC 対応</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #f8fafc;
+      color: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px 40px;
+    }
+    .header {
+      width: 100%;
+      max-width: 640px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .back-btn {
+      background: #e2e8f0;
+      color: #334155;
+      text-decoration: none;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .card {
+      width: 100%;
+      max-width: 640px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      padding: 28px 24px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #eff6ff;
+      color: #2563eb;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 9999px;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+    .desc {
+      font-size: 14px;
+      color: #64748b;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+    .specs-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      background: #f1f5f9;
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 24px;
+      font-size: 13px;
+    }
+    .spec-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .spec-label {
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .spec-val {
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .btn-download {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #ffffff;
+      text-decoration: none;
+      padding: 16px;
+      border-radius: 14px;
+      font-size: 16px;
+      font-weight: 800;
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+      transition: all 0.2s;
+      cursor: pointer;
+      border: 0;
+    }
+    .btn-download:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(37, 99, 235, 0.45);
+    }
+    .guide-box {
+      margin-top: 28px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 20px;
+    }
+    .guide-title {
+      font-size: 15px;
+      font-weight: 800;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .step-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #334155;
+    }
+    .step-item {
+      display: flex;
+      gap: 10px;
+    }
+    .step-num {
+      width: 22px;
+      height: 22px;
+      background: #e2e8f0;
+      color: #1e293b;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <a href="/chat.html" class="back-btn">← トークに戻る</a>
+    <div style="font-weight:700; font-size:13px; color:#64748b;">Mokori OS Distribution</div>
+  </div>
+
+  <div class="card">
+    <div class="badge">✨ Surface Pro & PC 実機起動対応</div>
+    <h1>geniusOS v1.0.0 Live ISO</h1>
+    <p class="desc">
+      ピュアホワイト・ミニマリズムデザインのAndroid-x86_64ベースカスタムOS。Surfaceの電源ボタンによるスリープ（Deep Sleep）、タッチパネル・ボタン・WiFiドライバーを完全統合した実機ブート用イメージです。
+    </p>
+
+    <div class="specs-grid">
+      <div class="spec-item">
+        <span class="spec-label">ファイル形式</span>
+        <span class="spec-val">Bootable Hybrid ISO (.iso)</span>
+      </div>
+      <div class="spec-item">
+        <span class="spec-label">ファイルサイズ</span>
+        <span class="spec-val">965.7 MB (965,738,496 バイト)</span>
+      </div>
+      <div class="spec-item">
+        <span class="spec-label">対応アーキテクチャ</span>
+        <span class="spec-val">x86_64 (Intel / AMD / Surface)</span>
+      </div>
+      <div class="spec-item">
+        <span class="spec-label">ブート方式</span>
+        <span class="spec-val">UEFI (Surface推奨) / BIOS 両対応</span>
+      </div>
+    </div>
+
+    <a href="/downloads/geniusos-v1.0.0-x86_64.iso" class="btn-download" download="geniusos-v1.0.0-x86_64.iso">
+      <span>📥</span>
+      <span>geniusOS ISO を直接ダウンロード</span>
+    </a>
+
+    <div class="guide-box">
+      <div class="guide-title">
+        <span>🚀</span>
+        <span>Surface / PC 実機起動・USB書き込み手順</span>
+      </div>
+      <div class="step-list">
+        <div class="step-item">
+          <div class="step-num">1</div>
+          <div>上の青いボタンを押して <code>geniusos-v1.0.0-x86_64.iso</code> をPCにダウンロードします。</div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">2</div>
+          <div><strong>Rufus</strong>（無料ツール: <a href="https://rufus.ie" target="_blank" style="color:#2563eb;">rufus.ie</a>）を開き、USBメモリを選択して上記ISOを指定。「スタート」を押して書き込みます。</div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">3</div>
+          <div>Surfaceの電源を完全にオフにし、作成したUSBメモリを挿します。</div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">4</div>
+          <div><strong>「音量を下げるボタン（-）」を押したまま「電源ボタン」を押し</strong>、Surfaceのロゴが出たら音量ボタンを離します。</div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">5</div>
+          <div>起動メニューから <code>Run geniusOS (Pure White Mode)</code> または <code>Surface Mode</code> を選択すれば、Windowsを消さずにUSBから直接geniusOSが立ち上がります！</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

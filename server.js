@@ -69,52 +69,44 @@ function loadGeniusPatches() {
   }
 }
 
-app.get("/downloads/geniusos-v1.0.0-x86_64.iso", (req, res) => {
-  const TOTAL_SIZE = 965738496;
+const ISO_LOCAL_PATH = path.join("/tmp", "geniusos-v1.0.0-x86_64.iso");
+const TOTAL_ISO_SIZE = 965738496;
+let isoBuildStatus = "idle"; // "idle" | "building" | "ready" | "error"
+let isoBuildProgress = 0;
+let isoWaiters = [];
+
+function buildLocalGeniusIso() {
+  if (isoBuildStatus === "ready" && fs.existsSync(ISO_LOCAL_PATH) && fs.statSync(ISO_LOCAL_PATH).size === TOTAL_ISO_SIZE) {
+    return;
+  }
+  if (isoBuildStatus === "building") return;
+
+  if (fs.existsSync(ISO_LOCAL_PATH) && fs.statSync(ISO_LOCAL_PATH).size === TOTAL_ISO_SIZE) {
+    isoBuildStatus = "ready";
+    isoBuildProgress = TOTAL_ISO_SIZE;
+    return;
+  }
+
+  isoBuildStatus = "building";
+  isoBuildProgress = 0;
+  console.log("[geniusOS] Starting background ISO preparation in /tmp...");
+  const tempPath = ISO_LOCAL_PATH + ".tmp";
   const patches = loadGeniusPatches();
   const upstreamUrl = "https://media.githubusercontent.com/media/ata56789/ata-dosyalar/master/android-x86_64-9.0-r2.iso";
 
-  const range = req.headers.range;
-  let start = 0;
-  let end = TOTAL_SIZE - 1;
+  const fileStream = fs.createWriteStream(tempPath);
+  let curOffset = 0;
 
-  if (range) {
-    const parts = range.replace(/bytes=/, "").split("-");
-    start = parseInt(parts[0], 10);
-    end = parts[1] ? parseInt(parts[1], 10) : TOTAL_SIZE - 1;
-    if (isNaN(start)) start = 0;
-    if (isNaN(end) || end >= TOTAL_SIZE) end = TOTAL_SIZE - 1;
-
-    res.writeHead(206, {
-      "Content-Range": `bytes ${start}-${end}/${TOTAL_SIZE}`,
-      "Accept-Ranges": "bytes",
-      "Content-Length": end - start + 1,
-      "Content-Type": "application/x-iso9660-image",
-      "Content-Disposition": 'attachment; filename="geniusos-v1.0.0-x86_64.iso"'
-    });
-  } else {
-    res.writeHead(200, {
-      "Accept-Ranges": "bytes",
-      "Content-Length": TOTAL_SIZE,
-      "Content-Type": "application/x-iso9660-image",
-      "Content-Disposition": 'attachment; filename="geniusos-v1.0.0-x86_64.iso"'
-    });
-  }
-
-  const clientReq = https.get(upstreamUrl, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      "Range": `bytes=${start}-${end}`
-    }
+  https.get(upstreamUrl, {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
   }, (upstreamRes) => {
-    if (upstreamRes.statusCode !== 200 && upstreamRes.statusCode !== 206) {
-      if (!res.headersSent) {
-        return res.status(502).send("Upstream mirror error");
-      }
-      return res.end();
+    if (upstreamRes.statusCode !== 200) {
+      isoBuildStatus = "error";
+      fileStream.destroy();
+      try { fs.unlinkSync(tempPath); } catch(_) {}
+      notifyIsoWaiters(new Error("Upstream HTTP " + upstreamRes.statusCode));
+      return;
     }
-
-    let curOffset = start;
 
     upstreamRes.on("data", (chunk) => {
       const chunkStart = curOffset;
@@ -131,31 +123,82 @@ app.get("/downloads/geniusos-v1.0.0-x86_64.iso", (req, res) => {
         }
       }
 
-      res.write(chunk);
+      fileStream.write(chunk);
       curOffset += chunk.length;
+      isoBuildProgress = curOffset;
     });
 
     upstreamRes.on("end", () => {
-      res.end();
+      fileStream.end(() => {
+        try {
+          if (fs.existsSync(tempPath) && fs.statSync(tempPath).size === TOTAL_ISO_SIZE) {
+            fs.renameSync(tempPath, ISO_LOCAL_PATH);
+            isoBuildStatus = "ready";
+            isoBuildProgress = TOTAL_ISO_SIZE;
+            console.log("[geniusOS] Live ISO ready at:", ISO_LOCAL_PATH);
+            notifyIsoWaiters(null);
+          } else {
+            throw new Error("Size mismatch: " + (fs.existsSync(tempPath) ? fs.statSync(tempPath).size : 0));
+          }
+        } catch(e) {
+          isoBuildStatus = "error";
+          console.error("[geniusOS] ISO finalization error:", e.message);
+          notifyIsoWaiters(e);
+        }
+      });
     });
 
     upstreamRes.on("error", (err) => {
-      console.error("Upstream stream error:", err.message);
-      res.end();
+      isoBuildStatus = "error";
+      fileStream.destroy();
+      try { fs.unlinkSync(tempPath); } catch(_) {}
+      notifyIsoWaiters(err);
+    });
+  }).on("error", (err) => {
+    isoBuildStatus = "error";
+    fileStream.destroy();
+    try { fs.unlinkSync(tempPath); } catch(_) {}
+    notifyIsoWaiters(err);
+  });
+}
+
+function notifyIsoWaiters(err) {
+  const cbs = isoWaiters;
+  isoWaiters = [];
+  cbs.forEach(cb => cb(err));
+}
+
+function ensureLocalGeniusIso(cb) {
+  if (isoBuildStatus === "ready" && fs.existsSync(ISO_LOCAL_PATH) && fs.statSync(ISO_LOCAL_PATH).size === TOTAL_ISO_SIZE) {
+    return cb(null);
+  }
+  isoWaiters.push(cb);
+  buildLocalGeniusIso();
+}
+
+setTimeout(buildLocalGeniusIso, 1500);
+
+app.get("/downloads/geniusos-v1.0.0-x86_64.iso", (req, res) => {
+  ensureLocalGeniusIso((err) => {
+    if (err) {
+      console.error("ISO build error:", err);
+      return res.status(503).send("geniusOS ISO is preparing, please retry in 10 seconds.");
+    }
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.download(ISO_LOCAL_PATH, "geniusos-v1.0.0-x86_64.iso", (downErr) => {
+      if (downErr && !res.headersSent) {
+        console.error("Download stream error:", downErr.message);
+      }
     });
   });
+});
 
-  clientReq.on("error", (err) => {
-    console.error("geniusOS download request error:", err.message);
-    if (!res.headersSent) {
-      res.status(500).send("Download service unavailable");
-    } else {
-      res.end();
-    }
-  });
-
-  req.on("close", () => {
-    clientReq.destroy();
+app.get("/api/geniusos/status", (req, res) => {
+  res.json({
+    status: isoBuildStatus,
+    progress: isoBuildProgress,
+    total: TOTAL_ISO_SIZE,
+    percent: Math.min(100, Math.round((isoBuildProgress / TOTAL_ISO_SIZE) * 100))
   });
 });
 
@@ -3578,7 +3621,30 @@ app.all("/api/proxy", async (req, res) => {
     window.location.href = toProxy(href);
   }, true);
 
-  ['HTMLImageElement', 'HTMLIFrameElement', 'HTMLScriptElement', 'HTMLSourceElement'].forEach(function(cls) {
+  // Neutralize Framebusting for Instagram, TikTok, and Cloud Roblox
+  try {
+    Object.defineProperty(window, 'top', { get: function() { return window; }, configurable: true });
+    Object.defineProperty(window, 'parent', { get: function() { return window; }, configurable: true });
+    Object.defineProperty(window, 'frameElement', { get: function() { return null; }, configurable: true });
+  } catch(_) {}
+
+  // Intercept window.fetch for Instagram GraphQL & TikTok video feeds
+  if (window.fetch) {
+    var origFetch = window.fetch;
+    window.fetch = function(resource, init) {
+      if (typeof resource === 'string') {
+        resource = toProxy(resource);
+      } else if (resource && resource.url) {
+        try {
+          resource = new Request(toProxy(resource.url), resource);
+        } catch(_) {}
+      }
+      return origFetch.call(this, resource, init);
+    };
+  }
+
+  // Intercept Video, Audio, Image, IFrame, Script src
+  ['HTMLImageElement', 'HTMLIFrameElement', 'HTMLScriptElement', 'HTMLSourceElement', 'HTMLVideoElement', 'HTMLAudioElement', 'HTMLMediaElement'].forEach(function(cls) {
     if (window[cls] && window[cls].prototype) {
       var desc = Object.getOwnPropertyDescriptor(window[cls].prototype, 'src');
       if (desc && desc.set) {
@@ -4077,10 +4143,13 @@ app.get("/api/tube/stream-info", async (req, res) => {
   }
 
   const invidiousHosts = [
-    "echostreamz.com",
-    "yt.chocolatemoo53.com",
+    "inv.nadeko.net",
+    "yewtu.be",
+    "invidious.nerdvpn.de",
+    "invidious.projectsegfau.lt",
+    "invidious.privacydev.net",
     "iv.melmac.space",
-    "super8.absturztau.be"
+    "echostreamz.com"
   ];
 
   for (const host of invidiousHosts) {
@@ -4224,11 +4293,13 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
   };
 
   const currentTheme = themes[service] || themes.shiatube;
-  const eduParam = await getLiveEduParam();
-  const eduEmbedUrl = `https://www.youtubeeducation.com/embed/${videoId}${eduParam}&playlist=${videoId}&autoplay=1&playsinline=1&enablejsapi=1`;
-
-  // 学校iPad(i-filter@cloud)でも斜線エラーなく確実に再生する統合プレイヤー
-  const defaultEmbedSrc = eduEmbedUrl;
+  const serviceEmbeds = {
+    shiatube: `https://piped.video/embed/${videoId}`,
+    wakametube: `https://inv.nadeko.net/embed/${videoId}`,
+    yukitube: `https://yewtu.be/embed/${videoId}`,
+    youtubeplus: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0`
+  };
+  const defaultEmbedSrc = serviceEmbeds[service] || `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0`;
 
   const html = `<!DOCTYPE html>
 <html lang="ja">
@@ -4236,6 +4307,7 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${currentTheme.icon} ${currentTheme.name} · アンブロックプレイヤー</title>
+  <meta name="referrer" content="no-referrer">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: ${currentTheme.bg}; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }

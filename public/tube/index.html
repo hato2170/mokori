@@ -486,11 +486,19 @@
             }
             return;
           }
-          statusSpan.textContent = "⚠️ MP4ストリーム準備中... 上部ミラー（⚡ しあTube / 🥬 わかめTube / ❄️ YukiTube / 🚀 YouTube＋）から直接再生できます";
+          console.warn("MP4 stream resolution fallback, auto-switching to unblocked player");
+          frame.style.display = "block";
+          frame.style.zIndex = "10";
+          frame.src = `https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&rel=0`;
+          statusSpan.textContent = "🎬 学校iPad・アンブロック高速再生中";
+          return;
         } catch (e) {
           console.warn("MP4 stream resolution error:", e);
           if (loadId === playerLoadId) {
-            statusSpan.textContent = "⚠️ MP4ストリーム準備中... 上部ミラー（⚡ しあTube / 🥬 わかめTube / ❄️ YukiTube / 🚀 YouTube＋）から直接再生できます";
+            frame.style.display = "block";
+            frame.style.zIndex = "10";
+            frame.src = `https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&rel=0`;
+            statusSpan.textContent = "🎬 学校iPad・アンブロック高速再生中";
           }
         }
       } else if (currentMode === "shiatube") {

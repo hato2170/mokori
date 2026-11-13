@@ -293,6 +293,21 @@
           <div class="name">TurboWarp</div>
           <div class="desc">高速Scratch</div>
         </div>
+        <div class="tile" onclick="location.href='/roblox/'" style="border: 2px solid #ef4444; background: rgba(239,68,68,0.15);">
+          <div class="icon">🎮</div>
+          <div class="name" style="color:#fca5a5; font-weight:bold;">Webロブロックス</div>
+          <div class="desc">学タブ・PC完全対応 · 3D＆クラウド</div>
+        </div>
+        <div class="tile" onclick="launchUrl('https://m.youtube.com')" style="border: 2px solid #f87171; background: rgba(248,113,113,0.12);">
+          <div class="icon">▶️</div>
+          <div class="name" style="color:#fca5a5; font-weight:bold;">公式YouTube</div>
+          <div class="desc">プロキシ直接閲覧・検索</div>
+        </div>
+        <div class="tile" onclick="location.href='/downloads/'" style="border: 2px solid #38bdf8; background: rgba(56,189,248,0.15);">
+          <div class="icon">💻</div>
+          <div class="name" style="color:#7dd3fc; font-weight:bold;">geniusOS ISO</div>
+          <div class="desc">Surface・PC対応Live ISO</div>
+        </div>
         <div class="tile" onclick="location.href='/mail.html'" style="border: 2px solid #06c755; background: rgba(6,199,85,0.12);">
           <div class="icon">📬</div>
           <div class="name" style="color:#86efac; font-weight:bold;">捨てメアド発行</div>
@@ -406,10 +421,6 @@
     function launchUrl(url) {
       activeUrl = url;
       let proxyUrl = "/api/proxy?url=" + encodeURIComponent(url);
-      const ytPath = youtubeTubePath(url);
-      if (ytPath) {
-        proxyUrl = ytPath;
-      }
 
       document.getElementById("homeView").style.display = "none";
       document.getElementById("browserView").style.display = "flex";
