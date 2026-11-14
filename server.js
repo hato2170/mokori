@@ -4265,7 +4265,43 @@ app.get("/api/tiktok/item", async (req, res) => {
     } catch (_) {
       data = null;
     }
-    if (!data || !data.data || !data.data.id) throw new Error("動画を解決できませんでした。URLを確認してください（非公開・削除済みの可能性）");
+    if (!data || !data.data || !data.data.id) {
+      // フォールバック：TikTokの動画ページ（サーバー側に埋め込まれたJSON）から直接取り出す
+      const page = await fetch(target, {
+        headers: {
+          "User-Agent": TK_UA,
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "ja,en-US;q=0.9,en;q=0.8"
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(20000)
+      });
+      const html = await page.text();
+      const item = extractJsonAfter(html, "itemStruct");
+      let playAddr = item && item.video ? (item.video.playAddr || null) : null;
+      if (!playAddr) {
+        const mm = html.match(/"playAddr":"([^"]+)"/);
+        if (mm) playAddr = mm[1].replace(/\\u002F/gi, "/").replace(/\\\//g, "/");
+      }
+      if (!playAddr) throw new Error("動画を解決できませんでした。URLを確認してください（非公開・削除済みの可能性）");
+      const v = item || {};
+      return res.json({
+        ok: true,
+        source: "page-fallback",
+        video: {
+          id: (v.id && String(v.id)) || (target.match(/video\/(\d+)/) || [])[1] || "",
+          desc: v.desc || "",
+          cover: (v.video && (v.video.cover || v.video.originCover)) || "",
+          play: playAddr,
+          author: (v.author && v.author.uniqueId) || "",
+          nickname: (v.author && v.author.nickname) || "",
+          avatar: (v.author && v.author.avatarLarger) || (v.author && v.author.avatarThumb) || "",
+          plays: v.stats ? v.stats.playCount : null,
+          likes: v.stats ? v.stats.diggCount : null,
+          duration: v.video ? v.video.duration : null
+        }
+      });
+    }
     const v = data.data;
     return res.json({
       ok: true,
