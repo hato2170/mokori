@@ -4026,53 +4026,77 @@ async function fetchTiktokEmbedList(url) {
   return { videos, userInfo: userInfo && typeof userInfo === "object" ? userInfo : null };
 }
 
+async function fetchTikwmFeed(region) {
+  const r = await fetch(`https://www.tikwm.com/api/feed/list?region=${region}&count=24`, {
+    headers: { "User-Agent": TK_UA, "Accept": "application/json" },
+    signal: AbortSignal.timeout(25000)
+  });
+  const text = await r.text();
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch (_) {
+    data = null;
+  }
+  const items = data && Array.isArray(data.data) ? data.data : [];
+  return items.map((v) => ({
+    id: String(v.video_id || ""),
+    desc: v.title || "",
+    cover: v.cover || v.origin_cover || "",
+    play: v.play || v.wmplay || "",
+    author: (v.author && v.author.unique_id) || "",
+    nickname: (v.author && v.author.nickname) || "",
+    avatar: (v.author && v.author.avatar) || "",
+    plays: typeof v.play_count === "number" ? v.play_count : null,
+    likes: typeof v.digg_count === "number" ? v.digg_count : null,
+    duration: v.duration || null
+  })).filter((v) => v.id && v.play);
+}
+
+const JP_TAGS = ["日本", "アニメ", "ダンス", "料理", "カフェ", "音楽", "推し活", "スポーツ"];
+
 app.get("/api/tiktok/feed", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const region = (String(req.query.region || "JP").toUpperCase().replace(/[^A-Z]/g, "") || "JP").slice(0, 2);
-  const cacheKey = "tt-feed:" + region;
+  const slot = Math.floor(Date.now() / (1000 * 60 * 30));
+  const jpTag = JP_TAGS[slot % JP_TAGS.length];
+  const cacheKey = "tt-feed2:" + region + ":" + jpTag;
   const cached = socialCacheGet(cacheKey);
   if (cached) return res.json({ ok: true, source: "cache", region, videos: cached });
-  try {
-    const r = await fetch(`https://www.tikwm.com/api/feed/list?region=${region}&count=24`, {
-      headers: { "User-Agent": TK_UA, "Accept": "application/json" },
-      signal: AbortSignal.timeout(25000)
-    });
-    const text = await r.text();
-    let data = null;
-    try {
-      data = JSON.parse(text);
-    } catch (_) {
-      data = null;
+
+  // 日本のタグと全体のおすすめをブレンドして「おすすめ」を作る
+  const [jp, extra, global] = await Promise.all([
+    fetchTiktokEmbedList(`https://www.tiktok.com/embed/tag/${encodeURIComponent("日本")}`).then((r) => r.videos).catch(() => []),
+    fetchTiktokEmbedList(`https://www.tiktok.com/embed/tag/${encodeURIComponent(jpTag)}`).then((r) => r.videos).catch(() => []),
+    fetchTikwmFeed(region).catch(() => [])
+  ]);
+
+  const seen = new Set();
+  const videos = [];
+  const push = (v) => {
+    if (v && v.id && v.play && !seen.has(v.id)) {
+      seen.add(v.id);
+      videos.push(v);
     }
-    const items = data && Array.isArray(data.data) ? data.data : [];
-    const videos = items.map((v) => ({
-      id: String(v.video_id || ""),
-      desc: v.title || "",
-      cover: v.cover || v.origin_cover || "",
-      play: v.play || v.wmplay || "",
-      author: (v.author && v.author.unique_id) || "",
-      nickname: (v.author && v.author.nickname) || "",
-      avatar: (v.author && v.author.avatar) || "",
-      plays: typeof v.play_count === "number" ? v.play_count : null,
-      likes: typeof v.digg_count === "number" ? v.digg_count : null,
-      duration: v.duration || null
-    })).filter((v) => v.id && v.play);
-    if (videos.length) {
-      socialCacheSet(cacheKey, videos, 5 * 60 * 1000);
-      return res.json({ ok: true, source: "live", region, videos });
-    }
-    throw new Error("no items");
-  } catch (err) {
-    // フォールバック: 公式embedの定番タブから拾う
-    try {
-      const { videos } = await fetchTiktokEmbedList("https://www.tiktok.com/embed/tag/fyp");
-      if (videos.length) {
-        socialCacheSet(cacheKey, videos, 2 * 60 * 1000);
-        return res.json({ ok: true, source: "embed-fallback", region, videos });
-      }
-    } catch (_) {}
-    return res.status(502).json({ ok: false, error: "おすすめ動画を取得できませんでした", detail: err.message });
+  };
+  const maxLen = Math.max(jp.length, extra.length, global.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (jp[i]) push(jp[i]);
+    if (global[i]) push(global[i]);
+    if (extra[i]) push(extra[i]);
   }
+
+  if (!videos.length) {
+    try {
+      const fb = await fetchTiktokEmbedList("https://www.tiktok.com/embed/tag/fyp");
+      fb.videos.forEach(push);
+    } catch (_) {}
+  }
+  if (!videos.length) {
+    return res.status(502).json({ ok: false, error: "おすすめ動画を取得できませんでした。少し待って再度お試しください。" });
+  }
+  socialCacheSet(cacheKey, videos, 5 * 60 * 1000);
+  return res.json({ ok: true, source: "live", region, videos });
 });
 
 app.get("/api/tiktok/user", async (req, res) => {
@@ -4184,6 +4208,33 @@ function deepUnescape(s) {
   return cur;
 }
 
+// embedページ内の本文は多層エスケープ（\\\\ud83e 等）なので、層がなくなるまでデコードする
+function decodeEscapedText(input) {
+  if (!input) return "";
+  let s = String(input);
+  // 先に化けたバックスラッシュを落とす（絵文字の直前に入るので、残すとサロゲートがぱらぱらになる）
+  s = s.replace(/\\+(?=[^\x00-\x7F])/g, "");
+  for (let i = 0; i < 5; i++) {
+    const before = s;
+    s = s
+      .replace(/\\+u([0-9a-fA-F]{4})/g, (m, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/\\+n/g, "\n")
+      .replace(/\\+r/g, "")
+      .replace(/\\+t/g, "\t")
+      .replace(/\\+\//g, "/")
+      .replace(/\\+"/g, '"')
+      .replace(/\\+(?=[^\x00-\x7F])/g, "");
+    if (s === before) break;
+  }
+  return s
+    .replace(/\\n/g, "\n")
+    .replace(/\\/g, "")
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "")
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
+    .replace(/\u0000/g, "")
+    .trim();
+}
+
 app.get("/api/instagram/item", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const raw = String(req.query.url || req.query.code || "").trim();
@@ -4228,7 +4279,7 @@ app.get("/api/instagram/item", async (req, res) => {
       const displayUrl = grab(/"display_url":"(https:[^"]+?)"/);
       const username = grab(/"owner":\{"username":"([^"]+)"/) || grab(/"username":"([^"]+)"/);
       const caption = grab(/"edge_media_to_caption":\{"edges":\[\{"node":\{"text":"([\s\S]*?)"\}\}\]\}/);
-      const likes = grab(/"edge_media_preview_like":\{"count":(\d+)/);
+      const likes = grab(/"edge_media_preview_like":\{"count":(\d+)/) || grab(/"edge_liked_by":\{"count":(\d+)/) || grab(/"like_count":(\d+)/);
       if (!videoUrl && !displayUrl) throw new Error("メディアを取得できませんでした（非公開・削除済みの可能性）");
       const post = {
         code,
@@ -4237,7 +4288,7 @@ app.get("/api/instagram/item", async (req, res) => {
         video: videoUrl || null,
         image: displayUrl || null,
         username: username || "",
-        caption: caption ? caption.replace(/\\n/g, "\n").replace(/\\u([0-9a-fA-F]{4})/g, (mm, h) => String.fromCharCode(parseInt(h, 16))) : "",
+        caption: decodeEscapedText(caption || ""),
         likes: likes ? Number(likes) : null,
         url: `https://www.instagram.com/${kind === "reel" ? "reel" : "p"}/${code}/`
       };
