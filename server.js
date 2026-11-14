@@ -3414,6 +3414,26 @@ app.all("/api/proxy", async (req, res) => {
         return `url("${resolveUrl(val)}")`;
       });
 
+      // Instagramのリール・投稿リンク、TikTokの動画リンクは、もこり内ビューアへ直結させる
+      // （公式サイト側はログイン壁を出して再生できないため）
+      if (isInstagram || isTiktok) {
+        html = html.replace(/href="\/api\/proxy\?url=([^"]+)"/g, (match, enc) => {
+          let tv;
+          try {
+            tv = decodeURIComponent(enc);
+          } catch (_) {
+            return match;
+          }
+          if (isInstagram && /^https?:\/\/[^/]*instagram\.com\/(reel|reels|p|tv)\//i.test(tv)) {
+            return `data-proxy-viewer="1" href="/instagram/?url=${encodeURIComponent(tv)}"`;
+          }
+          if (isTiktok && /^https?:\/\/[^/]*tiktok\.com\/@[^/]+\/video\/\d+/i.test(tv)) {
+            return `data-proxy-viewer="1" href="/tiktok/?url=${encodeURIComponent(tv)}"`;
+          }
+          return match;
+        });
+      }
+
       // PokiのgameUri（games.poki.comのPARAMS）をプロキシURLに直接書き換え
       html = html.replace(/"gameUri"\s*:\s*"([^"]+)"/g, (match, val) => {
         return `"gameUri":"${resolveUrl(val)}&_ts=${Date.now()}"`;
@@ -3633,6 +3653,20 @@ app.all("/api/proxy", async (req, res) => {
     }
   }
 
+  // リール・投稿・動画ページは、もこり内ビューアのURLを返す（無ければnull）
+  function viewerHref(absUrl) {
+    try {
+      var h = typeof absUrl === 'string' ? absUrl : absUrl.href;
+      if (/^https?:\/\/[^/]*instagram\.com\/(reel|reels|p|tv)\//i.test(h)) {
+        return { href: '/instagram/?url=' + encodeURIComponent(h), viewer: '1' };
+      }
+      if (/^https?:\/\/[^/]*tiktok\.com\/@[^/]+\/video\/\d+/i.test(h)) {
+        return { href: '/tiktok/?url=' + encodeURIComponent(h), viewer: '1' };
+      }
+    } catch (_) {}
+    return null;
+  }
+
   if (window.HTMLAnchorElement && window.HTMLAnchorElement.prototype) {
     var anchorHref = Object.getOwnPropertyDescriptor(HTMLAnchorElement.prototype, 'href');
     if (anchorHref && anchorHref.set) {
@@ -3641,7 +3675,17 @@ app.all("/api/proxy", async (req, res) => {
         configurable: anchorHref.configurable,
         enumerable: anchorHref.enumerable,
         get: anchorHref.get,
-        set: function(val) { return setAnchorHref.call(this, toProxy(val)); }
+        set: function(val) {
+          try {
+            var abs = new URL(val, baseUrl);
+            var vh = viewerHref(abs);
+            if (vh) {
+              this.setAttribute('data-proxy-viewer', '1');
+              return setAnchorHref.call(this, vh.href);
+            }
+          } catch (_) {}
+          return setAnchorHref.call(this, toProxy(val));
+        }
       });
     }
   }
@@ -3653,22 +3697,29 @@ app.all("/api/proxy", async (req, res) => {
     };
   }
 
-  document.addEventListener('click', function(e) {
-    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  window.addEventListener('click', function(e) {
     var target = e.target && e.target.nodeType === 1 ? e.target : e.target && e.target.parentElement;
     var anchor = target && target.closest ? target.closest('a[href]') : null;
+    // リール・投稿・動画ページは、もこり内ビューアへ（SPAの割り込みより先に処理する）
+    if (anchor && anchor.getAttribute('data-proxy-viewer') === '1') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      window.location.href = anchor.getAttribute('href');
+      return;
+    }
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     if (!anchor || (anchor.target && anchor.target !== '_self')) return;
     var href = anchor.getAttribute('href') || '';
     if (!href || href.startsWith('#')) return;
-    // すでにプロキシURLのリンクは、SPAのクライアントルーティングに邪魔されないよう通常遷移させる
     if (href.includes('/api/proxy?url=')) {
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       window.location.href = href;
       return;
     }
     if (/^\\/(?:tensai-proxy|tube|music|tiktok|instagram)(?:\\/|$)/.test(href)) return;
     e.preventDefault();
+    e.stopImmediatePropagation();
     window.location.href = toProxy(href);
   }, true);
 
@@ -3711,6 +3762,15 @@ app.all("/api/proxy", async (req, res) => {
   var origSetAttribute = Element.prototype.setAttribute;
   Element.prototype.setAttribute = function(name, val) {
     if (name === 'src' || name === 'href' || name === 'data-src' || name === 'poster') {
+      if (name === 'href') {
+        try {
+          var vh = viewerHref(new URL(String(val), baseUrl));
+          if (vh) {
+            origSetAttribute.call(this, 'data-proxy-viewer', '1');
+            return origSetAttribute.call(this, name, vh.href);
+          }
+        } catch (_) {}
+      }
       val = toProxy(val);
     }
     return origSetAttribute.call(this, name, val);
