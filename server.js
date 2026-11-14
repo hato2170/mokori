@@ -3258,6 +3258,19 @@ app.all("/api/proxy", async (req, res) => {
     const isTiktok = hostLower.includes("tiktok.com");
     const isInstagram = hostLower.includes("instagram.com");
 
+    // Instagramの人気ページは5分キャッシュ（Instagram側の429レート制限を避ける）
+    const pageCacheKey = req.method === "GET" && isInstagram && parsedTarget.pathname.startsWith("/popular/")
+      ? "ig-page:" + targetUrl
+      : null;
+    if (pageCacheKey) {
+      const hit = socialCacheGet(pageCacheKey);
+      if (hit) {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        return res.send(hit);
+      }
+    }
+
     let virtualReferer = origin + "/";
     try {
       const browserReferer = new URL(req.headers.referer || "");
@@ -3933,6 +3946,7 @@ if (window !== window.top) {
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Pragma", "no-cache");
+      if (pageCacheKey) socialCacheSet(pageCacheKey, html, 5 * 60 * 1000);
       return res.send(html);
     }
 
