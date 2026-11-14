@@ -3659,7 +3659,15 @@ app.all("/api/proxy", async (req, res) => {
     var anchor = target && target.closest ? target.closest('a[href]') : null;
     if (!anchor || (anchor.target && anchor.target !== '_self')) return;
     var href = anchor.getAttribute('href') || '';
-    if (!href || href.startsWith('#') || /^\\/(?:tensai-proxy|tube|music)(?:\\/|$)/.test(href) || href.includes('/api/proxy?url=')) return;
+    if (!href || href.startsWith('#')) return;
+    // すでにプロキシURLのリンクは、SPAのクライアントルーティングに邪魔されないよう通常遷移させる
+    if (href.includes('/api/proxy?url=')) {
+      e.preventDefault();
+      e.stopPropagation();
+      window.location.href = href;
+      return;
+    }
+    if (/^\\/(?:tensai-proxy|tube|music|tiktok|instagram)(?:\\/|$)/.test(href)) return;
     e.preventDefault();
     window.location.href = toProxy(href);
   }, true);
