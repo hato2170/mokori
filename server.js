@@ -4389,8 +4389,88 @@ function decodeEscapedText(input) {
     .trim();
 }
 
-app.get("/api/instagram/item", async (req, res) => {
+// Instagramのキーワード別リール集（ログイン不要の公開ページ）をサーバー側で取得する
+// Googlebot向けにはJSなしの完全データ（SSR JSON）が返るので、それをパースして自前のUIで描画する
+function findKeyDeep(obj, key) {
+  if (!obj || typeof obj !== "object") return null;
+  if (Array.isArray(obj)) {
+    for (const v of obj) {
+      const hit = findKeyDeep(v, key);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (Object.prototype.hasOwnProperty.call(obj, key)) return obj[key];
+  for (const v of Object.values(obj)) {
+    const hit = findKeyDeep(v, key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function parseInstagramPopular(html) {
+  const blocks = html.match(/<script type="application\/json"[^>]*>([\s\S]*?)<\/script>/g) || [];
+  for (const block of blocks) {
+    const raw = block.replace(/^<script[^>]*>/, "").replace(/<\/script>$/, "");
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (_) {
+      continue;
+    }
+    const info = findKeyDeep(parsed, "xig_logged_out_popular_search_media_info");
+    if (!info || !Array.isArray(info.edges)) continue;
+    return info.edges.map((e) => {
+      const n = (e && e.node) || {};
+      const vv = Array.isArray(n.video_versions) ? n.video_versions : [];
+      const play = vv.length ? vv[vv.length - 1].url : null;
+      return {
+        code: n.code || "",
+        cover: n.display_uri || null,
+        caption: (n.caption && n.caption.text) || "",
+        author: (n.user && n.user.username) || "",
+        avatar: (n.user && n.user.profile_pic_url) || null,
+        verified: !!(n.user && n.user.is_verified),
+        plays: typeof n.play_count === "number" ? n.play_count : null,
+        likes: typeof n.like_count === "number" ? n.like_count : null,
+        isVideo: !!play,
+        video: play
+      };
+    }).filter((v) => v.code);
+  }
+  return [];
+}
+
+app.get("/api/instagram/popular", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
+  const q = String(req.query.q || "").replace(/^#/, "").trim();
+  if (!q) return res.status(400).json({ ok: false, error: "キーワードを入力してください" });
+  const slug = q.toLowerCase().replace(/[^0-9a-z\u3040-\u30ff\u4e00-\u9fff_\- ]/g, "").replace(/\s+/g, "-");
+  if (!slug) return res.status(400).json({ ok: false, error: "キーワードを入力してください" });
+  const cacheKey = "ig-popular:" + slug;
+  const cached = socialCacheGet(cacheKey);
+  if (cached) return res.json({ ok: true, source: "cache", keyword: slug, posts: cached });
+  try {
+    const r = await fetch(`https://www.instagram.com/popular/${encodeURIComponent(slug)}/`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8"
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(25000)
+    });
+    if (!r.ok) throw new Error("Instagram status " + r.status);
+    const posts = parseInstagramPopular(await r.text());
+    if (!posts.length) throw new Error("このキーワードのリールが見つかりませんでした");
+    socialCacheSet(cacheKey, posts, 10 * 60 * 1000);
+    return res.json({ ok: true, source: "live", keyword: slug, posts });
+  } catch (err) {
+    return res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/api/instagram/item", async (req, res) => {  res.setHeader("Access-Control-Allow-Origin", "*");
   const raw = String(req.query.url || req.query.code || "").trim();
   if (!raw) return res.status(400).json({ ok: false, error: "Instagramの投稿・リールURLを入力してください" });
   let code = raw;

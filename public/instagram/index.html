@@ -10,11 +10,11 @@
   body {
     background: #0a0f1d; color: #f8fafc; min-height: 100vh;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding-bottom: 48px;
+    padding-bottom: 40px;
   }
   header {
     position: sticky; top: 0; z-index: 50; display: flex; align-items: center; justify-content: space-between;
-    padding: 13px 16px; background: rgba(10,15,29,0.92); backdrop-filter: blur(12px);
+    padding: 13px 16px; background: rgba(10,15,29,0.94); backdrop-filter: blur(12px);
     border-bottom: 1px solid rgba(255,255,255,0.08);
   }
   .logo { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 17px; }
@@ -27,9 +27,8 @@
     color: #cbd5e1; text-decoration: none; font-size: 12px; background: #1e293b;
     padding: 7px 11px; border-radius: 999px; border: 1px solid #334155;
   }
-  .wrap { max-width: 900px; margin: 0 auto; padding: 18px 16px 0; }
-  section { margin-bottom: 26px; }
-  h2 { font-size: 14px; color: #93c5fd; margin-bottom: 10px; letter-spacing: .3px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 16px 14px 0; }
+  h2 { font-size: 14px; color: #93c5fd; margin-bottom: 10px; }
   .search-row { display: flex; gap: 8px; }
   .search-row input {
     flex: 1; min-width: 0; background: #111a2e; border: 1px solid #2a3a55; border-radius: 12px;
@@ -47,30 +46,41 @@
   }
   .chip:active { background: #1d2f4d; }
   .hint { color: #8ea3c0; font-size: 12px; line-height: 1.7; margin-top: 10px; }
-  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-  .card {
-    display: block; text-decoration: none; color: inherit; background: #111a2e; border: 1px solid #22304a;
-    border-radius: 14px; padding: 16px; font-size: 13px; line-height: 1.6;
-  }
-  .card b { display: block; font-size: 14px; margin-bottom: 4px; }
-  .card span { color: #8ea3c0; }
-  .status { font-size: 13px; color: #8ea3c0; margin-top: 10px; }
+  .status { font-size: 13px; color: #8ea3c0; margin: 12px 2px; }
   .status.err { color: #fca5a5; }
-  #viewer { display: none; }
-  #viewer.on { display: block; }
-  .post-box {
-    background: #111a2e; border: 1px solid #22304a; border-radius: 16px; overflow: hidden; margin-top: 12px;
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; margin-top: 14px; }
+  @media (min-width: 700px) { .grid { grid-template-columns: repeat(4, minmax(0,1fr)); } }
+  .card { position: relative; aspect-ratio: 9/16; border-radius: 14px; overflow: hidden; background: #111a2e; border: 1px solid #22304a; cursor: pointer; }
+  .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card .ov {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 24px 8px 8px;
+    background: linear-gradient(to top, rgba(0,0,0,0.9), transparent); font-size: 11px; line-height: 1.35;
   }
-  .post-box video, .post-box img { width: 100%; max-height: 70vh; object-fit: contain; background: #000; display: block; }
-  .post-meta { padding: 12px 14px 16px; font-size: 13px; line-height: 1.6; }
-  .post-meta .who { font-weight: 800; color: #f9a8d4; margin-bottom: 6px; }
-  .post-meta .cap { color: #dbeafe; white-space: pre-wrap; word-break: break-word; }
-  .post-meta .sub { color: #8ea3c0; font-size: 12px; margin-top: 8px; }
-  .post-meta a { color: #93c5fd; }
-  .spinner {
-    width: 26px; height: 26px; border: 3px solid #253552; border-top-color: #dc2743; border-radius: 50%;
-    animation: spin .8s linear infinite; margin: 16px auto;
+  .card .who { font-weight: 800; color: #f9a8d4; }
+  .card .num { color: #a7f3d0; font-weight: 700; }
+  .card .cap { color: #e2e8f0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .card .badge { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; font-size: 11px; }
+  .cards2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .linkcard { display: block; text-decoration: none; color: inherit; background: #111a2e; border: 1px solid #22304a; border-radius: 14px; padding: 15px; font-size: 13px; line-height: 1.6; }
+  .linkcard b { display: block; font-size: 14px; margin-bottom: 4px; }
+  .linkcard span { color: #8ea3c0; }
+
+  #player { position: fixed; inset: 0; z-index: 200; background: #000; display: none; flex-direction: column; }
+  #player.open { display: flex; }
+  #player video, #player img { flex: 1; width: 100%; min-height: 0; object-fit: contain; background: #000; }
+  #player .top {
+    position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 14px; background: linear-gradient(to bottom, rgba(0,0,0,0.75), transparent); z-index: 3;
   }
+  #player .close { width: 38px; height: 38px; border-radius: 50%; border: 0; background: rgba(255,255,255,0.16); color: #fff; font-size: 18px; cursor: pointer; }
+  #player .open-orig { color: #fff; text-decoration: none; font-size: 12px; background: rgba(255,255,255,0.16); padding: 8px 12px; border-radius: 999px; }
+  #player .info { padding: 10px 16px 18px; background: #000; font-size: 13px; line-height: 1.5; max-height: 32vh; overflow: auto; }
+  #player .info .who { font-weight: 800; color: #f9a8d4; margin-bottom: 4px; }
+  #player .info .body { color: #e2e8f0; white-space: pre-wrap; word-break: break-word; }
+  #player .switch { display: flex; gap: 10px; padding: 0 16px 14px; }
+  #player .switch button { flex: 1; padding: 12px; border-radius: 12px; border: 1px solid #334155; background: #1e293b; color: #fff; font-weight: 700; font-size: 13px; cursor: pointer; }
+  #player .switch button:disabled { opacity: .4; }
+  .spinner { width: 26px; height: 26px; border: 3px solid #253552; border-top-color: #dc2743; border-radius: 50%; animation: spin .8s linear infinite; margin: 16px auto; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
@@ -85,53 +95,71 @@
 </header>
 
 <div class="wrap">
-
   <section>
     <h2>🔥 キーワードでリールを見る（ログイン不要）</h2>
     <div class="search-row">
-      <input id="kw" type="text" placeholder="キーワード（例: 犬 / dance / 料理）" autocomplete="off">
-      <button id="kwGo">開く</button>
+      <input id="kw" type="text" placeholder="キーワード（例: 犬 / dog / 料理）" autocomplete="off">
+      <button id="kwGo">見る</button>
     </div>
     <div class="chips" id="chips"></div>
-    <div class="hint">Instagramがログインなしでも公開しているキーワード別リール集を、もこり経由でそのまま開きます。動画はタップで再生できます。</div>
+    <div class="status" id="status"></div>
+    <div class="grid" id="grid"></div>
   </section>
 
-  <section>
+  <section style="margin-top:26px;">
     <h2>🔗 リール・投稿のURLを貼って再生</h2>
     <div class="search-row">
       <input id="postUrl" type="text" placeholder="https://www.instagram.com/reel/..." autocomplete="off">
       <button id="postGo">再生</button>
     </div>
-    <div id="status" class="status"></div>
-    <div id="viewer">
-      <div class="post-box">
-        <div id="mediaHolder"></div>
-        <div class="post-meta">
-          <div class="who" id="postWho"></div>
-          <div class="cap" id="postCap"></div>
-          <div class="sub" id="postSub"></div>
-        </div>
-      </div>
-    </div>
+    <div class="hint">Instagramの投稿・リールなら、どのURLでもその場で再生できます。</div>
   </section>
 
-  <section>
+  <section style="margin-top:26px;">
     <h2>👤 アカウント（ログイン・新規登録）</h2>
-    <div class="cards">
-      <a class="card" id="loginLink" href="#"><b>🔑 ログイン</b><span>既存アカウントで入る（プロキシ経由）</span></a>
-      <a class="card" id="signupLink" href="#"><b>✨ 新規登録</b><span>メールで作成（捨てメアドも使えます）</span></a>
-      <a class="card" href="/mail.html"><b>📬 捨てメアド</b><span>登録・認証用アドレスを発行</span></a>
-      <a class="card" id="topLink" href="#"><b>🌐 Instagramトップ</b><span>公式ページをプロキシで開く</span></a>
+    <div class="cards2">
+      <a class="linkcard" id="loginLink" href="#"><b>🔑 ログイン</b><span>既存アカウントで入る（プロキシ経由）</span></a>
+      <a class="linkcard" id="signupLink" href="#"><b>✨ 新規登録</b><span>メールで作成（捨てメアドも使えます）</span></a>
+      <a class="linkcard" href="/mail.html"><b>📬 捨てメアド</b><span>登録・認証用アドレスを発行</span></a>
+      <a class="linkcard" id="topLink" href="#"><b>🌐 Instagramトップ</b><span>公式ページをプロキシで開く</span></a>
     </div>
-    <div class="hint">個人アカウントのプロフィール画面・フォロー中のフィードは、Instagram側がログインを必須にしているためログイン後に見られます。ログイン・新規登録の公式ページは、Instagram側のアクセス制限（429）で開けないことがあります。その場合は少し時間をおいて再度お試しください。</div>
+    <div class="hint">フォロー中のフィードなどログインが必要な画面は、ログイン後に見られます。公式ページはInstagram側のアクセス制限（429）で開けないことがあります。</div>
   </section>
+</div>
 
+<div id="player">
+  <div class="top">
+    <button class="close" id="closeBtn">✕</button>
+    <a class="open-orig" id="openOrig" href="#" target="_blank" rel="noopener">Instagramで開く</a>
+  </div>
+  <div id="mediaHolder" style="flex:1; display:flex; min-height:0;"></div>
+  <div class="info">
+    <div class="who" id="pAuthor"></div>
+    <div class="body" id="pDesc"></div>
+  </div>
+  <div class="switch">
+    <button id="prevBtn">◀ 前へ</button>
+    <button id="nextBtn">次へ ▶</button>
+  </div>
 </div>
 
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   function proxy(url) { return '/api/proxy?url=' + encodeURIComponent(url); }
+  function media(url) { return '/api/media?url=' + encodeURIComponent(url); }
+  function fmt(n) {
+    if (n === null || n === undefined) return '';
+    if (n >= 100000000) return (n / 100000000).toFixed(1).replace('.0', '') + '億';
+    if (n >= 10000) return (n / 10000).toFixed(1).replace('.0', '') + '万';
+    return String(n);
+  }
+  function esc(s) {
+    return String(s || '').replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
   $('loginLink').href = proxy('https://www.instagram.com/accounts/login/');
   $('signupLink').href = proxy('https://www.instagram.com/accounts/emailsignup/');
   $('topLink').href = proxy('https://www.instagram.com/');
@@ -149,63 +177,135 @@
     c.onclick = function () { openKeyword(c.getAttribute('data-k')); };
   });
 
+  var state = { posts: [], index: -1 };
+
+  function setStatus(msg, err) {
+    $('status').textContent = msg || '';
+    $('status').className = 'status' + (err ? ' err' : '');
+  }
   function slugify(v) {
-    return String(v).trim().toLowerCase()
-      .replace(/^#/, '')
-      .replace(/[^0-9a-zぁ-んァ-ヶ一-龠ー_\- ]/g, '')
+    return String(v).trim().toLowerCase().replace(/^#/, '')
+      .replace(/[^0-9a-z\u3040-\u30ff\u4e00-\u9fff_\- ]/g, '')
       .replace(/\s+/g, '-');
   }
+
   function openKeyword(word) {
     var slug = slugify(word);
     if (!slug) return;
-    location.href = proxy('https://www.instagram.com/popular/' + encodeURIComponent(slug) + '/');
+    setStatus('');
+    $('grid').innerHTML = '<div class="spinner" style="grid-column:1/-1"></div>';
+    fetch('/api/instagram/popular?q=' + encodeURIComponent(slug))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || '取得できませんでした');
+        state.posts = d.posts || [];
+        setStatus('「' + slug + '」のリール ' + state.posts.length + '件');
+        render();
+      })
+      .catch(function (e) {
+        $('grid').innerHTML = '';
+        setStatus('取得できませんでした：' + e.message, true);
+      });
   }
+
+  function render() {
+    $('grid').innerHTML = state.posts.map(function (p, i) {
+      return '<div class="card" data-i="' + i + '">'
+        + (p.cover ? '<img loading="lazy" src="' + media(p.cover) + '" alt="">' : '')
+        + '<div class="badge">▶</div>'
+        + '<div class="ov">'
+        + '<div class="who">@' + esc(p.author) + '</div>'
+        + '<div class="num">' + (p.plays ? '▶ ' + fmt(p.plays) : '') + '</div>'
+        + '<div class="cap">' + esc(p.caption) + '</div>'
+        + '</div></div>';
+    }).join('');
+    Array.prototype.forEach.call($('grid').querySelectorAll('.card'), function (el) {
+      el.onclick = function () { openPlayer(Number(el.getAttribute('data-i'))); };
+    });
+  }
+
+  function openPlayer(i) {
+    var p = state.posts[i];
+    if (!p) return;
+    state.index = i;
+    $('player').classList.add('open');
+    var holder = $('mediaHolder');
+    if (p.video) {
+      holder.innerHTML = '<video controls playsinline webkit-playsinline autoplay src="' + media(p.video) + '"></video>';
+    } else {
+      holder.innerHTML = '<img src="' + media(p.cover) + '" alt="">';
+    }
+    var v = holder.querySelector('video');
+    if (v) v.play().catch(function () {});
+    $('pAuthor').textContent = '@' + (p.author || '');
+    var extra = [];
+    if (p.likes) extra.push('❤️ ' + p.likes.toLocaleString());
+    if (p.plays) extra.push('▶ ' + p.plays.toLocaleString());
+    $('pDesc').textContent = (p.caption || '') + (extra.length ? '\n\n' + extra.join('  ') : '');
+    $('openOrig').href = proxy(p.url || ('https://www.instagram.com/reel/' + p.code + '/'));
+    $('prevBtn').disabled = i <= 0;
+    $('nextBtn').disabled = i >= state.posts.length - 1;
+  }
+  function closePlayer() {
+    $('player').classList.remove('open');
+    var v = $('mediaHolder').querySelector('video');
+    if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+    $('mediaHolder').innerHTML = '';
+  }
+  $('closeBtn').onclick = closePlayer;
+  $('prevBtn').onclick = function () { if (state.index > 0) openPlayer(state.index - 1); };
+  $('nextBtn').onclick = function () { if (state.index < state.posts.length - 1) openPlayer(state.index + 1); };
+
+  var touchY = 0;
+  $('player').addEventListener('touchstart', function (e) { touchY = e.touches[0].clientY; }, { passive: true });
+  $('player').addEventListener('touchend', function (e) {
+    var dy = e.changedTouches[0].clientY - touchY;
+    if (Math.abs(dy) < 70) return;
+    if (dy < 0 && state.index < state.posts.length - 1) openPlayer(state.index + 1);
+    else if (dy > 0 && state.index > 0) openPlayer(state.index - 1);
+  }, { passive: true });
+
   $('kwGo').onclick = function () { openKeyword($('kw').value); };
   $('kw').addEventListener('keydown', function (e) { if (e.key === 'Enter') openKeyword($('kw').value); });
 
-  function postError(msg) {
-    $('viewer').classList.remove('on');
-    $('status').className = 'status err';
-    $('status').textContent = msg;
-  }
-  function loadPost() {
-    var raw = ($('postUrl').value || '').trim();
+  // 単体のリール・投稿URL
+  function loadSingle(raw) {
     if (!raw) return;
-    $('status').className = 'status';
-    $('status').innerHTML = '<div class="spinner"></div>';
-    $('viewer').classList.remove('on');
+    setStatus('読み込み中…');
     fetch('/api/instagram/item?url=' + encodeURIComponent(raw))
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!d.ok) throw new Error(d.error || '取得できませんでした');
         var p = d.post;
-        $('status').textContent = '';
-        var holder = $('mediaHolder');
-        if (p.isVideo && p.video) {
-          holder.innerHTML = '<video controls playsinline webkit-playsinline autoplay src="/api/media?url=' + encodeURIComponent(p.video) + '"></video>';
-        } else {
-          holder.innerHTML = '<img src="/api/media?url=' + encodeURIComponent(p.image) + '" alt="">';
-        }
-        $('postWho').textContent = p.username ? '@' + p.username : '';
-        $('postCap').textContent = p.caption || '';
-        $('postSub').innerHTML = (p.likes ? '❤️ ' + p.likes.toLocaleString() : '')
-          + ' · <a href="' + proxy(p.url) + '">Instagramで開く</a>';
-        $('viewer').classList.add('on');
-        var v = holder.querySelector('video');
-        if (v) v.play().catch(function () {});
+        state.posts = [{
+          code: p.code,
+          cover: p.image,
+          caption: p.caption,
+          author: p.username,
+          plays: null,
+          likes: p.likes,
+          video: p.video,
+          url: p.url
+        }];
+        setStatus('');
+        render();
+        openPlayer(0);
       })
-      .catch(function (e) { postError('再生できませんでした：' + e.message); });
+      .catch(function (e) { setStatus('再生できませんでした：' + e.message, true); });
   }
-  $('postGo').onclick = loadPost;
-  $('postUrl').addEventListener('keydown', function (e) { if (e.key === 'Enter') loadPost(); });
+  $('postGo').onclick = function () { loadSingle($('postUrl').value.trim()); };
+  $('postUrl').addEventListener('keydown', function (e) { if (e.key === 'Enter') loadSingle($('postUrl').value.trim()); });
 
-  // プロキシからリダイレクトされてきた場合（?url=...）は自動で再生する
+  // 起動
   var params = new URLSearchParams(location.search);
   if (params.get('url')) {
     $('postUrl').value = params.get('url');
-    loadPost();
+    loadSingle(params.get('url'));
+  } else if (params.get('kw')) {
+    openKeyword(params.get('kw'));
+  } else {
+    openKeyword('dog');
   }
-  if (params.get('kw')) openKeyword(params.get('kw'));
 })();
 </script>
 </body>
