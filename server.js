@@ -3346,6 +3346,15 @@ app.all("/api/proxy", async (req, res) => {
     const response = await fetch(targetUrl, fetchOpts);
     const contentType = response.headers.get("content-type") || "";
 
+    // Instagramが回線制限（429）を返したときは、壊れたページではなく案内を出す
+    if (response.status === 429 && isInstagram && (req.headers.accept || "").includes("text/html")) {
+      return res.status(429).send(renderProxyError(
+        "Instagramが一時的にアクセスを制限しています",
+        "Instagram側の回線制限（429）で、いまこのページは開けません。数分〜数十分おくと改善することが多いです。<br>ログインしなくても見られるリール・投稿は<a href=\"/instagram/\" style=\"color:#7dd3fc;\">もこりInstagram</a>からどうぞ。",
+        `/api/proxy?url=${encodeURIComponent(targetUrl)}`
+      ));
+    }
+
     res.status(response.status);
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
