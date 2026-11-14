@@ -198,6 +198,14 @@
   }
   $('postGo').onclick = loadPost;
   $('postUrl').addEventListener('keydown', function (e) { if (e.key === 'Enter') loadPost(); });
+
+  // プロキシからリダイレクトされてきた場合（?url=...）は自動で再生する
+  var params = new URLSearchParams(location.search);
+  if (params.get('url')) {
+    $('postUrl').value = params.get('url');
+    loadPost();
+  }
+  if (params.get('kw')) openKeyword(params.get('kw'));
 })();
 </script>
 </body>

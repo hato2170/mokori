@@ -3238,6 +3238,20 @@ app.all("/api/proxy", async (req, res) => {
     return res.status(403).send(renderProxyError("アクセス制限", "安全保護のため、内部ネットワークやプライベートIPへの接続はブロックされています。"));
   }
 
+  // Instagramのリール/投稿ページ、TikTokの動画ページは、公式サイトが見せないので、もこり内ビューアで再生させる
+  if (req.method === "GET" && (req.headers.accept || "").includes("text/html")) {
+    const hostForRedirect = parsedTarget.hostname.toLowerCase();
+    const pathForRedirect = parsedTarget.pathname;
+    if (!pathForRedirect.includes("/embed/")) {
+      if (hostForRedirect.includes("instagram.com") && /^\/(reel|reels|p|tv)\/[A-Za-z0-9_-]{5,}/i.test(pathForRedirect)) {
+        return res.redirect(`/instagram/?url=${encodeURIComponent(targetUrl)}`);
+      }
+      if (hostForRedirect.includes("tiktok.com") && /^\/@[^/]+\/video\/\d+/i.test(pathForRedirect)) {
+        return res.redirect(`/tiktok/?url=${encodeURIComponent(targetUrl)}`);
+      }
+    }
+  }
+
   try {
     const origin = parsedTarget.origin;
     const hostLower = parsedTarget.hostname.toLowerCase();
@@ -4065,10 +4079,11 @@ app.get("/api/tiktok/feed", async (req, res) => {
   if (cached) return res.json({ ok: true, source: "cache", region, videos: cached });
 
   // 日本のタグと全体のおすすめをブレンドして「おすすめ」を作る
-  const [jp, extra, global] = await Promise.all([
+  const [jp, extra, global, fyp] = await Promise.all([
     fetchTiktokEmbedList(`https://www.tiktok.com/embed/tag/${encodeURIComponent("日本")}`).then((r) => r.videos).catch(() => []),
     fetchTiktokEmbedList(`https://www.tiktok.com/embed/tag/${encodeURIComponent(jpTag)}`).then((r) => r.videos).catch(() => []),
-    fetchTikwmFeed(region).catch(() => [])
+    fetchTikwmFeed(region).catch(() => []),
+    fetchTiktokEmbedList("https://www.tiktok.com/embed/tag/fyp").then((r) => r.videos).catch(() => [])
   ]);
 
   const seen = new Set();
@@ -4079,19 +4094,23 @@ app.get("/api/tiktok/feed", async (req, res) => {
       videos.push(v);
     }
   };
-  const maxLen = Math.max(jp.length, extra.length, global.length);
+  const maxLen = Math.max(jp.length, extra.length, global.length, fyp.length);
   for (let i = 0; i < maxLen; i++) {
     if (jp[i]) push(jp[i]);
     if (global[i]) push(global[i]);
     if (extra[i]) push(extra[i]);
+    if (fyp[i]) push(fyp[i]);
   }
 
   if (!videos.length) {
     try {
-      const fb = await fetchTiktokEmbedList("https://www.tiktok.com/embed/tag/fyp");
+      const fb = await fetchTiktokEmbedList("https://www.tiktok.com/embed/tag/%E3%83%80%E3%83%B3%E3%82%B9");
       fb.videos.forEach(push);
     } catch (_) {}
   }
+  // 日本語の動画を先に見せる（おすすめが海外の動画ばかりにならないように）
+  const hasJapanese = (v) => /[\u3040-\u30FF\u4E00-\u9FFF]/.test((v.desc || "") + " " + (v.nickname || ""));
+  videos.sort((a, b) => (hasJapanese(b) ? 1 : 0) - (hasJapanese(a) ? 1 : 0));
   if (!videos.length) {
     return res.status(502).json({ ok: false, error: "おすすめ動画を取得できませんでした。少し待って再度お試しください。" });
   }

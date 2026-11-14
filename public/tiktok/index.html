@@ -314,7 +314,26 @@
   });
 
   renderPanel();
-  loadTrending();
+  var bootParams = new URLSearchParams(location.search);
+  if (bootParams.get('url')) {
+    state.mode = 'url';
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (x) {
+      x.classList.toggle('active', x.getAttribute('data-mode') === 'url');
+    });
+    renderPanel();
+    $('qUrl').value = bootParams.get('url');
+    loadUrl();
+  } else if (bootParams.get('tag')) {
+    state.mode = 'tag';
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (x) {
+      x.classList.toggle('active', x.getAttribute('data-mode') === 'tag');
+    });
+    renderPanel();
+    $('qTag').value = bootParams.get('tag');
+    loadTag();
+  } else {
+    loadTrending();
+  }
 })();
 </script>
 </body>
