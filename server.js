@@ -8,8 +8,8 @@ const bcrypt = require("bcryptjs");
 
 const app = express();
 app.set("trust proxy", 1);
-app.use(express.json({ limit: "15mb" }));
-app.use(express.urlencoded({ extended: true, limit: "15mb" }));
+app.use(express.json({ limit: "15mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
+app.use(express.urlencoded({ extended: true, limit: "15mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 async function requireLogin(req, res, next) {
   if (!auth) {
@@ -3314,10 +3314,13 @@ app.all("/api/proxy", async (req, res) => {
       redirect: "follow"
     };
 
-    if (req.method !== "GET" && req.method !== "HEAD" && req.body) {
-      if (typeof req.body === "string" || Buffer.isBuffer(req.body)) {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      if (Buffer.isBuffer(req.rawBody) && req.rawBody.length) {
+        // 受信した生のボディをそのまま中継する（Instagram/TikTokのPOSTは再エンコードで壊れる）
+        fetchOpts.body = req.rawBody;
+      } else if (typeof req.body === "string" || Buffer.isBuffer(req.body)) {
         fetchOpts.body = req.body;
-      } else if (typeof req.body === "object") {
+      } else if (req.body && typeof req.body === "object") {
         if ((req.headers["content-type"] || "").includes("application/x-www-form-urlencoded")) {
           fetchOpts.body = new URLSearchParams(req.body).toString();
         } else {
