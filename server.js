@@ -3190,7 +3190,7 @@ app.all("/api/proxy", async (req, res) => {
         const probe = new URL(targetUrl);
         const probeHost = probe.hostname.toLowerCase();
         const isSelfHost = probeHost === selfHost || probeHost === "localhost" || probeHost === "127.0.0.1";
-        if (isSelfHost && probe.pathname.replace(/\/+$/, "") === "/api/proxy") {
+        if (isSelfHost && (probe.pathname === "/api/proxy" || probe.pathname === "/api/proxy/")) {
           inner = probe.searchParams.get("url");
         }
       } catch (_) {}
@@ -3378,7 +3378,7 @@ app.all("/api/proxy", async (req, res) => {
         try {
           const absUrl = new URL(rel, baseUrl);
           // すでにプロキシURL（自ドメインの /api/proxy）なら再ラップしない＝入れ子の根本防止
-          if (absUrl.hostname.toLowerCase() === selfHostName && absUrl.pathname.replace(/\/+$/, "") === "/api/proxy") {
+          if (absUrl.hostname.toLowerCase() === selfHostName && (absUrl.pathname === "/api/proxy" || absUrl.pathname === "/api/proxy/")) {
             return rel;
           }
           // 自ドメイン（もこり本体のページ）への絶対リンクはそのまま（/tube/ 等への誤中継を防ぐ）
@@ -3656,12 +3656,17 @@ app.all("/api/proxy", async (req, res) => {
   // リール・投稿・動画ページは、もこり内ビューアのURLを返す（無ければnull）
   function viewerHref(absUrl) {
     try {
-      var h = typeof absUrl === 'string' ? absUrl : absUrl.href;
-      if (/^https?:\/\/[^/]*instagram\.com\/(reel|reels|p|tv)\//i.test(h)) {
-        return { href: '/instagram/?url=' + encodeURIComponent(h), viewer: '1' };
+      var u = new URL(typeof absUrl === 'string' ? absUrl : absUrl.href);
+      var host = u.hostname.toLowerCase();
+      var segs = u.pathname.split('/').filter(function (x) { return x.length > 0; });
+      var root = segs[0] || '';
+      var isIg = host === 'instagram.com' || host.slice(-14) === '.instagram.com';
+      if (isIg && (root === 'reel' || root === 'reels' || root === 'p' || root === 'tv')) {
+        return { href: '/instagram/?url=' + encodeURIComponent(u.href), viewer: '1' };
       }
-      if (/^https?:\/\/[^/]*tiktok\.com\/@[^/]+\/video\/\d+/i.test(h)) {
-        return { href: '/tiktok/?url=' + encodeURIComponent(h), viewer: '1' };
+      var isTt = host === 'tiktok.com' || host.slice(-11) === '.tiktok.com';
+      if (isTt && root.charAt(0) === '@' && segs[1] === 'video' && /^[0-9]+$/.test(segs[2] || '')) {
+        return { href: '/tiktok/?url=' + encodeURIComponent(u.href), viewer: '1' };
       }
     } catch (_) {}
     return null;
@@ -3795,7 +3800,7 @@ app.all("/api/proxy", async (req, res) => {
       try {
         var abs = new URL(u, baseUrl);
         var selfHost = window.location.hostname;
-        if (abs.hostname === selfHost && abs.pathname.replace(/\/+$/, '') === '/api/proxy') {
+        if (abs.hostname === selfHost && (abs.pathname === '/api/proxy' || abs.pathname === '/api/proxy/')) {
           var inner = abs.searchParams.get('url');
           if (inner) {
             return { url: new URL(inner), proxied: abs };
