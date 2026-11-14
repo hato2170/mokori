@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
+const { Readable } = require("stream");
 const express = require("express");
 const admin = require("firebase-admin");
 const bcrypt = require("bcryptjs");
@@ -3068,7 +3069,7 @@ function renderProxyError(title, detail, retryUrl) {
 app.use(async (req, res, next) => {
   if (req.method === "GET" && req.path.startsWith("/api/")) {
     const filename = req.path.slice(5);
-    const knownApiPrefixes = ["system", "health", "register", "login", "users", "friends", "chats", "games", "calls", "music", "voom", "proxy", "tube"];
+    const knownApiPrefixes = ["system", "health", "register", "login", "users", "friends", "chats", "games", "calls", "music", "voom", "proxy", "tube", "tiktok", "instagram", "media", "geniusos", "tempmail", "ai"];
     const firstPart = filename.split("/")[0].toLowerCase();
     if (!knownApiPrefixes.includes(firstPart)) {
       if (filename.includes("poki-sdk")) {
@@ -3175,6 +3176,30 @@ app.all("/api/proxy", async (req, res) => {
   targetUrl = String(targetUrl).trim();
   if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
     targetUrl = "https://" + targetUrl;
+  }
+
+  // 🔧 URL二重化（プロキシURLの入れ子）を剥がす。
+  // Instagram/TikTok等のSPAは自分のURLを基準にリンクや履歴を書き換えるため、
+  // /api/proxy?url=https://mokori.onrender.com/api/proxy?url=https%3A... と入れ子になり
+  // 以降の相対リンクがすべて壊れる（「リンクが破損しているか…」「ページを読み込めませんでした」の正体）。
+  {
+    const selfHost = String(req.get("host") || "").toLowerCase().split(":")[0];
+    for (let guard = 0; guard < 6; guard++) {
+      let inner = null;
+      try {
+        const probe = new URL(targetUrl);
+        const probeHost = probe.hostname.toLowerCase();
+        const isSelfHost = probeHost === selfHost || probeHost === "localhost" || probeHost === "127.0.0.1";
+        if (isSelfHost && probe.pathname.replace(/\/+$/, "") === "/api/proxy") {
+          inner = probe.searchParams.get("url");
+        }
+      } catch (_) {}
+      if (!inner) break;
+      targetUrl = inner;
+      if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+        targetUrl = "https://" + targetUrl;
+      }
+    }
   }
 
   // Emscripten/WASM等の相対URLが /api/index.wasm に解決された場合の救済
@@ -3330,12 +3355,22 @@ app.all("/api/proxy", async (req, res) => {
       html = html.replace(/function T\(e\)\{void 0===window\.pokiBotDetected&&\(window\.pokiBotDetected=e\)\}/gi, "function T(e){window.pokiBotDetected=false;}");
       html = html.replace(/window\.pokiBotDetectedPromise\s*=\s*Promise\.race\(\[[^\]]+\]\);/gs, "window.pokiBotDetectedPromise=Promise.resolve([]);window.pokiBotDetected=false;");
 
+      const selfHostName = String(req.get("host") || "").toLowerCase().split(":")[0];
+
       function resolveUrl(rel) {
         if (!rel || rel.startsWith("data:") || rel.startsWith("javascript:") || rel.startsWith("#") || rel.startsWith("blob:")) {
           return rel;
         }
         try {
           const absUrl = new URL(rel, baseUrl);
+          // すでにプロキシURL（自ドメインの /api/proxy）なら再ラップしない＝入れ子の根本防止
+          if (absUrl.hostname.toLowerCase() === selfHostName && absUrl.pathname.replace(/\/+$/, "") === "/api/proxy") {
+            return rel;
+          }
+          // 自ドメイン（もこり本体のページ）への絶対リンクはそのまま（/tube/ 等への誤中継を防ぐ）
+          if (absUrl.hostname.toLowerCase() === selfHostName) {
+            return absUrl.pathname + absUrl.search + absUrl.hash;
+          }
           if (absUrl.pathname.endsWith(".js") && !absUrl.searchParams.has("_v")) {
             absUrl.searchParams.set("_v", "101");
           }
@@ -3399,6 +3434,12 @@ app.all("/api/proxy", async (req, res) => {
     get href() { return window.__proxy_href; },
     set href(v) {
       if (typeof v === 'string' && !v.includes('/api/proxy')) {
+        if (v.charAt(0) === '/' && !v.startsWith('//')) {
+          try {
+            var absSelf = new URL(v, baseUrl);
+            if (absSelf.hostname === window.location.hostname) { location.href = v; return; }
+          } catch (_) {}
+        }
         location.href = '/api/proxy?url=' + encodeURIComponent(new URL(v, baseUrl).href);
       } else {
         location.href = v;
@@ -3562,9 +3603,13 @@ app.all("/api/proxy", async (req, res) => {
   }
 
   function toProxy(u) {
-    if (!u || typeof u !== 'string' || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('javascript:') || u.startsWith('#') || u.includes('/api/proxy?url=') || /^\\/(?:tensai-proxy|tube|music)(?:\\/|$)/.test(u)) return u;
+    if (!u || typeof u !== 'string' || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('javascript:') || u.startsWith('#') || u.includes('/api/proxy?url=') || /^\\/(?:tensai-proxy|tube|music|tiktok|instagram|mail\.html|downloads)(?:\\/|$)/.test(u)) return u;
     try {
       var absUrl = new URL(u, baseUrl);
+      // もこり本体（自ドメイン）宛ては中継しない
+      if (absUrl.hostname === window.location.hostname) {
+        return absUrl.pathname + absUrl.search + absUrl.hash;
+      }
       if (absUrl.pathname.endsWith('.js') && !absUrl.searchParams.has('_v')) {
         absUrl.searchParams.set('_v', '101');
       }
@@ -3662,38 +3707,45 @@ app.all("/api/proxy", async (req, res) => {
   if (window.history) {
     var origPush = history.pushState;
     var origReplace = history.replaceState;
-    function wrapHistoryUrl(u) {
-      if (!u || typeof u !== 'string') return u;
+    // 自ドメイン（もこり本体）のURLをプロキシURLで再ラップしない＝URL二重化の防止
+    function resolveVirtual(u) {
+      if (!u || typeof u !== 'string') return null;
       try {
-        var abs = new URL(u, baseUrl).href;
-        return '/api/proxy?url=' + encodeURIComponent(abs);
-      } catch(_) {
-        return u;
+        var abs = new URL(u, baseUrl);
+        var selfHost = window.location.hostname;
+        if (abs.hostname === selfHost && abs.pathname.replace(/\/+$/, '') === '/api/proxy') {
+          var inner = abs.searchParams.get('url');
+          if (inner) {
+            return { url: new URL(inner), proxied: abs };
+          }
+          return { url: new URL(baseUrl), proxied: abs };
+        }
+        if (abs.hostname === selfHost) {
+          return { url: abs, proxied: null, skip: true };
+        }
+        return { url: abs, proxied: null };
+      } catch (_) {
+        return null;
       }
+    }
+    function applyVirtual(v) {
+      window.__proxy_pathname = v.url.pathname;
+      window.__proxy_search = v.url.search;
+      window.__proxy_hash = v.url.hash;
+      window.__proxy_href = v.url.href;
+      return v.proxied ? (v.proxied.pathname + v.proxied.search) : ('/api/proxy?url=' + encodeURIComponent(v.url.href));
     }
     history.pushState = function(state, title, url) {
       if (url) {
-        try {
-          var target = new URL(url, baseUrl);
-          window.__proxy_pathname = target.pathname;
-          window.__proxy_search = target.search;
-          window.__proxy_hash = target.hash;
-          window.__proxy_href = target.href;
-          arguments[2] = wrapHistoryUrl(url);
-        } catch(_) {}
+        var v = resolveVirtual(url);
+        if (v) arguments[2] = applyVirtual(v);
       }
       return origPush.apply(this, arguments);
     };
     history.replaceState = function(state, title, url) {
       if (url) {
-        try {
-          var target = new URL(url, baseUrl);
-          window.__proxy_pathname = target.pathname;
-          window.__proxy_search = target.search;
-          window.__proxy_hash = target.hash;
-          window.__proxy_href = target.href;
-          arguments[2] = wrapHistoryUrl(url);
-        } catch(_) {}
+        var v = resolveVirtual(url);
+        if (v) arguments[2] = applyVirtual(v);
       }
       return origReplace.apply(this, arguments);
     };
@@ -3838,6 +3890,367 @@ if (window !== window.top) {
 });
 
 // ====================================================
+// 🎬 メディア中継（TikTok / Instagram の mp4・画像を自ドメインから配信）
+// ====================================================
+const MEDIA_ALLOWED_HOSTS = [
+  "tiktokcdn.com", "tiktokcdn-us.com", "tiktokcdn-eu.com", "tiktokcdn-a.com", "tiktokv.com", "tiktokv.us",
+  "ibytedtos.com", "ibyteimg.com", "byteoversea.com", "muscdn.com", "tiktok.com", "ttwstatic.com",
+  "cdninstagram.com", "fbcdn.net", "instagram.com", "threads.net"
+];
+function isAllowedMediaHost(host) {
+  const h = String(host || "").toLowerCase();
+  return MEDIA_ALLOWED_HOSTS.some((d) => h === d || h.endsWith("." + d));
+}
+
+app.get("/api/media", async (req, res) => {
+  const raw = String(req.query.url || "");
+  if (!raw) return res.status(400).send("url required");
+  let target;
+  try {
+    target = new URL(raw);
+  } catch (_) {
+    return res.status(400).send("bad url");
+  }
+  if (!/^https?:$/.test(target.protocol) || !isAllowedMediaHost(target.hostname)) {
+    return res.status(403).send("host not allowed");
+  }
+  try {
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      "Accept": "*/*"
+    };
+    if (req.headers.range) headers["Range"] = req.headers.range;
+    const upstream = await fetch(target.href, { headers, redirect: "follow" });
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
+    res.setHeader("Accept-Ranges", "bytes");
+    for (const h of ["content-length", "content-range", "etag", "last-modified"]) {
+      const v = upstream.headers.get(h);
+      if (v) res.setHeader(h, v);
+    }
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    if (!upstream.body) return res.end();
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (err) {
+    return res.status(502).send("media fetch failed: " + err.message);
+  }
+});
+
+// ====================================================
+// 🎵 TikTok ビューア用API（公式 embed ページ + 公開API中継）
+// ====================================================
+const TK_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+const IG_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+const socialCache = new Map();
+function socialCacheGet(key) {
+  const hit = socialCache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expire) {
+    socialCache.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+function socialCacheSet(key, value, ttlMs) {
+  if (socialCache.size > 200) socialCache.clear();
+  socialCache.set(key, { value, expire: Date.now() + ttlMs });
+}
+
+// "key":[ ... ] / "key":{ ... } を文字列状態を保ったまま安全に取り出す
+function extractJsonAfter(src, key) {
+  const marker = '"' + key + '":';
+  const idx = src.indexOf(marker);
+  if (idx < 0) return null;
+  let i = idx + marker.length;
+  while (i < src.length && /\s/.test(src[i])) i++;
+  const open = src[i];
+  if (open !== "[" && open !== "{") return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let k = i; k < src.length; k++) {
+    const c = src[k];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "[" || c === "{") depth++;
+    else if (c === "]" || c === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(src.slice(i, k + 1));
+        } catch (_) {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function normalizeTiktokVideo(v) {
+  if (!v || !v.id) return null;
+  return {
+    id: String(v.id),
+    desc: v.desc || "",
+    cover: v.coverUrl || v.originCoverUrl || v.dynamicCoverUrl || "",
+    play: v.playAddr || "",
+    author: v.authorUniqueId || "",
+    plays: typeof v.playCount === "number" ? v.playCount : null,
+    width: v.width || null,
+    height: v.height || null
+  };
+}
+
+async function fetchTiktokEmbedList(url) {
+  const resp = await fetch(url, {
+    headers: {
+      "User-Agent": TK_UA,
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+      "Referer": "https://www.tiktok.com/"
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(20000)
+  });
+  if (!resp.ok) throw new Error("TikTok embed status " + resp.status);
+  const html = await resp.text();
+  const list = extractJsonAfter(html, "videoList");
+  const userInfo = extractJsonAfter(html, "userInfo");
+  const videos = Array.isArray(list) ? list.map(normalizeTiktokVideo).filter(Boolean) : [];
+  return { videos, userInfo: userInfo && typeof userInfo === "object" ? userInfo : null };
+}
+
+app.get("/api/tiktok/feed", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const region = (String(req.query.region || "JP").toUpperCase().replace(/[^A-Z]/g, "") || "JP").slice(0, 2);
+  const cacheKey = "tt-feed:" + region;
+  const cached = socialCacheGet(cacheKey);
+  if (cached) return res.json({ ok: true, source: "cache", region, videos: cached });
+  try {
+    const r = await fetch(`https://www.tikwm.com/api/feed/list?region=${region}&count=24`, {
+      headers: { "User-Agent": TK_UA, "Accept": "application/json" },
+      signal: AbortSignal.timeout(25000)
+    });
+    const text = await r.text();
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch (_) {
+      data = null;
+    }
+    const items = data && Array.isArray(data.data) ? data.data : [];
+    const videos = items.map((v) => ({
+      id: String(v.video_id || ""),
+      desc: v.title || "",
+      cover: v.cover || v.origin_cover || "",
+      play: v.play || v.wmplay || "",
+      author: (v.author && v.author.unique_id) || "",
+      nickname: (v.author && v.author.nickname) || "",
+      avatar: (v.author && v.author.avatar) || "",
+      plays: typeof v.play_count === "number" ? v.play_count : null,
+      likes: typeof v.digg_count === "number" ? v.digg_count : null,
+      duration: v.duration || null
+    })).filter((v) => v.id && v.play);
+    if (videos.length) {
+      socialCacheSet(cacheKey, videos, 5 * 60 * 1000);
+      return res.json({ ok: true, source: "live", region, videos });
+    }
+    throw new Error("no items");
+  } catch (err) {
+    // フォールバック: 公式embedの定番タブから拾う
+    try {
+      const { videos } = await fetchTiktokEmbedList("https://www.tiktok.com/embed/tag/fyp");
+      if (videos.length) {
+        socialCacheSet(cacheKey, videos, 2 * 60 * 1000);
+        return res.json({ ok: true, source: "embed-fallback", region, videos });
+      }
+    } catch (_) {}
+    return res.status(502).json({ ok: false, error: "おすすめ動画を取得できませんでした", detail: err.message });
+  }
+});
+
+app.get("/api/tiktok/user", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const user = String(req.query.user || "").replace(/^@/, "").trim();
+  if (!/^[A-Za-z0-9._]{1,40}$/.test(user)) {
+    return res.status(400).json({ ok: false, error: "ユーザー名は半角英数字・._ のみ使えます" });
+  }
+  const cacheKey = "tt-user:" + user.toLowerCase();
+  const cached = socialCacheGet(cacheKey);
+  if (cached) return res.json({ ok: true, source: "cache", user, ...cached });
+  try {
+    const { videos, userInfo } = await fetchTiktokEmbedList(`https://www.tiktok.com/embed/@${encodeURIComponent(user)}`);
+    if (!videos.length) throw new Error("このユーザーの動画が見つかりません");
+    const payload = {
+      videos,
+      profile: userInfo
+        ? {
+            nickname: userInfo.nickName || userInfo.nickname || user,
+            avatar: userInfo.avatarThumb || userInfo.avatarMedium || (userInfo.avatarLarger || ""),
+            signature: userInfo.signature || "",
+            followers: userInfo.followerCount !== undefined ? userInfo.followerCount : null,
+            likes: userInfo.heartCount !== undefined ? userInfo.heartCount : null,
+            verified: !!userInfo.verified
+          }
+        : { nickname: user }
+    };
+    socialCacheSet(cacheKey, payload, 5 * 60 * 1000);
+    return res.json({ ok: true, source: "live", user, ...payload });
+  } catch (err) {
+    return res.status(404).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/api/tiktok/tag", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const tag = String(req.query.tag || "").replace(/^#/, "").trim();
+  if (!tag || tag.length > 60) return res.status(400).json({ ok: false, error: "ハッシュタグを入力してください" });
+  const cacheKey = "tt-tag:" + tag.toLowerCase();
+  const cached = socialCacheGet(cacheKey);
+  if (cached) return res.json({ ok: true, source: "cache", tag, videos: cached });
+  try {
+    const { videos } = await fetchTiktokEmbedList(`https://www.tiktok.com/embed/tag/${encodeURIComponent(tag)}`);
+    if (!videos.length) throw new Error("このハッシュタグの動画が見つかりません");
+    socialCacheSet(cacheKey, videos, 5 * 60 * 1000);
+    return res.json({ ok: true, source: "live", tag, videos });
+  } catch (err) {
+    return res.status(404).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/api/tiktok/item", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const raw = String(req.query.url || req.query.id || "").trim();
+  if (!raw) return res.status(400).json({ ok: false, error: "TikTokのURLを入力してください" });
+  let target = raw;
+  if (/^\d{6,}$/.test(raw)) {
+    target = "https://www.tiktok.com/@i/video/" + raw;
+  } else if (!/^https?:\/\//i.test(raw)) {
+    target = "https://www.tiktok.com/" + raw.replace(/^\/+/, "");
+  }
+  try {
+    const r = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(target)}&hd=1`, {
+      headers: { "User-Agent": TK_UA, "Accept": "application/json" },
+      signal: AbortSignal.timeout(25000)
+    });
+    const text = await r.text();
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch (_) {
+      data = null;
+    }
+    if (!data || !data.data || !data.data.id) throw new Error("動画を解決できませんでした。URLを確認してください（非公開・削除済みの可能性）");
+    const v = data.data;
+    return res.json({
+      ok: true,
+      video: {
+        id: String(v.id),
+        desc: v.title || "",
+        cover: v.cover || v.origin_cover || "",
+        play: v.play || v.wmplay || "",
+        author: (v.author && v.author.unique_id) || "",
+        nickname: (v.author && v.author.nickname) || "",
+        avatar: (v.author && v.author.avatar) || "",
+        plays: v.play_count || null,
+        likes: v.digg_count || null,
+        duration: v.duration || null
+      }
+    });
+  } catch (err) {
+    return res.status(404).json({ ok: false, error: err.message });
+  }
+});
+
+// ====================================================
+// 📸 Instagram ビューア用API（公式embedからメディアを取得）
+// ====================================================
+function deepUnescape(s) {
+  let cur = s;
+  for (let i = 0; i < 3; i++) {
+    const next = cur
+      .replace(/\\u([0-9a-fA-F]{4})/g, (m, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/\\\//g, "/")
+      .replace(/\\"/g, '"');
+    if (next === cur) break;
+    cur = next;
+  }
+  return cur;
+}
+
+app.get("/api/instagram/item", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const raw = String(req.query.url || req.query.code || "").trim();
+  if (!raw) return res.status(400).json({ ok: false, error: "Instagramの投稿・リールURLを入力してください" });
+  let code = raw;
+  let kind = "p";
+  const m = raw.match(/instagram\.com\/(?:[^/]+\/)?(p|reel|reels|tv)\/([A-Za-z0-9_-]{5,})/i);
+  if (m) {
+    kind = m[1].toLowerCase();
+    code = m[2];
+  } else if (/^[A-Za-z0-9_-]{5,}$/.test(raw)) {
+    code = raw;
+  } else {
+    return res.status(400).json({ ok: false, error: "URLの形式が正しくありません" });
+  }
+  if (kind === "reels") kind = "reel";
+  const cacheKey = "ig-item:" + kind + ":" + code;
+  const cached = socialCacheGet(cacheKey);
+  if (cached) return res.json({ ok: true, source: "cache", post: cached });
+  const paths = kind === "reel" ? ["reel", "p"] : [kind, "reel"];
+  let lastErr = null;
+  for (const p of paths) {
+    try {
+      const url = `https://www.instagram.com/${p}/${code}/embed/captioned/`;
+      const r = await fetch(url, {
+        headers: {
+          "User-Agent": IG_UA,
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+          "Referer": "https://www.instagram.com/"
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(20000)
+      });
+      if (!r.ok) throw new Error("Instagram status " + r.status);
+      const html = deepUnescape(await r.text());
+      const grab = (re) => {
+        const mm = html.match(re);
+        return mm ? mm[1] : null;
+      };
+      const videoUrl = grab(/"video_url":"(https:[^"]+?)"/);
+      const displayUrl = grab(/"display_url":"(https:[^"]+?)"/);
+      const username = grab(/"owner":\{"username":"([^"]+)"/) || grab(/"username":"([^"]+)"/);
+      const caption = grab(/"edge_media_to_caption":\{"edges":\[\{"node":\{"text":"([\s\S]*?)"\}\}\]\}/);
+      const likes = grab(/"edge_media_preview_like":\{"count":(\d+)/);
+      if (!videoUrl && !displayUrl) throw new Error("メディアを取得できませんでした（非公開・削除済みの可能性）");
+      const post = {
+        code,
+        kind,
+        isVideo: !!videoUrl,
+        video: videoUrl || null,
+        image: displayUrl || null,
+        username: username || "",
+        caption: caption ? caption.replace(/\\n/g, "\n").replace(/\\u([0-9a-fA-F]{4})/g, (mm, h) => String.fromCharCode(parseInt(h, 16))) : "",
+        likes: likes ? Number(likes) : null,
+        url: `https://www.instagram.com/${kind === "reel" ? "reel" : "p"}/${code}/`
+      };
+      socialCacheSet(cacheKey, post, 10 * 60 * 1000);
+      return res.json({ ok: true, source: "live", post });
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  return res.status(404).json({ ok: false, error: lastErr ? lastErr.message : "取得できませんでした" });
+});
+
+// ====================================================
 // ⭐ 若雪幸せTube (YouTube MP4 プレイヤー中継 & 検索)
 // ====================================================
 app.get("/api/tube/search", async (req, res) => {
@@ -3912,7 +4325,6 @@ app.get("/api/tube/search", async (req, res) => {
 // ==========================================
 // 音楽・動画ストリーミング & 学タブ（学校iPad）プロキシ
 // ==========================================
-const { Readable } = require("stream");
 
 // 1. 音楽ストリーミングプロキシ (Render経由・Rangeヘッダー完全対応・iOS/iPad Safari対応)
 app.get("/api/music/stream", async (req, res) => {
