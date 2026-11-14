@@ -165,11 +165,23 @@
   $('topLink').href = proxy('https://www.instagram.com/');
 
   var topics = [
-    ['🐶 犬', 'dog'], ['🐱 猫', 'cat'], ['💃 ダンス', 'dance'], ['🎵 音楽', 'music'],
-    ['🍰 スイーツ', 'dessert'], ['🍜 料理', 'food'], ['🎮 ゲーム', 'gaming'], ['😂 おもしろ', 'funny'],
-    ['👗 ファッション', 'fashion'], ['✈️ 旅行', 'travel'], ['⚽ スポーツ', 'sports'], ['🎨 アート', 'art'],
-    ['🏀 バスケ', 'basketball'], ['🐟 釣り', 'fishing']
+    ['🐶 犬', 'dogs'], ['🐱 猫', 'cats'], ['😂 おもしろ', 'funny'], ['🎵 音楽', 'music'],
+    ['🍜 料理', 'cooking'], ['🍰 スイーツ', 'dessert'], ['☕ カフェ', 'coffee'], ['🎤 アイドル', 'idol'],
+    ['✈️ 旅行', 'travel'], ['⛰ 自然', 'nature'], ['⚽ スポーツ', 'sports'], ['🎨 アート', 'art'],
+    ['👗 ファッション', 'fashion'], ['💇 ヘアスタイル', 'hairstyle'], ['💄 メイク', 'makeup'], ['🚗 車', 'cars'],
+    ['🇯🇵 日本', 'japan'], ['🇰🇷 韓国', 'korea'], ['🍣 寿司', 'sushi'], ['🎣 釣り', 'fishing']
   ];
+  var JA_MAP = {
+    '犬': 'dogs', 'いぬ': 'dogs', 'dog': 'dogs', '猫': 'cats', 'ねこ': 'cats', 'cat': 'cats',
+    '料理': 'cooking', '食べ物': 'foodie', 'グルメ': 'foodie', 'food': 'foodie',
+    'スイーツ': 'dessert', 'お菓子': 'dessert', 'カフェ': 'coffee', 'コーヒー': 'coffee',
+    '音楽': 'music', 'おもしろ': 'funny', '面白': 'funny', '笑い': 'comedy',
+    '旅行': 'travel', '自然': 'nature', 'アート': 'art', '芸術': 'art', 'スポーツ': 'sports',
+    'ファッション': 'fashion', '髪型': 'hairstyle', 'メイク': 'makeup', '化粧': 'makeup',
+    '車': 'cars', '日本': 'japan', '韓国': 'korea', '寿司': 'sushi', '釣り': 'fishing',
+    'アイドル': 'idol', 'ダンス': 'idol', '踊ってみた': 'idol', 'ワークアウト': 'workout',
+    '筋トレ': 'workout', '犬の動画': 'dogs'
+  };
   $('chips').innerHTML = topics.map(function (t) {
     return '<button class="chip" data-k="' + t[1] + '">' + t[0] + '</button>';
   }).join('');
@@ -190,7 +202,8 @@
   }
 
   function openKeyword(word) {
-    var slug = slugify(word);
+    var trimmed = String(word || '').trim();
+    var slug = JA_MAP[trimmed] || JA_MAP[trimmed.toLowerCase()] || slugify(trimmed);
     if (!slug) return;
     setStatus('');
     $('grid').innerHTML = '<div class="spinner" style="grid-column:1/-1"></div>';
@@ -204,7 +217,7 @@
       })
       .catch(function (e) {
         $('grid').innerHTML = '';
-        setStatus('取得できませんでした：' + e.message, true);
+        setStatus('「' + slug + '」は取得できませんでした。Instagramに公開ページがあるキーワードを試してください（例: dogs, cats, funny, cooking, music, japan）。', true);
       });
   }
 
@@ -304,7 +317,7 @@
   } else if (params.get('kw')) {
     openKeyword(params.get('kw'));
   } else {
-    openKeyword('dog');
+    openKeyword('dogs');
   }
 })();
 </script>
