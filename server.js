@@ -6498,48 +6498,72 @@ app.get("/api/tube/stream-info", async (req, res) => {
     return { ...info, videoOk, audioOk };
   };
 
-  const deadline = Date.now() + 20000;
+  const deadline = Date.now() + 18000;
   let bestAdaptive = null;
 
-  // インスタンスは「たまに」失敗する（404/500/403）。順番に待つと遅いので、
-  // 3ホストずつ並列に試し、音声込みの1本が見つかった時点で返す。
+  // インスタンスは「たまに」失敗する（404/500/403）。順番に待つと遅いので並列に試し、
+  // 音声込みの1本が見つかった時点で返す（遅いホストを待たない）。
+  const runBatch = (batch) => new Promise((resolve) => {
+    const results = new Array(batch.length).fill(null);
+    let left = batch.length;
+    let winner = null;
+    let settled = false;
+    const finishBatch = () => {
+      if (settled) return;
+      settled = true;
+      resolve({ winner, results });
+    };
+    batch.forEach((h, i) => {
+      probeHost(h)
+        .then((r) => {
+          results[i] = r;
+          if (r && r.muxed && r.videoOk && r.audioOk && !winner) {
+            winner = r;
+            finishBatch();
+            return;
+          }
+          if (--left === 0) finishBatch();
+        })
+        .catch(() => {
+          if (--left === 0) finishBatch();
+        });
+    });
+    if (!batch.length) finishBatch();
+  });
+
   const batches = [hostOrder.slice(0, 3), hostOrder.slice(3, 6)];
   for (const batch of batches) {
     if (!batch.length || Date.now() > deadline) break;
-    const results = await Promise.all(batch.map((h) => probeHost(h).catch(() => null)));
-
-    const muxed = results.find((r) => r && r.muxed && r.videoOk && r.audioOk);
-    if (muxed) return finish(muxed);
-
+    const { winner, results } = await runBatch(batch);
+    if (winner) return finish(winner);
     for (const r of results) {
       if (r && r.videoOk && r.audioOk && !bestAdaptive) bestAdaptive = r;
     }
     if (bestAdaptive && Date.now() > deadline - 6000) break;
   }
 
-  if (bestAdaptive) {
-    // 音声込み1本がどのホストの一覧にも無い場合の最後の手段。
-    // /latest_version・itag18 が通れば、映像だけ＋別音声という不安定な形を避けられる。
-    if (Date.now() < deadline) {
-      const muxedHosts = [];
-      for (const h of [tubeMuxedHost, "echostreamz.com", ...hostOrder]) {
-        if (h && !muxedHosts.includes(h)) muxedHosts.push(h);
-      }
-      for (const h of muxedHosts) {
-        if (Date.now() > deadline) break;
-        const muxedUrl = await tryLatestVersionMuxed(h, videoId);
-        if (muxedUrl) {
-          return finish({ ...bestAdaptive, host: h, muxed: true, videoUrl: muxedUrl, audioUrl: "", quality: "360p" });
-        }
+  // 音声込み1本がどのホストの一覧にも無い（or 一覧のURLが壊れている）場合の最後の手段。
+  // /latest_version・itag18 はインスタンス自身が返すので、これが通れば muxed 再生できる。
+  if (Date.now() < deadline) {
+    const muxedHosts = [];
+    for (const h of [tubeMuxedHost, "echostreamz.com", ...hostOrder]) {
+      if (h && !muxedHosts.includes(h)) muxedHosts.push(h);
+    }
+    for (const h of muxedHosts) {
+      if (Date.now() > deadline) break;
+      const muxedUrl = await tryLatestVersionMuxed(h, videoId);
+      if (muxedUrl) {
+        return finish({ ...(bestAdaptive || {}), host: h, muxed: true, videoUrl: muxedUrl, audioUrl: "", quality: "360p" });
       }
     }
-    return finish(bestAdaptive);
   }
+
+  if (bestAdaptive) return finish(bestAdaptive);
 
   // ここまで全滅：インスタンス側の一時的な失敗であることが多いので、
   // 少し待って先頭バッチ（音声込みを返すホスト）をもう一度だけ試す。
   if (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 400));
     const retryResults = await Promise.all(hostOrder.slice(0, 3).map((h) => probeHost(h).catch(() => null)));
     const retryMuxed = retryResults.find((r) => r && r.muxed && r.videoOk && r.audioOk);
     if (retryMuxed) return finish(retryMuxed);
