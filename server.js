@@ -3576,21 +3576,28 @@ app.all("/api/proxy", async (req, res) => {
       var closed = 0;
       var timer = setInterval(function () {
         if (closed >= 8) { clearInterval(timer); return; }
-        var dialogs = document.querySelectorAll('div[role="dialog"],[role="dialog"]');
+        var dialogs = document.querySelectorAll('[role="dialog"]');
+        var upsell = null;
         for (var i = 0; i < dialogs.length; i++) {
           var txt = dialogs[i].innerText || '';
-          if (txt.indexOf('アプリでこのリール') < 0 && txt.indexOf('アプリを利用すると') < 0) continue;
-          var btns = dialogs[i].querySelectorAll('button,[role="button"]');
-          var picked = null;
-          for (var j = 0; j < btns.length; j++) {
-            var lbl = String(btns[j].getAttribute('aria-label') || btns[j].innerText || '') + ' ' + String(btns[j].outerHTML || '').slice(0, 400);
-            if (lbl.indexOf('閉じる') >= 0 || lbl.toLowerCase().indexOf('close') >= 0) { picked = btns[j]; break; }
-          }
-          if (!picked && btns.length) picked = btns[0];
-          if (picked) { try { picked.click(); closed++; } catch (_) {} }
+          if (txt.indexOf('アプリでこのリール') >= 0 || txt.indexOf('アプリを利用すると') >= 0) { upsell = dialogs[i]; break; }
         }
-      }, 700);
-      setTimeout(function () { clearInterval(timer); }, 20000);
+        if (!upsell) return;
+        // 閉じるボタンはダイアログの外側にあることが多いので、ラベルが完全一致するものだけを押す
+        // （「Instagramを開く」「登録する」等は絶対に押さない）
+        var cand = document.querySelectorAll('[aria-label="閉じる"],[aria-label="Close"],[aria-label="close"]');
+        for (var k = 0; k < cand.length; k++) {
+          var el = cand[k];
+          try {
+            if (el.closest('[role="dialog"]')) continue;
+            if (!el.getClientRects || el.getClientRects().length === 0) continue;
+            el.click();
+            closed++;
+            return;
+          } catch (_) {}
+        }
+      }, 800);
+      setTimeout(function () { clearInterval(timer); }, 25000);
     })();
   }
 
