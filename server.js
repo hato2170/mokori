@@ -3855,7 +3855,9 @@ app.all("/api/proxy", async (req, res) => {
   // トップのゲームへの直リンクや検索欄からの入力でもゲームが開くよう、既定の /jp を補う。
   try {
     const pk = new URL(targetUrl);
-    if (/(^|\.)poki\.com$/i.test(pk.hostname)) {
+    // 対象は poki.com 本体だけ。games.poki.com の /<site_id>/<game_id> に /jp を挿すと
+    // 上流が 400 {"error":"Invalid Game"} を返す（ゲームが一切起動しない原因になる）。
+    if (pk.hostname === "poki.com" || pk.hostname === "www.poki.com") {
       const LOCALES = new Set(["en", "jp", "ja", "de", "fr", "es", "pt", "pt-br", "it", "nl", "pl", "ru", "tr", "ar", "hi", "id", "th", "vi", "ko", "zh", "zh-cn", "zh-tw", "sv", "da", "no", "fi", "cs", "ro", "hu", "el", "he", "uk", "ms"]);
       const seg = String(pk.pathname.split("/")[1] || "").toLowerCase();
       if (!LOCALES.has(seg)) {
