@@ -6323,6 +6323,31 @@ async function fetchInvidiousInfo(host, videoId, timeoutMs = 6000) {
 // 最後の手段：Invidious の /latest_version は「音声込みの1本(既定 itag18)」を
 // インスタンス自身が返す。formatStreams が空のインスタンス（例: chocolatemoo53）でも
 // これが通れば muxed 再生できる。
+// 返されたURLが本当に再生できるか、先頭1KBだけ取って確認する。
+// 「たまに再生できる」＝壊れたURLを返すインスタンスに当たっている状態なので、
+// 再生できないURLは捨てて次のホストを試す。
+async function probePlayableMedia(url) {
+  if (!url) return false;
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15",
+        Range: "bytes=0-1023"
+      },
+      signal: AbortSignal.timeout(3500)
+    });
+    if (!resp.ok) return false;
+    const ct = String(resp.headers.get("content-type") || "");
+    if (!ct.includes("video/mp4") && !ct.includes("audio/mp4")) return false;
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.length < 12) return false;
+    const brand = buf.subarray(4, 8).toString("latin1");
+    return brand.includes("ftyp") || brand === "styp";
+  } catch (_) {
+    return false;
+  }
+}
+
 async function tryLatestVersionMuxed(host, videoId) {
   try {
     const target = `https://${host}/latest_version?id=${videoId}&itag=18&local=true`;
@@ -6454,13 +6479,23 @@ app.get("/api/tube/stream-info", async (req, res) => {
     const info = await fetchInvidiousInfo(host, videoId, 6000);
     if (!info) continue;
 
+    // 実際に先頭が取れるか確認（壊れた/期限切れURLを再生させない）
+    const [videoOk, audioOk] = await Promise.all([
+      probePlayableMedia(info.videoUrl),
+      info.audioUrl ? probePlayableMedia(info.audioUrl) : Promise.resolve(true)
+    ]);
+    if (!videoOk) continue;
+
     if (info.muxed) {
+      if (!audioOk) { if (!adaptiveFallback) adaptiveFallback = info; continue; }
       tubeMuxedHost = host;
       tubeWorkingHost = host;
       const resultData = buildResult(info);
       streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
       return res.json({ ok: true, ...resultData });
     }
+    // 映像だけのストリーム。音声が壊れていたら「無音の映像」になるので次のホストへ。
+    if (!audioOk) continue;
     if (!adaptiveFallback) adaptiveFallback = info;
     // 音声込み1本が無いホストだった → 次のホストで muxed を探す（最大4ホストまで）
   }
