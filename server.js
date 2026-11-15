@@ -203,6 +203,17 @@ app.get("/api/geniusos/status", (req, res) => {
   });
 });
 
+// 🏠 プロキシ中の「見た目のホーム（/?__px=1）」だけは、もこりのトップではなく
+// プロキシしていたサイトへ戻す（YouTube のトップを再読み込みしても消えないように）。
+app.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  if ((req.path || "/") !== "/") return next();
+  if (!("__px" in (req.query || {}))) return next();
+  const origin = proxyOriginFromRequest(req);
+  if (!origin) return next();
+  return res.redirect(307, "/api/proxy?url=" + encodeURIComponent(origin + "/") + "&_spa=1");
+});
+
 app.use(express.static("public", {
   etag: false,
   maxAge: 0,
@@ -3234,6 +3245,75 @@ if(typeof fetch==="function"){var _f=fetch;try{fetch=function(i,o){try{if(typeof
 if(typeof XMLHttpRequest!=="undefined"&&XMLHttpRequest.prototype){var _o=XMLHttpRequest.prototype.open;try{XMLHttpRequest.prototype.open=function(a,b){try{if(typeof b==="string")arguments[1]=px(b);}catch(e){}return _o.apply(this,arguments);};}catch(e){}}
 }catch(e){}})();\n`;
 
+// ====================================================
+// 🗄 不変アセットのキャッシュ（Instagram / TikTok / YouTube の CDN 用）
+// Instagram は1ページで20〜30本・十数MBのJS/CSSを読む。プロキシが毎回それを
+// Meta のCDNへ取りに行くと、データセンターIPはすぐ 429 を食らって
+// 「Bootloading module failed」＝無限スピナーになる。ハッシュ付きの不変URLだけを
+// メモリに溜め、ブラウザ側にもキャッシュさせる。
+// ====================================================
+const assetCache = new Map();
+const ASSET_CACHE_TTL_MS = 30 * 60 * 1000;
+const ASSET_CACHE_MAX_BYTES = 24 * 1024 * 1024;
+const ASSET_CACHE_MAX_ITEM = 4 * 1024 * 1024;
+let assetCacheBytes = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function isCacheableAsset(hostname, pathname) {
+  const h = String(hostname || "").toLowerCase();
+  const p = String(pathname || "");
+  const staticHosts = [
+    "cdninstagram.com", "fbcdn.net", "ttwstatic.com", "tiktokcdn.com", "tiktokcdn-us.com",
+    "ibytedtos.com", "ibyteimg.com", "muscdn.com", "ytimg.com", "ggpht.com", "gstatic.com",
+    "googleusercontent.com"
+  ];
+  if (staticHosts.some((d) => h === d || h.endsWith("." + d))) return true;
+  // サイト本体のドメインでも、ハッシュ付きの /rsrc.php/ や YouTube のバンドルは不変
+  return p.startsWith("/rsrc.php/") || /\/_\/(?:js|ss)\//.test(p);
+}
+
+function assetCacheGet(key) {
+  const hit = assetCache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expire) {
+    assetCache.delete(key);
+    assetCacheBytes -= hit.buf.length;
+    return null;
+  }
+  return hit;
+}
+
+function assetCacheSet(key, buf, contentType) {
+  if (!key || !buf || !buf.length || buf.length > ASSET_CACHE_MAX_ITEM) return;
+  const prev = assetCache.get(key);
+  if (prev) {
+    assetCacheBytes -= prev.buf.length;
+    assetCache.delete(key);
+  }
+  while (assetCacheBytes + buf.length > ASSET_CACHE_MAX_BYTES && assetCache.size) {
+    const oldest = assetCache.keys().next().value;
+    const e = assetCache.get(oldest);
+    if (!e) break;
+    assetCacheBytes -= e.buf.length;
+    assetCache.delete(oldest);
+  }
+  assetCache.set(key, { buf, ct: contentType, expire: Date.now() + ASSET_CACHE_TTL_MS });
+  assetCacheBytes += buf.length;
+}
+
+// 🎬 YouTube のモジュールバンドルは `/_/js/`・`/_/ss/` の疑似パスでブラウザから来る。
+// リダイレクトせず、その場で上流（= __px_origin Cookie のオリジン）へ中継する。
+// YouTube のモジュールローダーは #base-js の src に `/_/js/` と `/k=` があるか検証し、
+// 無いと Error("rc") を投げて起動を止める（＝「現在オフラインです」の正体）。
+app.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  if (!/\/_\/(?:js|ss)\//.test(req.path || "")) return next();
+  const origin = proxyOriginFromRequest(req);
+  if (!origin) return next();
+  req.url = "/api/proxy?url=" + encodeURIComponent(origin + req.originalUrl) + "&_asset=1";
+  next();
+});
+
 app.all("/api/proxy", async (req, res) => {
   let targetUrl = req.query.url;
   if (!targetUrl && req.headers.referer) {
@@ -3336,6 +3416,7 @@ app.all("/api/proxy", async (req, res) => {
     const hostLower = parsedTarget.hostname.toLowerCase();
     const isTiktok = hostLower.includes("tiktok.com");
     const isInstagram = hostLower.includes("instagram.com");
+    const isYouTubeHost = /(^|\.)youtube\.com$|(^|\.)youtu\.be$|(^|\.)youtube-nocookie\.com$/i.test(hostLower);
 
     // Instagramの人気ページは5分キャッシュ（Instagram側の429レート制限を避ける）
     const pageCacheKey = req.method === "GET" && isInstagram && parsedTarget.pathname.startsWith("/popular/")
@@ -3381,10 +3462,13 @@ app.all("/api/proxy", async (req, res) => {
       "User-Agent": defaultUA,
       "Accept": req.headers["accept"] || "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
       "Accept-Language": req.headers["accept-language"] || "ja,en-US;q=0.9,en;q=0.8",
-      "Referer": virtualReferer,
-      "Origin": requestOrigin
+      "Referer": virtualReferer
     };
 
+    // ⚠ Origin は CORS/プリフライト・POST のときだけ付くヘッダー。GET の静的アセットに
+    // まで付けて送ると Meta 側に API 呼び出しと判定され、データセンターIPへの 429 を
+    // 誘発しやすかった（Instagram の Bootloading module failed の一因）。
+    // ブラウザが Origin を送ってきたときだけ、上流のオリジンに置き換えて付ける。
     if (req.headers.origin) {
       try {
         headers["Origin"] = new URL(virtualReferer).origin;
@@ -3392,6 +3476,12 @@ app.all("/api/proxy", async (req, res) => {
     }
     for (const name of ["authorization", "content-type", "if-match", "if-none-match", "if-range", "if-modified-since", "if-unmodified-since", "x-requested-with", "x-api-key"]) {
       if (req.headers[name]) headers[name] = req.headers[name];
+    }
+    // YouTube の InnerTube API は独自ヘッダーが無いと 400 を返す
+    if (isYouTubeHost) {
+      for (const name of ["x-youtube-client-name", "x-youtube-client-version", "x-goog-visitor-id", "x-goog-authuser", "x-origin", "x-client-data", "x-goog-pageid"]) {
+        if (req.headers[name]) headers[name] = req.headers[name];
+      }
     }
     if (req.headers["range"]) {
       headers["Range"] = req.headers["range"];
@@ -3420,10 +3510,39 @@ app.all("/api/proxy", async (req, res) => {
     }
 
     const wantsDocument = String(headers["Accept"] || "").includes("text/html") || req.method === "GET";
-    const response = await fetchUpstream(targetUrl, headers, fetchOpts, {
+
+    // 不変アセットはキャッシュから返す（Ctrl+再読み込み等の明示的な再取得のときだけ取り直す）
+    const cacheableAsset = req.method === "GET" && !req.headers.range && isCacheableAsset(hostLower, parsedTarget.pathname);
+    const assetKey = cacheableAsset ? "asset:" + targetUrl : null;
+    const forceReload = /(^|,)\s*(no-cache|no-store)\b/i.test(String(req.headers["cache-control"] || ""));
+    if (assetKey && !forceReload) {
+      const hit = assetCacheGet(assetKey);
+      if (hit) {
+        res.status(200);
+        res.setHeader("Content-Type", hit.ct || "application/octet-stream");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cache-Control", "public, max-age=1800");
+        res.setHeader("X-Tensai-Cache", "HIT");
+        return res.end(hit.buf);
+      }
+    }
+
+    let response = await fetchUpstream(targetUrl, headers, fetchOpts, {
       allowUAChange: !isInstagram,
       timeoutMs: wantsDocument ? 14000 : 0
     });
+    // 429 はデータセンターIPへのレート制限。GET なら一度だけ少し待ってやり直す
+    // （Instagram の Bootloading module failed／無限スピナーの直接原因）。
+    if (response.status === 429 && req.method === "GET") {
+      await sleep(600);
+      try {
+        const retryHeaders = { ...headers, "User-Agent": defaultUA === UA_DESKTOP_CHROME ? UA_IOS_SAFARI : UA_DESKTOP_CHROME };
+        response = await fetchUpstream(targetUrl, retryHeaders, fetchOpts, {
+          allowUAChange: false,
+          timeoutMs: wantsDocument ? 14000 : 0
+        });
+      } catch (_) {}
+    }
     const contentType = response.headers.get("content-type") || "";
 
     // Instagramが回線制限（429）を返したときは、壊れたページではなく案内を出す
@@ -3472,6 +3591,7 @@ app.all("/api/proxy", async (req, res) => {
       let html = await response.text();
       const proxyBase = "/api/proxy?url=";
       const baseUrl = response.url || targetUrl;
+      const isYouTubeSite = /(^|\.)youtube\.com$|(^|\.)youtu\.be$|(^|\.)youtube-nocookie\.com$/i.test(parsedTarget.hostname);
 
       // 既存の <base> タグと integrity 属性を除去（プロキシURL誤解決とSRI拒否の根絶）
       html = html.replace(/<base\b[^>]*>/gi, "");
@@ -3499,6 +3619,14 @@ app.all("/api/proxy", async (req, res) => {
           // 自ドメイン（もこり本体のページ）への絶対リンクはそのまま（/tube/ 等への誤中継を防ぐ）
           if (absUrl.hostname.toLowerCase() === selfHostName) {
             return absUrl.pathname + absUrl.search + absUrl.hash;
+          }
+          // 💡 YouTube のJS/CSSバンドルだけは「ルート相対の疑似パス」で配る。
+          // モジュールローダーが #base-js の src に `/_/js/` と `/k=` が含まれるか検証し、
+          // 無いと Error("rc") を投げて起動を止める（その後モジュールが全部 null になり
+          // `(0,_.xi) is not a function` →「現在オフラインです」になる）。
+          // パスを保ったまま配れば検証を通り、読み込みは `/_/js/` 用の中継ルートが受ける。
+          if (isYouTubeSite && /\/_\/(?:js|ss)\//.test(absUrl.pathname)) {
+            return absUrl.pathname + absUrl.search;
           }
           if (absUrl.pathname.endsWith(".js") && !absUrl.searchParams.has("_v")) {
             absUrl.searchParams.set("_v", "101");
@@ -3576,6 +3704,10 @@ app.all("/api/proxy", async (req, res) => {
 
   var IS_POKI = ${isPokiSite};
 
+  // 🎬 YouTube はモジュールローダーの検証（#base-js の src に /_/js/ と /k=）と
+  // location 基準のAPI呼び出しがあるので、専用の扱いをする
+  var IS_YOUTUBE = /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i.test(baseObj.hostname || '');
+
   // 📸 Instagramの「アプリでこのリール動画を見る」全画面ナグを自動で閉じる
   // （動画の上に被さって「見れない」ように感じる最大の原因。閉じるだけなので副作用なし）
   var PX_IS_IG = (function () {
@@ -3623,13 +3755,22 @@ app.all("/api/proxy", async (req, res) => {
   // 表示上のパスだけを「本物のサイトのパス」に合わせる（history.replaceState は
   // 通信を起こさないので安全。再読み込みは __px_origin Cookie 側で救済される）。
   var IS_TIKTOK = /(^|\.)tiktok\.com$/i.test(baseObj.hostname || '');
-  if (IS_TIKTOK) {
+  // 「見た目のパス」を作る: 上流のパスをそのままアドレスバーに出す。
+  // ホーム（/）だけは、再読み込みで mokori のトップに落ちないよう __px=1 を付ける。
+  function pxVisualPath(pathname, search, hash) {
+    var p = pathname || '/';
+    var s = search || '';
+    if (p === '/' && s.indexOf('__px=') < 0) s = (s ? s + '&' : '?') + '__px=1';
+    return p + s + (hash || '');
+  }
+  window.__pxVisualPath = pxVisualPath;
+  if (IS_TIKTOK || IS_YOUTUBE) {
     try {
       var upPath = baseObj.pathname || '/';
-      if (!upPath || upPath === '/') upPath = '/foryou';
+      if (IS_TIKTOK && (!upPath || upPath === '/')) upPath = '/foryou';
       if (upPath.indexOf('/api/') !== 0) {
         window.__pxFakePath = true;
-        history.replaceState(history.state, '', upPath + (baseObj.search || '') + (baseObj.hash || ''));
+        history.replaceState(history.state, '', pxVisualPath(upPath, baseObj.search, baseObj.hash));
       }
     } catch (_) {}
   }
@@ -3718,6 +3859,9 @@ app.all("/api/proxy", async (req, res) => {
       if (!msg) return;
       msg = String(msg).slice(0, 160);
       if (msg === 'Script error.' || errs.indexOf(msg) >= 0 || errs.length >= 8) return;
+      // 🧹 サイト内部の無害な計測SDKのエラーはバッジに数えない（TikTok の
+      // sync_web_sdk / a.init、Instagram の getMessage など）。見ても何もできない。
+      if (/(sync_web_sdk|init is not a function|getMessage is not a function|ResizeObserver loop|__gCrWeb|Non-Error promise rejection|googletagmanager|doubleclick)/i.test(msg)) return;
       errs.push(msg);
       paint();
     }
@@ -3920,6 +4064,12 @@ app.all("/api/proxy", async (req, res) => {
       var absUrl = new URL(u, baseUrl);
       // もこり本体（自ドメイン）宛ては中継しない
       if (absUrl.hostname === window.location.hostname) {
+        // 🎬 YouTube は location を基準に /youtubei/v1/... を作るので、自ホスト宛てでも
+        // もこり本体のページ以外は上流へ戻す（そのままだと /youtubei/v1/browse が
+        // mokori の404に抜けて「現在オフラインです」判定になる）。
+        if (IS_YOUTUBE && !/^\/(?:api\/proxy|tensai-proxy|tube|music|instagram|tiktok|roblox|mail\.html|downloads|chat|sns|friends|ai|games|paper|line|favicon|manifest|sw\.js)(?:\/|$|\?)/.test(absUrl.pathname)) {
+          return '/api/proxy?url=' + encodeURIComponent(baseObj.origin + absUrl.pathname + absUrl.search);
+        }
         return absUrl.pathname + absUrl.search + absUrl.hash;
       }
       if (absUrl.pathname.endsWith('.js') && !absUrl.searchParams.has('_v')) {
@@ -4104,7 +4254,7 @@ app.all("/api/proxy", async (req, res) => {
     // そうしないとSPAのルーターが /api/proxy を読んで404へ飛ぶ。再読み込みは
     // __px_origin Cookie + _spa=1 の救済で元の画面に戻る。
     function visualPath(v) {
-      return v.url.pathname + (v.url.search || '') + (v.url.hash || '');
+      return window.__pxVisualPath(v.url.pathname, v.url.search, v.url.hash);
     }
     history.pushState = function(state, title, url) {
       if (url) {
@@ -4239,6 +4389,8 @@ if (window !== window.top) {
         }
       });
       res.setHeader("Content-Type", "text/css; charset=utf-8");
+      if (assetKey && response.ok) assetCacheSet(assetKey, Buffer.from(css, "utf8"), "text/css; charset=utf-8");
+      res.setHeader("Cache-Control", assetKey ? "public, max-age=1800" : "no-cache, no-store, must-revalidate");
       return res.send(css);
     }
 
@@ -4261,13 +4413,16 @@ if (window !== window.top) {
         js = js.replace(/(?<![\.\w\$])location\.href\b/g, "(window.__proxy_location ? window.__proxy_location.href : location.href)");
       }
       res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Cache-Control", assetKey ? "public, max-age=1800" : "no-cache, no-store, must-revalidate");
       res.setHeader("Pragma", "no-cache");
+      if (assetKey && response.ok) assetCacheSet(assetKey, Buffer.from(js, "utf8"), "application/javascript; charset=utf-8");
       return res.send(js);
     }
 
-    const buf = await response.arrayBuffer();
-    return res.end(Buffer.from(buf));
+    const buf = Buffer.from(await response.arrayBuffer());
+    if (assetKey && response.ok) assetCacheSet(assetKey, buf, contentType || "application/octet-stream");
+    if (cacheableAsset) res.setHeader("Cache-Control", "public, max-age=1800");
+    return res.end(buf);
   } catch (err) {
     const cause = err && err.cause ? (err.cause.code || err.cause.message || String(err.cause)) : "";
     const detail = `${err && err.message ? err.message : "接続できませんでした"}${cause ? "（" + cause + "）" : ""}<br>相手のサイトが一時的に応答していないか、この回線をブロックしている可能性があります。少し待ってから「もう一度読み込む」を押してください。`;
