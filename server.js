@@ -3417,6 +3417,28 @@ app.use((req, res, next) => {
   next();
 });
 
+// 🧲 同じInstagramページを同時に開いたときの合流（1回だけ上流へ取りに行き、全員に配る）。
+// 学校で何人もが同時に開くと、Renderの無料枠と Metaのレート制限の両方が一度に押される。
+const proxyInflightDocs = new Map();
+function proxyDocWait(key) {
+  const e = proxyInflightDocs.get(key);
+  return e ? e.promise : null;
+}
+function proxyDocStart(key) {
+  if (!key || proxyInflightDocs.has(key)) return () => {};
+  let done;
+  const promise = new Promise((r) => { done = r; });
+  const entry = { promise };
+  entry.done = () => {
+    if (proxyInflightDocs.get(key) === entry) proxyInflightDocs.delete(key);
+    done();
+  };
+  proxyInflightDocs.set(key, entry);
+  const timer = setTimeout(entry.done, 15000);
+  if (timer.unref) timer.unref();
+  return entry.done;
+}
+
 app.all("/api/proxy", async (req, res) => {
   let targetUrl = req.query.url;
   if (!targetUrl && req.headers.referer) {
@@ -3514,6 +3536,7 @@ app.all("/api/proxy", async (req, res) => {
     }
   }
 
+  let docDone = () => {};
   try {
     const origin = parsedTarget.origin;
     const hostLower = parsedTarget.hostname.toLowerCase();
@@ -3538,7 +3561,20 @@ app.all("/api/proxy", async (req, res) => {
         res.setHeader("X-Tensai-Cache", "PAGE");
         return res.send(hit);
       }
+      // 同じページを取的っている最中なら、その結果を待って共有する
+      const pending = proxyDocWait(pageCacheKey);
+      if (pending) {
+        try { await Promise.race([pending, sleep(9000)]); } catch (_) {}
+        const shared = socialCacheGet(pageCacheKey);
+        if (shared) {
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+          res.setHeader("X-Tensai-Cache", "PAGE");
+          return res.send(shared);
+        }
+      }
     }
+    docDone = proxyDocStart(pageCacheKey);
 
     let virtualReferer = origin + "/";
     try {
@@ -3651,17 +3687,26 @@ app.all("/api/proxy", async (req, res) => {
       allowUAChange: !isInstagram,
       timeoutMs: upstreamTimeout
     });
-    // 429 はデータセンターIPへのレート制限。GET なら一度だけ少し待ってやり直す
+    // 429 はデータセンターIPへのレート制限。GET なら少し待ってやり直す
     // （Instagram の Bootloading module failed／無限スピナーの直接原因）。
+    // InstagramはUAを変えると余計に警戒されるので、同じiOS SafariのUAのまま
+    // 時間をおいて2回まで引き直す。
     if (response.status === 429 && req.method === "GET") {
-      await sleep(600);
-      try {
-        const retryHeaders = { ...headers, "User-Agent": defaultUA === UA_DESKTOP_CHROME ? UA_IOS_SAFARI : UA_DESKTOP_CHROME };
-        response = await fetchUpstream(targetUrl, retryHeaders, fetchOpts, {
-          allowUAChange: false,
-          timeoutMs: upstreamTimeout
-        });
-      } catch (_) {}
+      const retryWaits = isInstagram ? [700, 2000] : [600];
+      for (const wait of retryWaits) {
+        await sleep(wait);
+        try {
+          const retryUA = isInstagram
+            ? UA_IOS_SAFARI
+            : (defaultUA === UA_DESKTOP_CHROME ? UA_IOS_SAFARI : UA_DESKTOP_CHROME);
+          const retryHeaders = { ...headers, "User-Agent": retryUA };
+          response = await fetchUpstream(targetUrl, retryHeaders, fetchOpts, {
+            allowUAChange: false,
+            timeoutMs: upstreamTimeout
+          });
+          if (response.status !== 429) break;
+        } catch (_) {}
+      }
     }
     const contentType = response.headers.get("content-type") || "";
     // 上流（Instagram）が実際に返したステータスを外から見えるようにする
@@ -3672,6 +3717,7 @@ app.all("/api/proxy", async (req, res) => {
     if (pageCacheKey && response.status >= 400) {
       const staleDoc = socialCacheGetAny(pageCacheKey);
       if (staleDoc) {
+        docDone();
         res.status(200);
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -4581,7 +4627,7 @@ if (window !== window.top) {
       } catch (_) {}
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Pragma", "no-cache");
-      if (pageCacheKey) socialCacheSet(pageCacheKey, html, pageCacheTtl);
+      if (pageCacheKey) { socialCacheSet(pageCacheKey, html, pageCacheTtl); docDone(); }
       return res.send(html);
     }
 
@@ -4633,6 +4679,7 @@ if (window !== window.top) {
     if (cacheableAsset) res.setHeader("Cache-Control", "public, max-age=1800");
     return res.end(buf);
   } catch (err) {
+    docDone();
     // 上流へ届かなかったときも、取れているページがあればそれを返す（Instagramのスピナー対策）
     if (typeof pageCacheKey !== "undefined" && pageCacheKey) {
       const staleDoc = socialCacheGetAny(pageCacheKey);
