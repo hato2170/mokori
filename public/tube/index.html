@@ -503,6 +503,17 @@
       if (currentMode !== "mp4" || !currentVideoId) return;
       const v = mp4Video;
       if (v.paused || v.ended) { markProgress(); return; }
+
+      // まだ最初のデータが届いていない段階は「読み込み中」であって停滞ではない。
+      // /api/tube/play はURLの解決から始まるので iPhone では数秒かかることがあり、
+      // ここで停滞扱いにすると再生が始まる前に「映像が届いていません」→取り直しを
+      // 繰り返してしまう（＝再生できない案内になる）。
+      if (v.readyState < 2) {
+        markProgress();
+        if (Date.now() - playStartedWall > 25000) recoverPlayback("初期読み込みが25秒進まない");
+        return;
+      }
+
       if (v.currentTime > lastProgressTime + 0.05) markProgress();
 
       // 映像トラックそのものが来ていない（＝音だけ鳴っている）状態を検出
