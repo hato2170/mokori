@@ -6367,7 +6367,22 @@ async function probePlayableMedia(url) {
     const buf = Buffer.from(await resp.arrayBuffer());
     if (buf.length < 12) return false;
     const brand = buf.subarray(4, 8).toString("latin1");
-    return brand.includes("ftyp") || brand === "styp";
+    const playable = brand.includes("ftyp") || brand === "styp";
+    // 検証で読んだ先頭データをキャッシュしておく。
+    // iOS Safari は再生前に必ず Range: bytes=0-1 を投げ、この往復に上流の待ち時間が
+    // そのまま出る（ホストによっては10〜20秒）ので、ここで先回りして即答できるようにする。
+    if (playable && /^video\/mp4/i.test(ct)) {
+      const cr = String(resp.headers.get("content-range") || "");
+      const m = /\/(\d+)\s*$/.exec(cr);
+      const total = m ? parseInt(m[1], 10) : parseInt(String(resp.headers.get("content-length") || "0"), 10) || 0;
+      if (total > buf.length) {
+        tubeHeadCache.set(url, { time: Date.now(), buf, total, contentType: "video/mp4" });
+        while (tubeHeadCache.size > TUBE_HEAD_CACHE_MAX) {
+          tubeHeadCache.delete(tubeHeadCache.keys().next().value);
+        }
+      }
+    }
+    return playable;
   } catch (_) {
     return false;
   }
