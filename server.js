@@ -2518,7 +2518,10 @@ app.get("/api/music/probe", async (req, res) => {
     const q = String(req.query.q || "STUTS 99 Steps");
     const step = String(req.query.step || "po");
     let out;
-    if (step === "players") {
+    if (step === "potok") {
+      const p = require("./lib/music-potok");
+      out = await p.runPotok(String(req.query.v || "UHGqi7HekoY"));
+    } else if (step === "players") {
       const v = String(req.query.v || "") || await m.searchVideoId(q);
       const po = req.query.po === "1" ? await m.makePoToken() : null;
       out = await m.runPlayers(v, po);
