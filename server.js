@@ -6250,10 +6250,16 @@ async function fetchInvidiousInfo(host, videoId, timeoutMs = 6000) {
     // local=true: 動画URLをインスタンス自身のプロキシで返させる
     // （googlevideo 直リンクは PO Token 必須で 403 になるため）。
     const apiUrl = `https://${host}/api/v1/videos/${videoId}?local=true`;
-    const invResp = await fetch(apiUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15" },
-      signal: AbortSignal.timeout(timeoutMs)
-    });
+    const reqHeaders = { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15" };
+    let invResp = await fetch(apiUrl, { headers: reqHeaders, signal: AbortSignal.timeout(timeoutMs) });
+    // インスタンスは一時的に 429/500/503 を返すことがある（＝「たまに再生できない」の正体）。
+    // 1回だけ間を置いて引き直す。
+    if ([429, 500, 502, 503, 504].includes(invResp.status)) {
+      try {
+        await new Promise((r) => setTimeout(r, 400));
+        invResp = await fetch(apiUrl, { headers: reqHeaders, signal: AbortSignal.timeout(timeoutMs) });
+      } catch (_) {}
+    }
     if (!invResp.ok) return null;
     const invData = await invResp.json();
     if (!invData || invData.error) return null;
@@ -6469,43 +6475,52 @@ app.get("/api/tube/stream-info", async (req, res) => {
     };
   };
 
-  let adaptiveFallback = null;
-  let tried = 0;
-  const deadline = Date.now() + 18000;
+  const finish = (info) => {
+    if (info.muxed) {
+      tubeMuxedHost = info.host;
+      tubeWorkingHost = info.host;
+    } else {
+      tubeWorkingHost = info.host;
+    }
+    const resultData = buildResult(info);
+    streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
+    return res.json({ ok: true, ...resultData });
+  };
 
-  for (const host of hostOrder) {
-    if (tried >= 4 || Date.now() > deadline) break;
-    tried++;
-    const info = await fetchInvidiousInfo(host, videoId, 6000);
-    if (!info) continue;
-
-    // 実際に先頭が取れるか確認（壊れた/期限切れURLを再生させない）
+  // 1ホストぶん：フォーマット取得＋実際に先頭が取れるかの確認
+  const probeHost = async (host) => {
+    const info = await fetchInvidiousInfo(host, videoId, 7000);
+    if (!info) return null;
     const [videoOk, audioOk] = await Promise.all([
       probePlayableMedia(info.videoUrl),
       info.audioUrl ? probePlayableMedia(info.audioUrl) : Promise.resolve(true)
     ]);
-    if (!videoOk) continue;
+    return { ...info, videoOk, audioOk };
+  };
 
-    if (info.muxed) {
-      if (!audioOk) { if (!adaptiveFallback) adaptiveFallback = info; continue; }
-      tubeMuxedHost = host;
-      tubeWorkingHost = host;
-      const resultData = buildResult(info);
-      streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
-      return res.json({ ok: true, ...resultData });
+  const deadline = Date.now() + 20000;
+  let bestAdaptive = null;
+
+  // インスタンスは「たまに」失敗する（404/500/403）。順番に待つと遅いので、
+  // 3ホストずつ並列に試し、音声込みの1本が見つかった時点で返す。
+  const batches = [hostOrder.slice(0, 3), hostOrder.slice(3, 6)];
+  for (const batch of batches) {
+    if (!batch.length || Date.now() > deadline) break;
+    const results = await Promise.all(batch.map((h) => probeHost(h).catch(() => null)));
+
+    const muxed = results.find((r) => r && r.muxed && r.videoOk && r.audioOk);
+    if (muxed) return finish(muxed);
+
+    for (const r of results) {
+      if (r && r.videoOk && r.audioOk && !bestAdaptive) bestAdaptive = r;
     }
-    // 映像だけのストリーム。音声が壊れていたら「無音の映像」になるので次のホストへ。
-    if (!audioOk) continue;
-    if (!adaptiveFallback) adaptiveFallback = info;
-    // 音声込み1本が無いホストだった → 次のホストで muxed を探す（最大4ホストまで）
+    if (bestAdaptive && Date.now() > deadline - 6000) break;
   }
 
-  if (adaptiveFallback) {
+  if (bestAdaptive) {
     // 音声込み1本がどのホストの一覧にも無い場合の最後の手段。
     // /latest_version・itag18 が通れば、映像だけ＋別音声という不安定な形を避けられる。
     if (Date.now() < deadline) {
-      // 一覧に音声込みが無くても、/latest_version は返せるインスタンスがある
-      // （例: echostreamz）。音声込み優先ホストから順に試す。
       const muxedHosts = [];
       for (const h of [tubeMuxedHost, "echostreamz.com", ...hostOrder]) {
         if (h && !muxedHosts.includes(h)) muxedHosts.push(h);
@@ -6514,18 +6529,17 @@ app.get("/api/tube/stream-info", async (req, res) => {
         if (Date.now() > deadline) break;
         const muxedUrl = await tryLatestVersionMuxed(h, videoId);
         if (muxedUrl) {
-          tubeMuxedHost = h;
-          tubeWorkingHost = h;
-          const resultData = buildResult({ ...adaptiveFallback, host: h, muxed: true, videoUrl: muxedUrl, audioUrl: "", quality: "360p" });
-          streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
-          return res.json({ ok: true, ...resultData });
+          return finish({ ...bestAdaptive, host: h, muxed: true, videoUrl: muxedUrl, audioUrl: "", quality: "360p" });
         }
       }
     }
-    tubeWorkingHost = adaptiveFallback.host;
-    const resultData = buildResult(adaptiveFallback);
-    streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
-    return res.json({ ok: true, ...resultData });
+    return finish(bestAdaptive);
+  }
+
+  // 全部だめでも、直前に返せていたストリームURLがあればそれを使う
+  // （署名URLは数時間有効。真っ白な失敗画面より再生できたほうがよい）。
+  if (cacheEntry && cacheEntry.data && cacheEntry.data.videoUrl) {
+    return res.json({ ok: true, stale: true, eduEmbedUrl, ...cacheEntry.data });
   }
 
   return res.json({
