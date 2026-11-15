@@ -442,10 +442,9 @@
       const twPath = turboWarpPath(url);
       if (twPath && twPath.embed) {
         url = twPath.embed;
-      } else if (twPath && twPath.home) {
-        window.open("/api/proxy?url=" + encodeURIComponent("https://turbowarp.org") + "&_tw=1", "_blank", "noopener");
-        return;
       }
+      // トップページ（プロジェクト無し）はプロキシの案内ページ（/embed＋プロジェクトID入力）が
+      // iframe 内に表示される。ポップアップがブロックされる環境でも行き止まりにしない。
       activeUrl = url;
       let proxyUrl = "/api/proxy?url=" + encodeURIComponent(url);
 
