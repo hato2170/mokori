@@ -6254,7 +6254,7 @@ async function fetchInvidiousInfo(host, videoId, timeoutMs = 6000) {
     let invResp = await fetch(apiUrl, { headers: reqHeaders, signal: AbortSignal.timeout(timeoutMs) });
     // インスタンスは一時的に 429/500/503 を返すことがある（＝「たまに再生できない」の正体）。
     // 1回だけ間を置いて引き直す。
-    if ([429, 500, 502, 503, 504].includes(invResp.status)) {
+    if ([401, 403, 404, 429, 500, 502, 503, 504].includes(invResp.status)) {
       try {
         await new Promise((r) => setTimeout(r, 400));
         invResp = await fetch(apiUrl, { headers: reqHeaders, signal: AbortSignal.timeout(timeoutMs) });
@@ -6534,6 +6534,19 @@ app.get("/api/tube/stream-info", async (req, res) => {
       }
     }
     return finish(bestAdaptive);
+  }
+
+  // ここまで全滅：インスタンス側の一時的な失敗であることが多いので、
+  // 少し待って先頭バッチ（音声込みを返すホスト）をもう一度だけ試す。
+  if (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+    const retryResults = await Promise.all(hostOrder.slice(0, 3).map((h) => probeHost(h).catch(() => null)));
+    const retryMuxed = retryResults.find((r) => r && r.muxed && r.videoOk && r.audioOk);
+    if (retryMuxed) return finish(retryMuxed);
+    for (const r of retryResults) {
+      if (r && r.videoOk && r.audioOk) return finish(r);
+      if (r && r.videoOk) return finish(r);
+    }
   }
 
   // 全部だめでも、直前に返せていたストリームURLがあればそれを使う
