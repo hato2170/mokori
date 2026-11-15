@@ -3565,6 +3565,35 @@ app.all("/api/proxy", async (req, res) => {
 
   var IS_POKI = ${isPokiSite};
 
+  // 📸 Instagramの「アプリでこのリール動画を見る」全画面ナグを自動で閉じる
+  // （動画の上に被さって「見れない」ように感じる最大の原因。閉じるだけなので副作用なし）
+  var PX_IS_IG = (function () {
+    var h = (baseObj.hostname || '').toLowerCase();
+    return h === 'instagram.com' || h.slice(-14) === '.instagram.com';
+  })();
+  if (PX_IS_IG) {
+    (function () {
+      var closed = 0;
+      var timer = setInterval(function () {
+        if (closed >= 8) { clearInterval(timer); return; }
+        var dialogs = document.querySelectorAll('div[role="dialog"],[role="dialog"]');
+        for (var i = 0; i < dialogs.length; i++) {
+          var txt = dialogs[i].innerText || '';
+          if (txt.indexOf('アプリでこのリール') < 0 && txt.indexOf('アプリを利用すると') < 0) continue;
+          var btns = dialogs[i].querySelectorAll('button,[role="button"]');
+          for (var j = 0; j < btns.length; j++) {
+            var lbl = String(btns[j].getAttribute('aria-label') || btns[j].innerText || '');
+            if (lbl.indexOf('閉じる') >= 0 || lbl.toLowerCase().indexOf('close') >= 0) {
+              try { btns[j].click(); closed++; } catch (_) {}
+              break;
+            }
+          }
+        }
+      }, 700);
+      setTimeout(function () { clearInterval(timer); }, 20000);
+    })();
+  }
+
   // 🧭 SPAのルーター対策: TikTokは location.pathname が既知のルートでないと
   // 自前の /404 へ飛ばしてしまう。プロキシのURLは常に /api/proxy なので、
   // 表示上のパスだけを「本物のサイトのパス」に合わせる（history.replaceState は
