@@ -2518,7 +2518,8 @@ app.get("/api/music/fullfile", async (req, res) => {
     const info = src === "audius" ? await mod.audiusFile(id) : await mod.soundcloudFile(id);
     const size = info.size;
     res.setHeader("Accept-Ranges", "bytes");
-    res.setHeader("Content-Type", src === "audius" ? "audio/mpeg" : "audio/mp4");
+    // 実ファイルの拡張子に合わせる（SoundCloudはprogressive配信だとmp3になる）
+    res.setHeader("Content-Type", String(info.path).endsWith(".mp3") ? "audio/mpeg" : "audio/mp4");
     res.setHeader("Cache-Control", "public, max-age=3600");
     const range = req.headers.range;
     if (range) {
@@ -2541,33 +2542,6 @@ app.get("/api/music/fullfile", async (req, res) => {
     return fs.createReadStream(info.path).pipe(res);
   } catch (err) {
     return res.status(502).json({ ok: false, error: String(err && err.message || err).slice(0, 150) });
-  }
-});
-
-// 一時診断: フル尺音源の取得ルート実測 (作業完了後に削除)
-app.get("/api/music/probe", async (req, res) => {
-  const t0 = Date.now();
-  try {
-    const m = require("./lib/music-probe");
-    const q = String(req.query.q || "STUTS 99 Steps");
-    const step = String(req.query.step || "po");
-    let out;
-    if (step === "potok") {
-      const p = require("./lib/music-potok");
-      out = await p.runPotok(String(req.query.v || "UHGqi7HekoY"));
-    } else if (step === "players") {
-      const v = String(req.query.v || "") || await m.searchVideoId(q);
-      const po = req.query.po === "1" ? await m.makePoToken() : null;
-      out = await m.runPlayers(v, po);
-      out.poToken = po ? { ok: po.ok, ms: po.ms, error: po.error, poTokenLen: po.poTokenLen, visitorDataLen: po.visitorDataLen } : null;
-    } else {
-      out = await m.runProbe(q, { step });
-      delete out._po;
-    }
-    out.ms = Date.now() - t0;
-    res.json(out);
-  } catch (err) {
-    res.status(500).json({ error: String(err && err.message || err), stack: String(err && err.stack || "").slice(0, 800) });
   }
 });
 
