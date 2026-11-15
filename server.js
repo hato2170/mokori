@@ -2510,6 +2510,61 @@ app.post("/api/chats/:chatId/leave", requireLogin, async (req, res) => {
 // ⭐ LINE Unlimited 新機能 API群 (プロフィールBGM, アルバム, ノート, 投票, 日程調整, VOOM)
 // ====================================================
 
+// フル尺音源（1曲まるごと）の解決: SoundCloud → Audius の順に探す
+app.get("/api/music/full", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    const { resolveFull } = require("./lib/music-full");
+    const out = await resolveFull({
+      artist: req.query.artist,
+      title: req.query.title,
+      album: req.query.album,
+      durationSec: Number(req.query.duration || 0) || 0
+    });
+    return res.json(out);
+  } catch (err) {
+    return res.status(500).json({ ok: false, why: String(err && err.message || err).slice(0, 150) });
+  }
+});
+
+// フル尺実体の中継（Range対応・iOS/iPad Safariがシークできるように）
+app.get("/api/music/fullfile", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const src = String(req.query.src || "soundcloud");
+  const id = String(req.query.id || "").trim();
+  if (!id) return res.status(400).send("id required");
+  try {
+    const mod = require("./lib/music-full");
+    const info = src === "audius" ? await mod.audiusFile(id) : await mod.soundcloudFile(id);
+    const size = info.size;
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Content-Type", src === "audius" ? "audio/mpeg" : "audio/mp4");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    const range = req.headers.range;
+    if (range) {
+      const m = /bytes=(\d+)-(\d*)/.exec(String(range));
+      let start = m ? parseInt(m[1], 10) : 0;
+      let end = m && m[2] ? parseInt(m[2], 10) : size - 1;
+      if (!Number.isFinite(start) || start < 0) start = 0;
+      if (!Number.isFinite(end) || end >= size) end = size - 1;
+      if (start > end) {
+        res.status(416);
+        res.setHeader("Content-Range", `bytes */${size}`);
+        return res.end();
+      }
+      res.status(206);
+      res.setHeader("Content-Range", `bytes ${start}-${end}/${size}`);
+      res.setHeader("Content-Length", String(end - start + 1));
+      return fs.createReadStream(info.path, { start, end }).pipe(res);
+    }
+    res.setHeader("Content-Length", String(size));
+    return fs.createReadStream(info.path).pipe(res);
+  } catch (err) {
+    return res.status(502).json({ ok: false, error: String(err && err.message || err).slice(0, 150) });
+  }
+});
+
 // 一時診断: フル尺音源の取得ルート実測 (作業完了後に削除)
 app.get("/api/music/probe", async (req, res) => {
   const t0 = Date.now();
