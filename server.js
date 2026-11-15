@@ -3030,33 +3030,41 @@ function isBlockedHost(host) {
   return false;
 }
 
-function renderProxyError(title, detail, retryUrl) {
+function renderProxyError(title, detail, retryUrl, extra) {
+  const links = (extra && Array.isArray(extra.links)) ? extra.links : [];
+  const note = (extra && extra.note) ? `<p style="font-size:12px;color:#94a3b8;margin-top:0;">${extra.note}</p>` : "";
+  const extraBtns = links.map((l) => `<a href="${l.href}" class="btn ${l.primary ? "btn-primary" : "btn-sec"}">${l.label}</a>`).join("\n      ");
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>エラー · 天才プロキシ</title>
+  <meta name="referrer" content="no-referrer">
+  <title>お知らせ · 天才プロキシ</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; text-align: center; }
-    .box { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 32px 24px; max-width: 480px; width: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-    h2 { color: #f87171; font-size: 20px; margin-bottom: 12px; }
-    p { color: #94a3b8; font-size: 14px; line-height: 1.6; margin-bottom: 24px; }
+    .box { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 28px 22px; max-width: 500px; width: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    h2 { color: #fbbf24; font-size: 19px; margin-bottom: 12px; line-height: 1.4; }
+    p { color: #94a3b8; font-size: 14px; line-height: 1.7; margin-bottom: 16px; }
     .btn-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
-    .btn { display: inline-block; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 13px; }
+    .btn { display: inline-block; padding: 10px 16px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 13px; }
     .btn-primary { background: #0284c7; color: #fff; }
     .btn-sec { background: #334155; color: #cbd5e1; }
+    .foot { margin-top: 18px; font-size: 11px; color: #475569; word-break: break-all; }
   </style>
 </head>
 <body>
   <div class="box">
     <h2>⚠️ ${title}</h2>
     <p>${detail}</p>
+    ${note}
     <div class="btn-row">
-      ${retryUrl ? `<a href="${retryUrl}" class="btn btn-primary">🔄 再試行</a>` : ''}
+      ${retryUrl ? `<a href="${retryUrl}" class="btn btn-primary">🔄 もう一度読み込む</a>` : ""}
+      ${extraBtns}
       <a href="/tensai-proxy/" class="btn btn-sec">🏠 天才プロキシへ戻る</a>
     </div>
+    <div class="foot">天才プロキシ</div>
   </div>
 </body>
 </html>`;
@@ -3155,6 +3163,70 @@ app.use(async (req, res, next) => {
   }
   next();
 });
+
+// ====================================================
+// 🛡 上流フェッチの堅牢化
+// 「ページを読み込めませんでした」「fetch failed」の多くは、上流がUAやIPで
+// 接続を切っているだけなので、別UAで自動的にやり直せば通る。
+// ====================================================
+const UA_IOS_SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+const UA_DESKTOP_CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+const UA_YOUTUBE = UA_DESKTOP_CHROME;
+
+function pickUAForHost(hostname, clientUA) {
+  const h = String(hostname || "").toLowerCase();
+  if (h.includes("instagram.com") || h.includes("cdninstagram.com") || h.includes("fbcdn.net")) return UA_IOS_SAFARI;
+  if (h.includes("tiktok") || h.includes("ttwstatic") || h.includes("ibytedtos") || h.includes("ibyteimg")) return UA_DESKTOP_CHROME;
+  // YouTubeはiPhone SafariのUAだとデータセンターIPからの接続を切られる（実測: fetch failed）
+  if (h.includes("youtube.com") || h.includes("youtu.be") || h.includes("ytimg.com") || h.includes("googlevideo.com") || h.includes("googleusercontent.com")) return UA_YOUTUBE;
+  return clientUA || UA_DESKTOP_CHROME;
+}
+
+async function fetchUpstream(targetUrl, baseHeaders, fetchOpts, { allowUAChange = true } = {}) {
+  const uaList = [];
+  if (baseHeaders["User-Agent"]) uaList.push(baseHeaders["User-Agent"]);
+  if (allowUAChange && !uaList.includes(UA_DESKTOP_CHROME)) uaList.push(UA_DESKTOP_CHROME);
+  let lastError = null;
+  for (let i = 0; i < uaList.length; i++) {
+    const headers = { ...baseHeaders, "User-Agent": uaList[i] };
+    try {
+      const response = await fetch(targetUrl, { ...fetchOpts, headers });
+      const wantsDoc = String(headers["Accept"] || "").includes("text/html");
+      // 上流が文書そのものを拒否したときだけ、UAを替えて一度やり直す（429は回線制限なので再試行しない）
+      if (i === 0 && wantsDoc && uaList.length > 1 && [401, 403, 406, 451, 502, 503].includes(response.status)) {
+        lastError = new Error("upstream refused: HTTP " + response.status);
+        continue;
+      }
+      return response;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("upstream fetch failed");
+}
+
+// プロキシ経由のページから相対パスがはみ出したとき（Worker内の /ttwid/check/ 等）に
+// どの上流へ戻すかを決めるためのCookie名
+const PROXY_ORIGIN_COOKIE = "__px_origin";
+
+// ====================================================
+// 👷 Web Worker 用URL解決シム
+// TikTok は Worker の中で `/ttwid/check/` や `/api/core.js` を「ワーカー基準の相対URL」で
+// 呼ぶため、ページ側の書き換えが一切効かず、すべて mokori の404へ抜けて
+// 「不明なエラーが発生しました」になっていた。Workerの中だけに、上流基準で
+// 解決し直す小さなシムを先頭に注入する（通常のページ用スクリプトでは何もしない）。
+// ====================================================
+const PROXY_WORKER_SHIM = `(function(){try{
+if(typeof document!=="undefined"||typeof location==="undefined")return;
+var q=location.search||"",m=/[?&]url=([^&]*)/.exec(q);if(!m)return;
+var B="";try{B=decodeURIComponent(m[1]);}catch(e){return;}
+if(!B)return;
+var SX=location.origin;
+function px(u){if(typeof u!=="string"||!u)return u;if(u.indexOf("/api/proxy?url=")>=0)return u;var p=u.slice(0,5);if(p==="data:"||p==="blob:"||p==="java")return u;try{var a=new URL(u,B);if(a.origin===SX)return a.href;return SX+"/api/proxy?url="+encodeURIComponent(a.href);}catch(e){return u;}}
+if(typeof importScripts==="function"){var _is=importScripts;try{importScripts=function(){var a=[].slice.call(arguments);for(var i=0;i<a.length;i++)a[i]=px(a[i]);return _is.apply(this,a);};}catch(e){}}
+if(typeof fetch==="function"){var _f=fetch;try{fetch=function(i,o){try{if(typeof i==="string")i=px(i);else if(i&&typeof i.url==="string"){var r=new Request(i,o);i=new Request(px(r.url),r);o=undefined;}}catch(e){}return _f.call(this,i,o);};}catch(e){}}
+if(typeof XMLHttpRequest!=="undefined"&&XMLHttpRequest.prototype){var _o=XMLHttpRequest.prototype.open;try{XMLHttpRequest.prototype.open=function(a,b){try{if(typeof b==="string")arguments[1]=px(b);}catch(e){}return _o.apply(this,arguments);};}catch(e){}}
+}catch(e){}})();\n`;
 
 app.all("/api/proxy", async (req, res) => {
   let targetUrl = req.query.url;
@@ -3295,11 +3367,8 @@ app.all("/api/proxy", async (req, res) => {
       requestOrigin = "https://www.instagram.com";
     }
 
-    const defaultUA = isInstagram
-      ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-      : (isTiktok
-        ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        : (req.headers["user-agent"] || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"));
+    const clientUA = req.headers["user-agent"] || UA_DESKTOP_CHROME;
+    const defaultUA = pickUAForHost(parsedTarget.hostname, clientUA);
 
     const headers = {
       "User-Agent": defaultUA,
@@ -3343,19 +3412,29 @@ app.all("/api/proxy", async (req, res) => {
       }
     }
 
-    const response = await fetch(targetUrl, fetchOpts);
+    const response = await fetchUpstream(targetUrl, headers, fetchOpts, { allowUAChange: !isInstagram });
     const contentType = response.headers.get("content-type") || "";
 
     // Instagramが回線制限（429）を返したときは、壊れたページではなく案内を出す
     if (response.status === 429 && isInstagram && (req.headers.accept || "").includes("text/html")) {
+      const igLink = (p) => `/api/proxy?url=${encodeURIComponent("https://www.instagram.com" + p)}`;
       return res.status(429).send(renderProxyError(
-        "Instagramが一時的にアクセスを制限しています",
-        "Instagram側の回線制限（429）で、いまこのページは開けません。数分〜数十分おくと改善することが多いです。<br>ログインしなくても見られるリール・投稿は<a href=\"/instagram/\" style=\"color:#7dd3fc;\">もこりInstagram</a>からどうぞ。",
-        `/api/proxy?url=${encodeURIComponent(targetUrl)}`
+        "Instagramがこのページだけアクセスを制限しています",
+        "Instagram側の回線制限（429）で、ログイン・DM・設定のようなログインが必要なページはいま開けません。見るだけのページ（トップ・リール・探索・新規登録）は開けます。<br>数十秒おいてから「もう一度読み込む」を押すと通ることがあります。",
+        `/api/proxy?url=${encodeURIComponent(targetUrl)}`,
+        {
+          links: [
+            { href: igLink("/reels/"), label: "🎬 リールを見る" },
+            { href: igLink("/explore/"), label: "🔎 探索する" },
+            { href: igLink("/accounts/emailsignup/"), label: "📝 新規登録" }
+          ],
+          note: "Instagram公式アプリでログイン済みなら、このプロキシからも見られるページが増えます。"
+        }
       ));
     }
 
     res.status(response.status);
+    res.setHeader("X-Tensai-Proxy", "v2026-11-15b");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "*");
@@ -3467,6 +3546,7 @@ app.all("/api/proxy", async (req, res) => {
         return `'gameUri':'${resolveUrl(val)}&_ts=${Date.now()}'`;
       });
 
+      const isPokiSite = /(^|\.)poki\.com$|poki-cdn\.com$|turbowarp\.org$|fancade\.com$/i.test(parsedTarget.hostname);
       const interceptScript = `
 <script>
 (function() {
@@ -3482,6 +3562,107 @@ app.all("/api/proxy", async (req, res) => {
   window.__proxy_search = baseObj.search || '';
   window.__proxy_hash = baseObj.hash || '';
   window.__proxy_href = baseObj.href || baseUrl;
+
+  var IS_POKI = ${isPokiSite};
+
+  // 🚦 リロードループ検知（同じURLを短時間に何度も読み直したら止める）
+  (function () {
+    try {
+      var key = '__pxloop:' + baseUrl;
+      var rec = {};
+      try { rec = JSON.parse(sessionStorage.getItem(key) || '{}') || {}; } catch (_) { rec = {}; }
+      var now = Date.now();
+      if (!rec.t || rec.n === undefined || (now - rec.t) > 10000) { rec = { n: 1, t: now }; }
+      else { rec.n = rec.n + 1; rec.t = now; }
+      sessionStorage.setItem(key, JSON.stringify(rec));
+      window.__pxLoadCount = rec.n;
+    } catch (_) { window.__pxLoadCount = 1; }
+  })();
+
+  // 🛡 リロードループを抜けられないときは、Safariのエラー画面に任せずここで止める
+  function showLoopPanel() {
+    if (document.getElementById('__px_loop_panel')) return;
+    var p = document.createElement('div');
+    p.id = '__px_loop_panel';
+    p.style.cssText = 'position:fixed;left:0;right:0;top:0;bottom:0;z-index:2147483647;background:#0b1120;color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;padding:20px;';
+    p.innerHTML = '<div style="background:#1e293b;border:1px solid #334155;border-radius:16px;padding:22px;max-width:420px;text-align:center;">' +
+      '<div style="font-size:20px;font-weight:bold;color:#fbbf24;margin-bottom:10px;">このページの読み込みを止めました</div>' +
+      '<div style="font-size:13px;color:#94a3b8;line-height:1.7;margin-bottom:16px;">同じページが何度も自動で読み直されていたので、端末が重くならないように一度止めています。</div>' +
+      '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">' +
+      '<a href="#" id="__px_loop_retry" style="background:#0284c7;color:#fff;text-decoration:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:bold;">もう一度だけ試す</a>' +
+      '<a href="/tensai-proxy/" style="background:#334155;color:#cbd5e1;text-decoration:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:bold;">🏠 ホーム</a>' +
+      '</div></div>';
+    (document.body || document.documentElement).appendChild(p);
+    var btn = document.getElementById('__px_loop_retry');
+    if (btn) btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      try { sessionStorage.removeItem('__pxloop:' + baseUrl); } catch (_) {}
+      location.reload();
+    });
+  }
+  if ((window.__pxLoadCount || 0) >= 4) {
+    if (document.body) showLoopPanel();
+    else document.addEventListener('DOMContentLoaded', showLoopPanel);
+  }
+
+  // 🧹 プロキシ内でService Workerを登録させない（mokori側のキャッシュを壊し、
+  // 「ページを読み込めませんでした」の原因になるため）
+  try {
+    if (navigator.serviceWorker) {
+      try { navigator.serviceWorker.register = function () { return Promise.reject(new Error('proxy: service worker disabled')); }; } catch (_) {}
+      try {
+        navigator.serviceWorker.getRegistrations().then(function (rs) {
+          (rs || []).forEach(function (r) {
+            try {
+              var sc = r.scope || '';
+              if (sc.indexOf('/api/proxy') >= 0 || sc === location.origin + '/') r.unregister();
+            } catch (_) {}
+          });
+        }).catch(function () {});
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  // 🩺 ページ内で起きたJSエラーを小さな⚠バッジに集める（白画面・無言の停止をなくす）
+  (function () {
+    var errs = [];
+    function paint() {
+      var b = document.getElementById('__px_err_badge');
+      if (!b && errs.length) {
+        b = document.createElement('div');
+        b.id = '__px_err_badge';
+        b.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483646;background:#7f1d1d;color:#fecaca;border:1px solid #b91c1c;border-radius:999px;padding:3px 9px;font:11px -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;opacity:0.9;';
+        b.addEventListener('click', function () {
+          var pn = document.getElementById('__px_err_panel');
+          if (pn) { pn.parentNode.removeChild(pn); return; }
+          pn = document.createElement('div');
+          pn.id = '__px_err_panel';
+          pn.style.cssText = 'position:fixed;left:8px;right:8px;bottom:36px;z-index:2147483646;max-height:45vh;overflow:auto;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:12px;padding:10px 12px;font:11px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;';
+          pn.textContent = '⚠ このページで起きたエラー（' + errs.length + '件）\n' + errs.join('\n');
+          (document.body || document.documentElement).appendChild(pn);
+        });
+        (document.body || document.documentElement).appendChild(b);
+      }
+      if (b) { b.textContent = '⚠ ' + errs.length; b.style.display = 'block'; }
+    }
+    function add(msg) {
+      if (!msg) return;
+      msg = String(msg).slice(0, 160);
+      if (msg === 'Script error.' || errs.indexOf(msg) >= 0 || errs.length >= 8) return;
+      errs.push(msg);
+      paint();
+    }
+    window.addEventListener('error', function (e) {
+      try { add((e && (e.message || (e.error && e.error.message))) || ''); } catch (_) {}
+    }, true);
+    window.addEventListener('unhandledrejection', function (e) {
+      try {
+        var r = e && e.reason;
+        add(r && (r.message || r.toString ? r.toString() : r));
+      } catch (_) {}
+    });
+    window.__pxErrors = errs;
+  })();
 
   var mockLocation = {
     get pathname() { return window.__proxy_pathname; },
@@ -3516,6 +3697,8 @@ app.all("/api/proxy", async (req, res) => {
   };
   window.__proxy_location = mockLocation;
 
+  // Poki専用: 重いSPA（Instagram/TikTok等）ではWebKitが落ちる原因になるため、Poki系だけに限定
+  if (IS_POKI) {
   try {
     var winProxy = new Proxy(window, {
       get: function(target, prop) {
@@ -3530,8 +3713,9 @@ app.all("/api/proxy", async (req, res) => {
       get: function() { return winProxy; }
     });
   } catch(_) {}
+  }
 
-  try {
+  if (IS_POKI) try {
     localStorage.setItem('poki_nobot', 'true');
     window.pokiDebug = true;
     window.poki_nobot = true;
@@ -3576,7 +3760,7 @@ app.all("/api/proxy", async (req, res) => {
     window.pokiBotDetectedPromise = Promise.resolve([]);
   } catch(_) {}
 
-  if (baseUrl.includes('poki.com')) {
+  if (IS_POKI && baseUrl.includes('poki.com')) {
     function tryMountPokiGame() {
       var errEl = document.getElementById('pageError');
       if (errEl) {
@@ -3870,21 +4054,19 @@ app.all("/api/proxy", async (req, res) => {
     };
   }
 
-  if (window.fetch) {
-    var origFetch = window.fetch;
-    window.fetch = function(input, init) {
-      try {
-        if (typeof input === 'string' || (typeof URL !== 'undefined' && input instanceof URL)) {
-          input = toProxy(String(input));
-        } else if (input && typeof input.url === 'string') {
-          var request = new Request(input, init);
-          input = new Request(toProxy(request.url), request);
-          init = undefined;
-        }
-      } catch(_) {}
-      return origFetch.call(this, input, init);
-    };
-  }
+  // 送信系（ビーコン・EventSource）も同じ中継を通す
+  try {
+    if (navigator.sendBeacon) {
+      var origBeacon = navigator.sendBeacon.bind(navigator);
+      navigator.sendBeacon = function(u, data) {
+        try { return origBeacon(toProxy(u), data); } catch (_) { return false; }
+      };
+    }
+    if (window.EventSource) {
+      var OrigES = window.EventSource;
+      window.EventSource = function(u, c) { return new OrigES(toProxy(u), c); };
+    }
+  } catch (_) {}
 
   document.addEventListener('submit', function(e) {
     var f = e.target;
@@ -3953,6 +4135,16 @@ if (window !== window.top) {
       } else {
         html = navBar + html;
       }
+      // このプロキシ画面がどの上流のものかをCookieに残す（Workerや絶対パスが
+      // プロキシ外へ抜けたときに元のサイトへ戻すため）
+      try {
+        const prevCookie = String(req.headers.cookie || "");
+        const existing = /(?:^|;\s*)__px_origin=([^;]*)/.exec(prevCookie);
+        const encodedOrigin = encodeURIComponent(origin);
+        if (!existing || existing[1] !== encodedOrigin) {
+          res.append("Set-Cookie", `${PROXY_ORIGIN_COOKIE}=${encodedOrigin}; Path=/; Max-Age=1800; SameSite=Lax`);
+        }
+      } catch (_) {}
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Pragma", "no-cache");
       if (pageCacheKey) socialCacheSet(pageCacheKey, html, 5 * 60 * 1000);
@@ -3977,6 +4169,10 @@ if (window !== window.top) {
 
     if (contentType.includes("javascript") || (response.url && response.url.includes(".js"))) {
       let js = await response.text();
+      // Worker内の相対URLを上流基準で解決し直す小さなシム（ページ内では何もしない）
+      if (js && !js.startsWith("/*px-shim*/")) {
+        js = "/*px-shim*/" + PROXY_WORKER_SHIM + js;
+      }
       // Poki等のゲームSitelock解除 & デバッグモード有効化 & ロケーション参照解決
       if (response.url && (response.url.includes("poki") || response.url.includes("fancade") || response.url.includes("turbowarp"))) {
         js = js.replace(/\bvar\s+pokiDebug\s*=\s*false;/g, "var pokiDebug = true;");
@@ -3998,7 +4194,9 @@ if (window !== window.top) {
     const buf = await response.arrayBuffer();
     return res.end(Buffer.from(buf));
   } catch (err) {
-    return res.status(502).send(renderProxyError("ページの読み込みに失敗しました", err.message, `/api/proxy?url=${encodeURIComponent(targetUrl)}`));
+    const cause = err && err.cause ? (err.cause.code || err.cause.message || String(err.cause)) : "";
+    const detail = `${err && err.message ? err.message : "接続できませんでした"}${cause ? "（" + cause + "）" : ""}<br>相手のサイトが一時的に応答していないか、この回線をブロックしている可能性があります。少し待ってから「もう一度読み込む」を押してください。`;
+    return res.status(502).send(renderProxyError("ページの読み込みに失敗しました", detail, `/api/proxy?url=${encodeURIComponent(targetUrl)}`));
   }
 });
 
@@ -5245,6 +5443,49 @@ app.get("/api/tempmail/messages/:id", async (req, res) => {
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }
+});
+
+// ====================================================
+// 🔁 プロキシ外へはみ出したパスの救済（最終段）
+// Worker内の /ttwid/check/、SPAの絶対パス、Instagramの /accounts/… など、
+// プロキシURLの中から出た相対・絶対パスは mokori の404になってしまう。
+// CookieかRefererから元のサイトを割り出せる場合は上流へ307で中継し、404画面を出さない。
+// （すべてのルート定義の後に置き、mokori 本体のページ・APIを奪わないようにする）
+// ====================================================
+const SELF_PATH_PREFIXES = [
+  "/api/", "/tensai-proxy", "/tube", "/music", "/instagram", "/tiktok", "/roblox",
+  "/mail.html", "/downloads", "/chat", "/sns", "/friends", "/ai", "/games",
+  "/paper", "/line", "/favicon", "/manifest", "/robots.txt", "/geniusos", "/sw.js"
+];
+
+function proxyOriginFromRequest(req) {
+  const cookie = String(req.headers.cookie || "");
+  const m = /(?:^|;\s*)__px_origin=([^;]*)/.exec(cookie);
+  if (m && m[1]) {
+    try {
+      const o = decodeURIComponent(m[1]);
+      if (/^https?:\/\/[^\s]+$/i.test(o)) return o.replace(/\/+$/, "");
+    } catch (_) {}
+  }
+  const ref = String(req.headers.referer || "");
+  if (ref.includes("proxy?url=")) {
+    try {
+      const inner = decodeURIComponent((ref.split("proxy?url=")[1] || "").split("&")[0]);
+      if (inner) return new URL(inner).origin;
+    } catch (_) {}
+  }
+  return null;
+}
+
+app.use((req, res, next) => {
+  if (!["GET", "HEAD", "POST"].includes(req.method)) return next();
+  const p = req.path || "/";
+  if (p === "/") return next();
+  if (SELF_PATH_PREFIXES.some((pre) => p === pre.replace(/\/$/, "") || p.startsWith(pre))) return next();
+  const origin = proxyOriginFromRequest(req);
+  if (!origin) return next();
+  const target = origin + req.originalUrl;
+  return res.redirect(307, "/api/proxy?url=" + encodeURIComponent(target));
 });
 
 app.listen(port, () => {
