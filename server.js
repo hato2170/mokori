@@ -3466,15 +3466,21 @@ app.all("/api/proxy", async (req, res) => {
     const isInstagram = hostLower.includes("instagram.com");
     const isYouTubeHost = /(^|\.)youtube\.com$|(^|\.)youtu\.be$|(^|\.)youtube-nocookie\.com$/i.test(hostLower);
 
-    // Instagramの人気ページは5分キャッシュ（Instagram側の429レート制限を避ける）
-    const pageCacheKey = req.method === "GET" && isInstagram && parsedTarget.pathname.startsWith("/popular/")
-      ? "ig-page:" + targetUrl
+    // Instagramの文書（トップ・探索・リール・人気ページ等）はサーバー側でキャッシュする。
+    // MetaはデータセンターIPに 429 を返すことがあり、その1回で画面が無限スピナーになる。
+    // 一度取れたページはそのまま返し、上流が失敗したときは期限切れのコピーでも返す。
+    const wantsHtmlDoc = req.method === "GET" && String(req.headers.accept || "").includes("text/html");
+    const igPopular = parsedTarget.pathname.startsWith("/popular/");
+    const pageCacheKey = wantsHtmlDoc && isInstagram
+      ? (igPopular ? "ig-page:" + targetUrl : "ig-doc:" + targetUrl)
       : null;
+    const pageCacheTtl = igPopular ? 5 * 60 * 1000 : 90 * 1000;
     if (pageCacheKey) {
       const hit = socialCacheGet(pageCacheKey);
       if (hit) {
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.setHeader("X-Tensai-Cache", "PAGE");
         return res.send(hit);
       }
     }
@@ -3605,6 +3611,41 @@ app.all("/api/proxy", async (req, res) => {
     const contentType = response.headers.get("content-type") || "";
     // 上流（Instagram）が実際に返したステータスを外から見えるようにする
     res.setHeader("X-Tensai-Upstream", String(response.status));
+
+    // 上流が 429/5xx を返しても、一度取れているページがあればそれを返す
+    // （無限スピナー・「リンクが破損しています」を出さないための最後の砦）
+    if (pageCacheKey && response.status >= 400) {
+      const staleDoc = socialCacheGetAny(pageCacheKey);
+      if (staleDoc) {
+        res.status(200);
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.setHeader("X-Tensai-Stale", "1");
+        return res.send(staleDoc);
+      }
+    }
+
+    // Instagramのモジュール取得（bootloader-endpoint）は、一度でも 200 が取れたら
+    // そのJSONをキャッシュし、429/404 のときはキャッシュを返して無限スピナーを止める。
+    const isIgBootloader = req.method === "GET" && isInstagram && /\/ajax\/bootloader-endpoint\/?$/i.test(parsedTarget.pathname);
+    const bootCacheKey = isIgBootloader ? "ig-boot:" + targetUrl : null;
+    if (bootCacheKey && response.status !== 200) {
+      const staleBoot = socialCacheGetAny(bootCacheKey);
+      if (staleBoot) {
+        res.status(200);
+        res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.setHeader("X-Tensai-Stale", "1");
+        return res.send(staleBoot);
+      }
+    }
+    if (bootCacheKey && response.status === 200) {
+      const bootBody = await response.text();
+      socialCacheSet(bootCacheKey, bootBody, 20 * 60 * 1000);
+      res.setHeader("Content-Type", response.headers.get("content-type") || "application/javascript; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      return res.send(bootBody);
+    }
 
     // Instagramが回線制限（429）を返したときは、壊れたページではなく案内を出す
     if (response.status === 429 && isInstagram && (req.headers.accept || "").includes("text/html")) {
@@ -4417,6 +4458,44 @@ if (window !== window.top) {
 </script>
 `;
 
+      // 📸 Instagram公式SPAがBootloaderで止まったときの逃げ道。
+      // MetaはデータセンターIPのモジュール取得（/ajax/bootloader-endpoint/）を 429/404 で
+      // 落とすことがあり、その場合Instagramの画面は無限スピナーのままになる。
+      // 一定時間たっても中身が描画されないときだけ、もこりのビューアへ案内を出す。
+      const igFallbackBar = isInstagram ? `
+<div id="__ig_fallback" style="display:none; position:fixed; left:0; right:0; bottom:0; z-index:2147483647; background:rgba(15,23,42,0.97); color:#fff; padding:14px 14px 16px; font-family:-apple-system,BlinkMacSystemFont,sans-serif; font-size:13px; line-height:1.6; box-shadow:0 -6px 20px rgba(0,0,0,0.35);">
+  <div style="font-weight:bold; margin-bottom:6px;">📸 Instagramの公式画面を読み込めませんでした</div>
+  <div style="font-size:12px; color:#cbd5e1; margin-bottom:10px;">Meta側の制限（HTTP 429）で、公式ページの部品が読み込めていません。<b>もこりの中のInstagramなら見られます。</b></div>
+  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+    <a href="/instagram/" style="background:#e1306c; color:#fff; text-decoration:none; border-radius:8px; padding:9px 14px; font-weight:bold; font-size:13px;">📸 もこりInstagramで見る</a>
+    <button onclick="location.reload()" style="background:#334155; color:#fff; border:0; border-radius:8px; padding:9px 14px; font-size:13px;">🔄 もう一度読み込む</button>
+    <button onclick="document.getElementById('__ig_fallback').style.display='none'" style="background:transparent; color:#94a3b8; border:0; padding:9px 6px; font-size:12px;">閉じる</button>
+  </div>
+</div>
+<script>
+(function(){
+  function looksStuck(){
+    try {
+      var b = document.body; if (!b) return true;
+      var txt = (b.innerText || "").replace(/\\s+/g, "");
+      var imgs = b.getElementsByTagName("img").length;
+      var busy = b.querySelectorAll('[role="progressbar"], svg[aria-label*="読み込み"], svg[aria-label*="Loading"]').length;
+      if (txt.length < 40 && imgs === 0) return true;
+      return busy > 0 && imgs < 2 && txt.length < 200;
+    } catch (e) { return false; }
+  }
+  function check(){
+    var el = document.getElementById("__ig_fallback");
+    if (!el) return;
+    if (looksStuck()) el.style.display = "block";
+  }
+  setTimeout(check, 9000);
+  setTimeout(check, 16000);
+  window.addEventListener("load", function(){ setTimeout(check, 6000); });
+})();
+</script>
+` : "";
+
       if (html.includes("<head")) {
         html = html.replace(/<head([^>]*)>/i, `<head$1>${interceptScript}`);
       } else if (html.includes("<body")) {
@@ -4426,9 +4505,9 @@ if (window !== window.top) {
       }
 
       if (html.includes("<body")) {
-        html = html.replace(/<body([^>]*)>/i, `<body$1>${navBar}`);
+        html = html.replace(/<body([^>]*)>/i, `<body$1>${navBar}${igFallbackBar}`);
       } else {
-        html = navBar + html;
+        html = navBar + igFallbackBar + html;
       }
       // このプロキシ画面がどの上流のものかをCookieに残す（Workerや絶対パスが
       // プロキシ外へ抜けたときに元のサイトへ戻すため）
@@ -4447,7 +4526,7 @@ if (window !== window.top) {
       } catch (_) {}
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Pragma", "no-cache");
-      if (pageCacheKey) socialCacheSet(pageCacheKey, html, 5 * 60 * 1000);
+      if (pageCacheKey) socialCacheSet(pageCacheKey, html, pageCacheTtl);
       return res.send(html);
     }
 
@@ -4499,6 +4578,17 @@ if (window !== window.top) {
     if (cacheableAsset) res.setHeader("Cache-Control", "public, max-age=1800");
     return res.end(buf);
   } catch (err) {
+    // 上流へ届かなかったときも、取れているページがあればそれを返す（Instagramのスピナー対策）
+    if (typeof pageCacheKey !== "undefined" && pageCacheKey) {
+      const staleDoc = socialCacheGetAny(pageCacheKey);
+      if (staleDoc) {
+        res.status(200);
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.setHeader("X-Tensai-Stale", "1");
+        return res.send(staleDoc);
+      }
+    }
     const cause = err && err.cause ? (err.cause.code || err.cause.message || String(err.cause)) : "";
     const detail = `${err && err.message ? err.message : "接続できませんでした"}${cause ? "（" + cause + "）" : ""}<br>相手のサイトが一時的に応答していないか、この回線をブロックしている可能性があります。少し待ってから「もう一度読み込む」を押してください。`;
     return res.status(502).send(renderProxyError("ページの読み込みに失敗しました", detail, `/api/proxy?url=${encodeURIComponent(targetUrl)}`));
@@ -4571,6 +4661,11 @@ function socialCacheGet(key) {
 function socialCacheSet(key, value, ttlMs) {
   if (socialCache.size > 200) socialCache.clear();
   socialCache.set(key, { value, expire: Date.now() + ttlMs });
+}
+// 期限切れでもいいので直近の値を取り出す（上流が429/失敗したときの代替表示用）
+function socialCacheGetAny(key) {
+  const hit = socialCache.get(key);
+  return hit ? hit.value : null;
 }
 
 // "key":[ ... ] / "key":{ ... } を文字列状態を保ったまま安全に取り出す
