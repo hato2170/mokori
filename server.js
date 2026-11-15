@@ -5982,6 +5982,13 @@ function warmProxyCache() {
       const html = await r.text();
       const assets = [...String(html).matchAll(/(?:src|href)="(\/api\/proxy\?url=[^"]+)"/g)]
         .map((m) => m[1].replace(/&amp;/g, "&"))
+        .filter((u) => {
+          // JS/CSSだけを温める（アイコン・hreflangの別言語ページは無駄）
+          let t = u;
+          try { t = decodeURIComponent((u.split("url=")[1] || "")); } catch (_) {}
+          if (/\?hl=/.test(t)) return false;
+          return /\.(?:js|css)(?:\?|$)/i.test(t) || /\/rsrc\.php\//i.test(t);
+        })
         .filter((u, i, a) => a.indexOf(u) === i)
         .slice(0, 16);
       for (const a of assets) {
