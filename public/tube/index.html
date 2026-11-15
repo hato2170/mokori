@@ -82,22 +82,27 @@
       margin-bottom: 24px;
       box-shadow: 0 12px 30px rgba(0,0,0,0.5);
     }
+    /* aspect-ratio / flex に頼らず padding-top で 16:9 を作る。
+       iPhone Safari では aspect-ratio と height:100% の組み合わせで
+       ビデオ要素の高さが 0 になり「音だけ聞こえて映像が出ない」ことがある。 */
     .video-wrap {
       width: 100%;
       background: #000;
       position: relative;
-      aspect-ratio: 16 / 9;
-      max-height: 520px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      height: 0;
+      padding-top: 56.25%;
+      overflow: hidden;
     }
     video {
+      position: absolute;
+      top: 0;
+      left: 0;
       width: 100%;
       height: 100%;
       object-fit: contain;
       background: #000;
       outline: none;
+      display: block;
     }
     .player-info {
       padding: 16px 20px;
@@ -282,9 +287,11 @@
 
     <!-- 自ドメインプレイヤー -->
     <div class="player-card">
-      <div class="video-wrap" id="playerWrap" style="position:relative; width:100%; aspect-ratio:16/9; background:#000;">
-        <video id="mp4Video" controls playsinline preload="metadata" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; display:block; z-index:2; outline:none; background:#000;"></video>
-        <audio id="syncAudio" style="display:none;"></audio>
+      <div class="video-wrap" id="playerWrap">
+        <video id="mp4Video" controls playsinline webkit-playsinline preload="auto" x5-playsinline style="z-index:2;"></video>
+        <!-- 音声が別トラックのとき用。display:none だと iOS が再生を止めることがあるので
+             1px の見える要素として置いておく（音声セッションはこちらが持つ） -->
+        <audio id="syncAudio" playsinline preload="auto" style="position:absolute; left:0; bottom:0; width:1px; height:1px; opacity:0.01; z-index:0;" aria-hidden="true"></audio>
         <iframe id="tubeFrame" src="about:blank" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation allow-modals" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="no-referrer" allowfullscreen style="position:absolute; top:0; left:0; width:100%; height:100%; border:0; display:none; z-index:1;"></iframe>
         <div class="player-notice" id="playerNotice">
           <strong id="noticeTitle">この動画は直接再生できませんでした</strong>
@@ -378,48 +385,161 @@
       noticeEl.style.display = "none";
     }
 
-    // 音声トラックが別（DASH）のときの簡易同期
-    mp4Video.addEventListener("play", () => { if (syncAudio.src) syncAudio.play().catch(() => {}); });
-    mp4Video.addEventListener("playing", () => { if (syncAudio.src) syncAudio.play().catch(() => {}); });
-    mp4Video.addEventListener("pause", () => { if (syncAudio.src) syncAudio.pause(); });
-    mp4Video.addEventListener("seeking", () => { if (syncAudio.src) syncAudio.currentTime = mp4Video.currentTime; });
-    mp4Video.addEventListener("timeupdate", () => {
-      if (syncAudio.src && Math.abs(mp4Video.currentTime - syncAudio.currentTime) > 0.4) {
-        syncAudio.currentTime = mp4Video.currentTime + 0.1;
+    // ---------------------------------------------------------------
+    // 再生ヘルス管理（iPhone Safari 対策）
+    //  ・音声込みの1本(muxed)が取れたら <video> 1個だけで完結させる
+    //  ・「映像だけ＋音声別」のときは video を muted にして、音声要素に
+    //    音声セッションを独占させる（iOS で音だけ鳴って映像が止まる現象の回避）
+    //  ・停滞したら自動で取り直し、同じ位置から再開する
+    // ---------------------------------------------------------------
+    let currentQuality = "";
+    let splitAudio = false;
+    let watchdogTimer = null;
+    let lastProgressWall = 0;
+    let lastProgressTime = 0;
+    let playStartedWall = 0;
+    let recoverCount = 0;
+    let pendingResumeAt = 0;
+    let lastFrameWall = 0;
+
+    function markProgress() {
+      lastProgressWall = Date.now();
+      lastProgressTime = mp4Video.currentTime;
+    }
+
+    // 実際に「映像のフレームが描画されたか」を測る（Safari 15.4+/iOS 16+ 対応）。
+    // 音だけ鳴って映像が止まっている状態を、音声の進行と取り違えないための判定。
+    function watchVideoFrames() {
+      if (!mp4Video.requestVideoFrameCallback) return;
+      const onFrame = () => {
+        lastFrameWall = Date.now();
+        if (!mp4Video.paused && !mp4Video.ended) {
+          mp4Video.requestVideoFrameCallback(onFrame);
+        }
+      };
+      mp4Video.requestVideoFrameCallback(onFrame);
+    }
+
+    function startWatchdog() {
+      markProgress();
+      clearInterval(watchdogTimer);
+      watchdogTimer = setInterval(checkPlaybackHealth, 1500);
+    }
+    function stopWatchdog() {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
+    }
+
+    function checkPlaybackHealth() {
+      if (currentMode !== "mp4" || !currentVideoId) return;
+      const v = mp4Video;
+      if (v.paused || v.ended) { markProgress(); return; }
+      if (v.currentTime > lastProgressTime + 0.05) markProgress();
+
+      // 映像トラックそのものが来ていない（＝音だけ鳴っている）状態を検出
+      const noPicture = v.videoWidth === 0 && Date.now() - playStartedWall > 5000;
+      if (noPicture) {
+        setMp4Status("⚠️ 映像が届いていません（自動で取り直します）");
+        recoverPlayback("videoWidth=0（映像トラックが無い）");
+        return;
+      }
+      // フレームが描画されていない（音だけ進む）状態を検出
+      if (
+        document.visibilityState === "visible" &&
+        mp4Video.requestVideoFrameCallback &&
+        lastFrameWall > 0 &&
+        Date.now() - lastFrameWall > 5000
+      ) {
+        setMp4Status("⚠️ 映像が止まっています（自動で取り直します）");
+        recoverPlayback("映像フレームが描画されない");
+        return;
+      }
+      const waited = Date.now() - lastProgressWall;
+      if (waited > 6000) {
+        setMp4Status("⚠️ 動画の読み込みが停滞しています（もう少し待ってください）");
+        if (waited > 12000) recoverPlayback("バッファが進まない");
+      }
+    }
+
+    async function recoverPlayback(reason) {
+      if (currentMode !== "mp4" || !currentVideoId) return;
+      stopWatchdog();
+      if (recoverCount >= 2) {
+        setMp4Status("⚠️ 再生できませんでした");
+        showNotice("この動画は直接再生できませんでした", "通信が不安定か、この動画の映像形式に対応できていません。<br>「もう一度読み込む」か、埋め込みモードを試してください。");
+        return;
+      }
+      recoverCount++;
+      console.warn("recoverPlayback:", reason);
+      const at = mp4Video.currentTime || 0;
+      setMp4Status("🔁 映像を復帰しています…（" + recoverCount + "/2）");
+      await updatePlayerSrc(true, true, at);
+    }
+
+    // 音声が別要素のときの開始・同期（muted の video と喧嘩させない）
+    function startSplitAudio() {
+      if (!splitAudio || !syncAudio.src) return;
+      if (!syncAudio.paused) return;
+      syncAudio.play().then(() => {
+        try { syncAudio.currentTime = mp4Video.currentTime; } catch (_) {}
+      }).catch(() => {
+        setMp4Status("🔈 画面をタップすると音が出ます");
+        document.addEventListener("click", startSplitAudio, { once: true });
+      });
+    }
+    function syncSplitAudio() {
+      if (!splitAudio || !syncAudio.src || syncAudio.paused) return;
+      if (Math.abs(syncAudio.currentTime - mp4Video.currentTime) > 0.45) {
+        try { syncAudio.currentTime = mp4Video.currentTime + 0.05; } catch (_) {}
+      }
+      if (syncAudio.playbackRate !== mp4Video.playbackRate) {
+        syncAudio.playbackRate = mp4Video.playbackRate;
+      }
+    }
+
+    mp4Video.addEventListener("play", startSplitAudio);
+    mp4Video.addEventListener("playing", startSplitAudio);
+    mp4Video.addEventListener("pause", () => { if (splitAudio) { try { syncAudio.pause(); } catch (_) {} } });
+    mp4Video.addEventListener("seeking", () => {
+      if (splitAudio) { try { syncAudio.currentTime = mp4Video.currentTime; } catch (_) {} }
+    });
+    mp4Video.addEventListener("timeupdate", syncSplitAudio);
+
+    mp4Video.addEventListener("loadstart", () => setMp4Status("⏳ MP4ストリームを読み込み中..."));
+    mp4Video.addEventListener("loadedmetadata", () => {
+      setMp4Status("⏳ 動画を読み込みました。再生を準備中...");
+      if (pendingResumeAt > 0 && Math.abs(mp4Video.currentTime - pendingResumeAt) > 0.5) {
+        try { mp4Video.currentTime = pendingResumeAt; } catch (_) {}
       }
     });
-    mp4Video.addEventListener("ratechange", () => { if (syncAudio.src) syncAudio.playbackRate = mp4Video.playbackRate; });
-
-    let bufferStallTimer = null;
-    mp4Video.addEventListener("loadstart", () => setMp4Status("⏳ MP4ストリームを読み込み中..."));
-    mp4Video.addEventListener("loadedmetadata", () => setMp4Status("⏳ 動画を読み込みました。再生を準備中..."));
     mp4Video.addEventListener("canplay", () => {
-      clearTimeout(bufferStallTimer);
       if (mp4Video.paused) setMp4Status("▶️ 再生準備完了。再生ボタンを押してください");
     });
     mp4Video.addEventListener("playing", () => {
-      clearTimeout(bufferStallTimer);
-      setMp4Status("🎬 再生中（自ドメイン内）");
+      playStartedWall = Date.now();
+      markProgress();
+      startWatchdog();
+      setMp4Status("🎬 再生中（自ドメイン内" + (currentQuality ? "・" + currentQuality : "") + "）");
       hideNotice();
+      startSplitAudio();
     });
     mp4Video.addEventListener("waiting", () => {
-      setMp4Status("⏳ 動画をバッファリング中...");
-      clearTimeout(bufferStallTimer);
-      // ⚠ ここで外部の埋め込みへ自動で切り替えない（学校iPadで外部ドメインを読みに行き、
-      // フィルター画面へ飛ばされる原因だった）。我慢強く待つだけにする。
+      // ここで外部の埋め込みへ自動で切り替えない（学校iPadで外部ドメインを
+      // 読みに行き、フィルター画面へ飛ばされる原因だった）。自動復帰は watchdog が行う。
+      if (!mp4Video.paused) setMp4Status("⏳ バッファリング中…");
     });
     mp4Video.addEventListener("stalled", () => {
-      setMp4Status("⚠️ 動画の読み込みが停滞しています（もう少し待ってください）");
-      clearTimeout(bufferStallTimer);
+      // stalled は一時的なことが多い。すぐ警告にせず、watchdog に判断させる。
+      if (!mp4Video.paused) setMp4Status("⏳ バッファリング中…");
     });
     mp4Video.addEventListener("pause", () => {
       if (!mp4Video.ended) setMp4Status("⏸ 動画を一時停止中");
     });
-    mp4Video.addEventListener("ended", () => setMp4Status("動画の再生が終了しました"));
+    mp4Video.addEventListener("ended", () => { stopWatchdog(); setMp4Status("動画の再生が終了しました"); });
     mp4Video.addEventListener("error", () => {
-      clearTimeout(bufferStallTimer);
       if (!mp4Video.currentSrc) return;
-      // 自動遷移はしない。プレイヤーの中に案内を出して、選んでもらう。
+      if (recoverCount < 2) { recoverPlayback("media element error"); return; }
+      stopWatchdog();
       setMp4Status("⚠️ 再生できませんでした");
       showNotice("この動画は直接再生できませんでした", "配信URLの有効期限切れか、元動画の制限が考えられます。<br>「もう一度読み込む」か、埋め込みモードを試してください。");
     });
@@ -457,10 +577,11 @@
     let playerLoadId = 0;
 
     function showFrame(url) {
+      stopWatchdog();
       const videoEl = document.getElementById("mp4Video");
       videoEl.style.display = "none";
       videoEl.pause();
-      syncAudio.pause();
+      try { syncAudio.pause(); } catch (_) {}
       hideNotice();
       frameEl.style.display = "block";
       frameEl.style.zIndex = "10";
@@ -474,9 +595,8 @@
       document.getElementById("mp4Video").style.display = "block";
     }
 
-    async function updatePlayerSrc(autoplay = true, refresh = false) {
+    async function updatePlayerSrc(autoplay = true, refresh = false, resumeAt = 0) {
       const loadId = ++playerLoadId;
-      clearTimeout(bufferStallTimer);
       const videoEl = document.getElementById("mp4Video");
       const audioEl = document.getElementById("syncAudio");
       const statusSpan = document.getElementById("currentStatus");
@@ -489,12 +609,16 @@
       if (currentMode === "mp4") {
         hideFrame();
         hideNotice();
+        stopWatchdog();
+        pendingResumeAt = resumeAt > 0 ? resumeAt : 0;
+        splitAudio = false;
         videoEl.pause();
-        audioEl.pause();
+        try { syncAudio.pause(); } catch (_) {}
         audioEl.removeAttribute("src");
-        audioEl.load();
+        try { audioEl.load(); } catch (_) {}
         videoEl.removeAttribute("src");
         videoEl.load();
+        videoEl.muted = false;
         videoEl.poster = `${API_BASE}/api/tube/thumb?v=${currentVideoId}`;
         statusSpan.textContent = "⏳ MP4ストリーム接続中...";
 
@@ -510,12 +634,23 @@
             // myyajuu のような別ドメインのページでは、そのままだと自分のドメインの
             // /api/tube/proxy-stream（存在しない）に解決されて「Format error」になる。
             const absolute = (u) => (/^https?:\/\//i.test(u) ? u : (API_BASE || window.location.origin) + (u.startsWith("/") ? u : "/" + u));
-            videoEl.src = absolute(data.videoUrl);
-            if (data.audioUrl) {
+            currentQuality = data.quality || "";
+
+            // 音声込みの1本（muxed）なら <video> 1個で完結。iOS でいちばん安定する。
+            // 映像だけのストリームのときだけ音声を別要素で鳴らす（video は muted にする）。
+            if (data.audioUrl && data.muxed === false) {
+              splitAudio = true;
+              videoEl.muted = true;
               audioEl.src = absolute(data.audioUrl);
-              audioEl.load();
+              try { audioEl.load(); } catch (_) {}
             }
+
+            videoEl.src = absolute(data.videoUrl);
             videoEl.load();
+            playStartedWall = Date.now();
+            lastFrameWall = Date.now();
+            watchVideoFrames();
+            startWatchdog();
             if (autoplay) {
               videoEl.play().catch(() => {
                 if (loadId !== playerLoadId || !videoEl.paused) return;
@@ -586,6 +721,8 @@
     function playVideo(id, title, author, views) {
       currentVideoId = id;
       currentEduEmbedUrl = "";
+      recoverCount = 0;
+      pendingResumeAt = 0;
       document.getElementById("currentTitle").textContent = title;
       document.getElementById("currentAuthor").textContent = author || "YouTube";
       document.getElementById("currentViews").textContent = views || "";
@@ -652,7 +789,7 @@
       if (overlay.style.display === "flex") {
         frameEl.src = "about:blank";
       } else {
-        updatePlayerSrc(false);
+        updatePlayerSrc(false, false, mp4Video.currentTime || 0);
       }
     }
 
@@ -662,7 +799,8 @@
 
     document.getElementById("noticeRetry").addEventListener("click", () => {
       hideNotice();
-      updatePlayerSrc(true, true);
+      recoverCount = 0;
+      updatePlayerSrc(true, true, 0);
     });
 
     // 初期ロード

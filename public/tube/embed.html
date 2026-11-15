@@ -12,6 +12,7 @@
       width: 100%; height: 100%;
       object-fit: contain;
       background: #000;
+      display: block;
     }
     #msg {
       position: absolute; inset: 0;
@@ -30,8 +31,9 @@
   </style>
 </head>
 <body>
-  <video id="mp4Video" controls playsinline autoplay preload="metadata"></video>
-  <audio id="syncAudio" style="display:none;"></audio>
+  <video id="mp4Video" controls playsinline webkit-playsinline autoplay preload="auto"></video>
+  <!-- 音声が別トラックのとき用。display:none だと iOS が再生しないことがあるので 1px で置く -->
+  <audio id="syncAudio" playsinline preload="auto" style="position:absolute; left:0; bottom:0; width:1px; height:1px; opacity:0.01;" aria-hidden="true"></audio>
   <div id="msg">
     <strong id="msgTitle">この動画は再生できませんでした</strong>
     <div id="msgBody">通信が混み合っているか、配信URLを取得できませんでした。</div>
@@ -44,16 +46,68 @@
     const video = document.getElementById("mp4Video");
     const audio = document.getElementById("syncAudio");
 
-    video.addEventListener("play", () => { if (audio.src) audio.play().catch(() => {}); });
-    video.addEventListener("pause", () => { if (audio.src) audio.pause(); });
-    video.addEventListener("seeking", () => { if (audio.src) audio.currentTime = video.currentTime; });
+    let splitAudio = false;
+    let recoverCount = 0;
+    let lastProgressWall = 0;
+    let lastProgressTime = 0;
+    let lastFrameWall = 0;
+    let watchdog = null;
+
+    function startAudio() {
+      if (!splitAudio || !audio.src) return;
+      if (!audio.paused) return;
+      audio.play().then(() => {
+        try { audio.currentTime = video.currentTime; } catch (_) {}
+      }).catch(() => {});
+    }
+    video.addEventListener("play", startAudio);
+    video.addEventListener("playing", startAudio);
+    video.addEventListener("pause", () => { if (splitAudio) { try { audio.pause(); } catch (_) {} } });
+    video.addEventListener("seeking", () => { if (splitAudio) { try { audio.currentTime = video.currentTime; } catch (_) {} } });
     video.addEventListener("timeupdate", () => {
-      if (audio.src && Math.abs(video.currentTime - audio.currentTime) > 0.4) {
-        audio.currentTime = video.currentTime + 0.1;
+      if (!splitAudio || !audio.src || audio.paused) return;
+      if (Math.abs(video.currentTime - audio.currentTime) > 0.45) {
+        try { audio.currentTime = video.currentTime + 0.05; } catch (_) {}
       }
     });
+
+    function watchFrames() {
+      if (!video.requestVideoFrameCallback) return;
+      const onFrame = () => {
+        lastFrameWall = Date.now();
+        if (!video.paused && !video.ended) video.requestVideoFrameCallback(onFrame);
+      };
+      video.requestVideoFrameCallback(onFrame);
+    }
+
+    function startWatchdog() {
+      lastProgressWall = Date.now();
+      lastProgressTime = video.currentTime;
+      clearInterval(watchdog);
+      watchdog = setInterval(() => {
+        if (video.paused || video.ended) { lastProgressWall = Date.now(); return; }
+        if (video.currentTime > lastProgressTime + 0.05) {
+          lastProgressWall = Date.now();
+          lastProgressTime = video.currentTime;
+        }
+        const stalled = Date.now() - lastProgressWall > 9000;
+        const noFrames = video.requestVideoFrameCallback && lastFrameWall > 0 &&
+          document.visibilityState === "visible" && Date.now() - lastFrameWall > 5000;
+        if (stalled || noFrames) {
+          if (recoverCount >= 2) {
+            clearInterval(watchdog);
+            show("この動画は再生できませんでした", "通信が不安定か、この動画の映像形式に対応できていません。「もう一度読み込む」を押してください。");
+            return;
+          }
+          recoverCount++;
+          load(video.currentTime || 0);
+        }
+      }, 1500);
+    }
+
     video.addEventListener("error", () => {
       if (!video.currentSrc) return;
+      if (recoverCount < 2) { recoverCount++; load(video.currentTime || 0); return; }
       show("この動画は再生できませんでした", "配信URLの有効期限切れか、元動画の制限が考えられます。");
     });
 
@@ -64,24 +118,44 @@
     }
     function hide() { document.getElementById("msg").style.display = "none"; }
 
-    async function load() {
+    async function load(resumeAt = 0) {
       if (!videoId) {
         show("動画が指定されていません", "URLに ?v=動画ID を付けて開いてください。");
         return;
       }
       hide();
+      clearInterval(watchdog);
+      splitAudio = false;
+      video.pause();
+      try { audio.pause(); } catch (_) {}
       video.removeAttribute("src");
       video.load();
+      video.muted = false;
       audio.removeAttribute("src");
-      audio.load();
+      try { audio.load(); } catch (_) {}
       try {
-        const res = await fetch(`/api/tube/stream-info?v=${encodeURIComponent(videoId)}`, { cache: "no-store" });
+        const res = await fetch(`/api/tube/stream-info?v=${encodeURIComponent(videoId)}${resumeAt > 0 ? "&refresh=1" : ""}`, { cache: "no-store" });
         const data = await res.json();
         if (data.ok && data.videoUrl) {
+          // 音声込みの1本(muxed)なら <video> 1個で完結（iOSで最も安定）
+          if (data.audioUrl && data.muxed === false) {
+            splitAudio = true;
+            video.muted = true;
+            audio.src = data.audioUrl;
+            try { audio.load(); } catch (_) {}
+          }
           video.src = data.videoUrl;
-          if (data.audioUrl) { audio.src = data.audioUrl; audio.load(); }
           video.load();
+          if (resumeAt > 0) {
+            video.addEventListener("loadedmetadata", function once() {
+              video.removeEventListener("loadedmetadata", once);
+              try { video.currentTime = resumeAt; } catch (_) {}
+            });
+          }
           video.play().catch(() => {});
+          lastFrameWall = Date.now();
+          watchFrames();
+          startWatchdog();
           return;
         }
         show("この動画は直接再生できませんでした", "配信URLを取得できませんでした。「もう一度読み込む」を押してください。");

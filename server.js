@@ -6082,6 +6082,13 @@ app.get("/api/tube/edu-param", async (req, res) => {
   res.json({ ok: true, params });
 });
 
+// 動画の先頭部分は iOS Safari が再生開始前・シーク時に何度も取りに来る。
+// 毎回 Invidious まで取りに行くと、遅いインスタンスのときに「読み込みが停滞」に
+// なるため、先頭1MBだけ自前でキャッシュして即返す。
+const tubeHeadCache = new Map();
+const TUBE_HEAD_CACHE_BYTES = 1048576;
+const TUBE_HEAD_CACHE_MAX = 8;
+
 // 3. 動画ストリームプロキシ (Range対応・Render中継)
 app.get("/api/tube/proxy-stream", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -6089,25 +6096,86 @@ app.get("/api/tube/proxy-stream", async (req, res) => {
   const targetUrl = String(req.query.url || "").trim();
   if (!targetUrl) return res.status(400).send("url parameter required");
 
+  const rangeHeader = String(req.headers.range || "").trim();
+  const rangeMatch = /^bytes=(\d+)-(\d*)$/i.exec(rangeHeader);
+  const rangeStart = rangeMatch ? parseInt(rangeMatch[1], 10) : -1;
+  const rangeEnd = rangeMatch && rangeMatch[2] ? parseInt(rangeMatch[2], 10) : -1;
+
+  // 先頭キャッシュ（0バイト目から始まる要求で、キャッシュ範囲内なら返す）
+  if (rangeStart === 0) {
+    const hit = tubeHeadCache.get(targetUrl);
+    if (hit && Date.now() - hit.time < 300000) {
+      const want = rangeEnd >= 0 ? Math.min(rangeEnd + 1, hit.buf.length) : hit.buf.length;
+      if (want > 0 && want <= hit.buf.length) {
+        const slice = hit.buf.subarray(0, want);
+        res.status(206);
+        res.setHeader("Content-Type", hit.contentType);
+        res.setHeader("Accept-Ranges", "bytes");
+        res.setHeader("Content-Range", `bytes 0-${want - 1}/${hit.total}`);
+        res.setHeader("Content-Length", String(want));
+        res.setHeader("Cache-Control", "public, max-age=300");
+        return res.end(slice);
+      }
+    }
+  }
+
+  // クライアントが切れたら上流の取得も止める（放置すると接続が枯れて
+  // 後続の Range 要求が詰まり、映像だけ固まる原因になる）
+  const ac = new AbortController();
+  res.on("close", () => {
+    try { ac.abort(); } catch (_) {}
+  });
+
   try {
-    const range = req.headers.range;
     const fetchHeaders = {
       "User-Agent": "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15",
       "Referer": "https://www.youtube.com/",
-      ...(range ? { Range: range } : {})
+      ...(rangeHeader ? { Range: rangeHeader } : {})
     };
     let upstream = await fetch(targetUrl, {
       headers: fetchHeaders,
-      // 動画本体は数十MBになる。短いタイムアウトだと再生途中で切れるので長めに取る
-      signal: AbortSignal.timeout(120000)
+      signal: ac.signal
     });
     // Invidious経由のURLは時々 403/410 を返す（発行元の一時的な制限）。
     // その1回で「Format error」にしないよう、少し待って同じURLを引き直す。
     if ([403, 410, 429, 502, 503].includes(upstream.status)) {
       try {
         await new Promise((r) => setTimeout(r, 500));
-        upstream = await fetch(targetUrl, { headers: fetchHeaders, signal: AbortSignal.timeout(120000) });
+        upstream = await fetch(targetUrl, { headers: fetchHeaders, signal: ac.signal });
       } catch (_) {}
+    }
+
+    const ct = String(upstream.headers.get("content-type") || "video/mp4");
+    const clen = parseInt(String(upstream.headers.get("content-length") || "0"), 10) || 0;
+    const upstreamRangeHeader = upstream.headers.get("content-range") || "";
+    const upstreamRanges = upstream.status === 206 || !!upstream.headers.get("accept-ranges");
+
+    // 先頭部分（1MB以内）は読み切ってキャッシュに載せる
+    const bufferable =
+      rangeStart === 0 &&
+      upstream.ok &&
+      !!upstream.body &&
+      rangeEnd >= 0 &&
+      rangeEnd + 1 <= TUBE_HEAD_CACHE_BYTES &&
+      (upstream.status === 206 || (clen > 0 && clen <= TUBE_HEAD_CACHE_BYTES));
+
+    if (bufferable) {
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      const totalMatch = /\/(\d+)\s*$/.exec(upstreamRangeHeader);
+      const total = totalMatch ? parseInt(totalMatch[1], 10) : clen;
+      if (total > buf.length && buf.length > 0) {
+        tubeHeadCache.set(targetUrl, { time: Date.now(), buf, total, contentType: ct });
+        while (tubeHeadCache.size > TUBE_HEAD_CACHE_MAX) {
+          tubeHeadCache.delete(tubeHeadCache.keys().next().value);
+        }
+      }
+      res.status(206);
+      res.setHeader("Content-Type", ct);
+      res.setHeader("Accept-Ranges", "bytes");
+      if (total > 0) res.setHeader("Content-Range", `bytes 0-${buf.length - 1}/${total}`);
+      res.setHeader("Content-Length", String(buf.length));
+      res.setHeader("Cache-Control", "public, max-age=300");
+      return res.end(buf);
     }
 
     res.status(upstream.status);
@@ -6117,12 +6185,19 @@ app.get("/api/tube/proxy-stream", async (req, res) => {
         res.setHeader(k, v);
       }
     }
-    if (!res.getHeader("Accept-Ranges")) {
-      res.setHeader("Accept-Ranges", "bytes");
-    }
+    // ⚠ 上流が Range を無視して 200 を返したときに「Accept-Ranges: bytes」を
+    // 名乗ると、iOS Safari は 206 が来る前提で待ち続け、映像が固まる。
+    // 実際に対応しているときだけ名乗る。
+    if (upstreamRanges) res.setHeader("Accept-Ranges", "bytes");
     if (!upstream.body) return res.end();
-    Readable.fromWeb(upstream.body).pipe(res);
+
+    const stream = Readable.fromWeb(upstream.body);
+    // 途中で上流が切れてもサーバーごと落ちないようにする（落ちると全員の再生が止まる）
+    stream.on("error", () => { try { res.end(); } catch (_) {} });
+    res.on("error", () => { try { stream.destroy(); } catch (_) {} });
+    stream.pipe(res);
   } catch (err) {
+    if (ac.signal.aborted) return;
     if (!res.headersSent) res.status(500).send("Video stream error: " + err.message);
   }
 });
@@ -6166,6 +6241,110 @@ app.get("/api/tube/thumb", async (req, res) => {
 const streamInfoCache = new Map();
 // 直近で動画情報を返せたInvidiousインスタンス。次の検索ではここを先に試す。
 let tubeWorkingHost = "";
+let tubeMuxedHost = "";
+
+// Invidious 1インスタンスから動画フォーマットを取得し、再生に使う1本を選ぶ。
+// 返り値: { host, muxed, videoUrl, audioUrl, quality, title, author, duration, hlsUrl } | null
+async function fetchInvidiousInfo(host, videoId, timeoutMs = 6000) {
+  try {
+    // local=true: 動画URLをインスタンス自身のプロキシで返させる
+    // （googlevideo 直リンクは PO Token 必須で 403 になるため）。
+    const apiUrl = `https://${host}/api/v1/videos/${videoId}?local=true`;
+    const invResp = await fetch(apiUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15" },
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    if (!invResp.ok) return null;
+    const invData = await invResp.json();
+    if (!invData || invData.error) return null;
+
+    const abs = (u) => {
+      if (!u || typeof u !== "string") return "";
+      if (/^https?:\/\//i.test(u)) return u;
+      return `https://${host}` + (u.startsWith("/") ? u : "/" + u);
+    };
+    const norm = (list) => (Array.isArray(list) ? list.map((f) => (f && f.url ? { ...f, url: abs(f.url) } : f)) : []);
+    const formatStreams = norm(invData.formatStreams);
+    const adaptive = norm(invData.adaptiveFormats);
+
+    // iOS Safari が確実に再生できるのは H.264(+AAC) の MP4 だけ。
+    // VP9 / AV1 / HEVC / Dolby Vision は音声だけ鳴って映像が出ない原因になるので除外。
+    const compatible = (f) =>
+      f &&
+      f.url &&
+      typeof f.type === "string" &&
+      f.type.includes("video/mp4") &&
+      !/\b(vp0?9|av0?1|hev1|hvc1|dvh1|dvhe)\b/i.test(f.type);
+
+    // 画質の好み：720p までを優先（帯域と確実さのバランス）。144p は最後。
+    const QUALITY_ORDER = ["720p", "480p", "360p", "240p", "144p", "1080p"];
+    const pick = (list) => {
+      if (!list || !list.length) return null;
+      for (const q of QUALITY_ORDER) {
+        const f = list.find((x) => x.qualityLabel === q);
+        if (f) return f;
+      }
+      return list[0];
+    };
+
+    const muxedList = formatStreams.filter(compatible);
+    let chosen = null;
+    if (muxedList.length > 0) {
+      const video = pick(muxedList);
+      chosen = { muxed: true, video, audio: null };
+    } else {
+      const video = pick(adaptive.filter(compatible));
+      if (!video) return null;
+      // 音声は AAC(mp4a) の mp4 を優先（Opus は iOS で再生できない）
+      const audio =
+        adaptive.find((f) => f && f.url && /^audio\/mp4/i.test(f.type) && /mp4a/i.test(f.type)) ||
+        adaptive.find((f) => f && f.url && /^audio\/mp4/i.test(f.type)) ||
+        null;
+      chosen = { muxed: false, video, audio };
+    }
+
+    return {
+      host,
+      muxed: !!chosen.muxed,
+      videoUrl: chosen.video.url,
+      audioUrl: chosen.audio ? chosen.audio.url : "",
+      quality: chosen.video.qualityLabel || "",
+      title: invData.title || "動画",
+      author: invData.author || "",
+      duration: invData.lengthSeconds || 180,
+      hlsUrl: invData.hlsUrl || ""
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+// 最後の手段：Invidious の /latest_version は「音声込みの1本(既定 itag18)」を
+// インスタンス自身が返す。formatStreams が空のインスタンス（例: chocolatemoo53）でも
+// これが通れば muxed 再生できる。
+async function tryLatestVersionMuxed(host, videoId) {
+  try {
+    const target = `https://${host}/latest_version?id=${videoId}&itag=18&local=true`;
+    const resp = await fetch(target, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15",
+        Range: "bytes=0-1"
+      },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!resp.ok) return "";
+    const ct = String(resp.headers.get("content-type") || "");
+    if (!ct.includes("video/mp4")) return "";
+    const buf = Buffer.from(await resp.arrayBuffer());
+    // 先頭が ftyp で始まっていなければ動画ではない
+    if (buf.length < 12 || !buf.slice(4, 8).toString("latin1").includes("ftyp")) return "";
+    // リダイレクト後の実URL（/companion/videoplayback?...）を中継対象にする
+    return resp.url || target;
+  } catch (_) {
+    return "";
+  }
+}
+
 
 app.get("/api/tube/stream-info", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -6210,16 +6389,20 @@ app.get("/api/tube/stream-info", async (req, res) => {
   const eduParams = cachedEduParam || "";
   const eduEmbedUrl = `https://www.youtubeeducation.com/embed/${videoId}${eduParams}${eduParams ? "&" : "?"}playlist=${videoId}`;
 
-  if (streamInfoCache.has(videoId) && String(req.query.refresh || "") !== "1") {
-    const cached = streamInfoCache.get(videoId);
-    if (Date.now() - cached.time < 300000) {
-      return res.json({ ok: true, eduEmbedUrl, ...cached.data });
+  // ⚠ iPhone Safari は「映像だけのストリーム（DASH）」＋「別要素の音声」という
+  //    2要素再生がとても不安定で、音だけ鳴って映像が出ないまま waiting/stalled に
+  //    なることがある。だから「音声込みの1本（progressive MP4 / itag18 等）」を
+  //    最優先で取る。muxed が取れたときは <video> 1個で完結する。
+  const cacheEntry = streamInfoCache.get(videoId);
+  const wantsRefresh = String(req.query.refresh || "") === "1";
+  if (cacheEntry && !wantsRefresh) {
+    const ttl = cacheEntry.data && cacheEntry.data.muxed ? 600000 : 60000;
+    if (Date.now() - cacheEntry.time < ttl) {
+      return res.json({ ok: true, eduEmbedUrl, ...cacheEntry.data });
     }
   }
 
-  // 実測で応答するインスタンスを先頭に並べる（先頭が生きていれば1回のfetchで済む）。
-  // 死んでいるホストを毎回待つと、その分だけ再生開始が遅れて「読み込みのまま」に見える。
-  const invidiousHostList = [
+  const INV_HOSTS = [
     "echostreamz.com",
     "yt.chocolatemoo53.com",
     "invidious.nerdvpn.de",
@@ -6229,103 +6412,75 @@ app.get("/api/tube/stream-info", async (req, res) => {
     "invidious.privacydev.net",
     "yewtu.be"
   ];
-  const invidiousHosts = tubeWorkingHost
-    ? [tubeWorkingHost, ...invidiousHostList.filter((h) => h !== tubeWorkingHost)]
-    : invidiousHostList;
+  // muxed を返せたホスト → 通常のホスト の順に先頭へ。
+  const hostOrder = [];
+  for (const h of [tubeMuxedHost, tubeWorkingHost, ...INV_HOSTS]) {
+    if (h && !hostOrder.includes(h)) hostOrder.push(h);
+  }
 
-  for (const host of invidiousHosts) {
-    try {
-      // local=true: 動画URLをインスタンス自身のプロキシ（/videoplayback?...）で返させる。
-      // googlevideo は PO Token 必須になっており、サーバーIPからの直リンクは403になる。
-      const apiUrl = `https://${host}/api/v1/videos/${videoId}?local=true`;
-      const invResp = await fetch(apiUrl, {
-        headers: { "User-Agent": "Mozilla/5.0" },
-        signal: AbortSignal.timeout(7000)
-      });
-      if (!invResp.ok) continue;
-      const invData = await invResp.json();
-      // インスタンスは 200 でも { error: "access_denied" } を返すことがある
-      if (!invData || invData.error) continue;
-      // 相対パス（local=true）を絶対URLに直す
-      const abs = (u) => {
-        if (!u || typeof u !== "string") return "";
-        if (/^https?:\/\//i.test(u)) return u;
-        return `https://${host}` + (u.startsWith("/") ? u : "/" + u);
-      };
-      for (const list of ["formatStreams", "adaptiveFormats"]) {
-        if (Array.isArray(invData[list])) {
-          invData[list] = invData[list].map(f => (f && f.url ? { ...f, url: abs(f.url) } : f));
-        }
-      }
+  const buildResult = (info) => {
+    const proxiedVideoUrl = `/api/tube/proxy-stream?url=${encodeURIComponent(info.videoUrl)}`;
+    const proxiedAudioUrl = info.audioUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(info.audioUrl)}` : "";
+    const musicSourceUrl = info.audioUrl || info.videoUrl;
+    const proxiedMusicUrl = `/api/tube/proxy-stream?url=${encodeURIComponent(musicSourceUrl)}`;
+    return {
+      videoId,
+      title: info.title || "動画",
+      author: info.author || "",
+      duration: info.duration || 180,
+      muxed: !!info.muxed,
+      videoOnly: !info.muxed && !!info.audioUrl,
+      quality: info.quality || "",
+      sourceHost: info.host,
+      videoUrl: proxiedVideoUrl,
+      audioUrl: proxiedAudioUrl,
+      musicUrl: proxiedMusicUrl,
+      rawVideoUrl: info.videoUrl,
+      rawAudioUrl: info.audioUrl || "",
+      eduEmbedUrl,
+      hlsUrl: info.hlsUrl || "",
+      thumbnail: `/api/tube/thumb?v=${videoId}`
+    };
+  };
 
-      let videoUrl = "";
-      let audioUrl = "";
-      const adaptive = invData.adaptiveFormats || [];
-      const formatStreams = invData.formatStreams || [];
-      const preferredQualities = ["720p", "480p", "360p", "1080p"];
-      const isCompatibleMp4 = format => format && format.url && format.type && format.type.includes("video/mp4") && !/\b(?:vp0?9|av0?1|hev1|hvc1)\b/i.test(format.type);
-      const muxedMp4 = formatStreams.filter(isCompatibleMp4);
+  let adaptiveFallback = null;
+  let tried = 0;
+  const deadline = Date.now() + 15000;
 
-      for (const quality of preferredQualities) {
-        const found = muxedMp4.find(format => format.qualityLabel === quality);
-        if (found) {
-          videoUrl = found.url;
-          break;
-        }
-      }
-      if (!videoUrl && muxedMp4.length > 0) {
-        videoUrl = muxedMp4[0].url;
-      }
+  for (const host of hostOrder) {
+    if (tried >= 4 || Date.now() > deadline) break;
+    tried++;
+    const info = await fetchInvidiousInfo(host, videoId, 6000);
+    if (!info) continue;
 
-      if (!videoUrl) {
-        const adaptiveMp4 = adaptive.filter(isCompatibleMp4);
-        for (const quality of preferredQualities) {
-          const found = adaptiveMp4.find(format => format.qualityLabel === quality);
-          if (found) {
-            videoUrl = found.url;
-            break;
-          }
-        }
-        if (!videoUrl && adaptiveMp4.length > 0) {
-          videoUrl = adaptiveMp4[0].url;
-        }
-
-        const audioFormat = adaptive.find(format => format.url && format.type && /^audio\/mp4\b/i.test(format.type));
-        if (videoUrl && audioFormat) audioUrl = audioFormat.url;
-      }
-
-      const proxiedVideoUrl = videoUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(videoUrl)}` : "";
-      const proxiedAudioUrl = audioUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(audioUrl)}` : "";
-      const musicSourceUrl = audioUrl || (muxedMp4.length > 0 ? videoUrl : "");
-      const proxiedMusicUrl = musicSourceUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(musicSourceUrl)}` : "";
-
-      const durationSec = invData.lengthSeconds || 180;
-      // 音声が別トラック（DASH）か、音声込みの1本（muxed）かをクライアントへ伝える
-      const muxedPlayback = !audioUrl;
-      // 実際にストリームを返せたインスタンスを記録（次回の先頭候補）
+    if (info.muxed) {
+      tubeMuxedHost = host;
       tubeWorkingHost = host;
-      const resultData = {
-        videoId,
-        title: invData.title || "動画",
-        author: invData.author || "",
-        duration: durationSec,
-        muxed: muxedPlayback,
-        sourceHost: host,
-        videoUrl: proxiedVideoUrl,
-        audioUrl: proxiedAudioUrl,
-        musicUrl: proxiedMusicUrl,
-        rawVideoUrl: videoUrl,
-        rawAudioUrl: audioUrl,
-        eduEmbedUrl,
-        hlsUrl: invData.hlsUrl || "",
-        thumbnail: `/api/tube/thumb?v=${videoId}`
-      };
-
+      const resultData = buildResult(info);
       streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
       return res.json({ ok: true, ...resultData });
-    } catch (_) {
-      continue;
     }
+    if (!adaptiveFallback) adaptiveFallback = info;
+    // 音声込み1本が無いホストだった → 次のホストで muxed を探す（最大4ホストまで）
+  }
+
+  if (adaptiveFallback) {
+    // 音声込み1本がどのホストの一覧にも無い場合の最後の手段。
+    // /latest_version・itag18 が通れば、映像だけ＋別音声という不安定な形を避けられる。
+    if (Date.now() < deadline) {
+      const muxedUrl = await tryLatestVersionMuxed(adaptiveFallback.host, videoId);
+      if (muxedUrl) {
+        tubeMuxedHost = adaptiveFallback.host;
+        tubeWorkingHost = adaptiveFallback.host;
+        const resultData = buildResult({ ...adaptiveFallback, muxed: true, videoUrl: muxedUrl, audioUrl: "", quality: "360p" });
+        streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
+        return res.json({ ok: true, ...resultData });
+      }
+    }
+    tubeWorkingHost = adaptiveFallback.host;
+    const resultData = buildResult(adaptiveFallback);
+    streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
+    return res.json({ ok: true, ...resultData });
   }
 
   return res.json({
