@@ -401,6 +401,8 @@
     let recoverCount = 0;
     let pendingResumeAt = 0;
     let lastFrameWall = 0;
+    // 復帰時に使う「最後に再生できていた位置」（error で currentTime が 0 に戻っても失わない）
+    let lastKnownPosition = 0;
 
     function markProgress() {
       lastProgressWall = Date.now();
@@ -471,7 +473,7 @@
       }
       recoverCount++;
       console.warn("recoverPlayback:", reason);
-      const at = mp4Video.currentTime || 0;
+      const at = Math.max(mp4Video.currentTime || 0, lastKnownPosition || 0);
       setMp4Status("🔁 映像を復帰しています…（" + recoverCount + "/2）");
       await updatePlayerSrc(true, true, at);
     }
@@ -503,7 +505,10 @@
     mp4Video.addEventListener("seeking", () => {
       if (splitAudio) { try { syncAudio.currentTime = mp4Video.currentTime; } catch (_) {} }
     });
-    mp4Video.addEventListener("timeupdate", syncSplitAudio);
+    mp4Video.addEventListener("timeupdate", () => {
+      if (mp4Video.currentTime > 0) lastKnownPosition = mp4Video.currentTime;
+      syncSplitAudio();
+    });
 
     mp4Video.addEventListener("loadstart", () => setMp4Status("⏳ MP4ストリームを読み込み中..."));
     mp4Video.addEventListener("loadedmetadata", () => {
@@ -723,6 +728,7 @@
       currentEduEmbedUrl = "";
       recoverCount = 0;
       pendingResumeAt = 0;
+      lastKnownPosition = 0;
       document.getElementById("currentTitle").textContent = title;
       document.getElementById("currentAuthor").textContent = author || "YouTube";
       document.getElementById("currentViews").textContent = views || "";
