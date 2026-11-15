@@ -3331,6 +3331,24 @@ if(typeof XMLHttpRequest!=="undefined"&&XMLHttpRequest.prototype){var _o=XMLHttp
 // イベント（AD_ERROR / ADS_MANAGER_LOADED / ALL_ADS_COMPLETED）だけを返す
 // API互換スタブを配り、ゲームの進行は止めない。
 // ====================================================
+// Poki の本物のSDKが読み込まれた「後」に広告系だけ差し替える小さなパッチ
+const POKI_SDK_PATCH = [
+  ';/*__pokiInstant*/(function(){',
+  'function p(){try{',
+  'var s=window.PokiSDK;if(!s||s.__pokiInstant)return;',
+  'var w=new Proxy(s,{get:function(t,k){',
+  'if(k==="commercialBreak"||k==="displayAd"||k==="showLeaderboard"||k==="init"||k==="gameLoadingFinished"||k==="gameLoadingStart")return function(){return Promise.resolve();};',
+  'if(k==="rewardedBreak")return function(){return Promise.resolve(true);};',
+  'if(k==="isAdBlocked")return function(){return true;};',
+  'var v=t[k];return typeof v==="function"?v.bind(t):v;',
+  '}});',
+  'Object.defineProperty(w,"__pokiInstant",{value:true});',
+  'window.PokiSDK=w;',
+  '}catch(e){}}',
+  'p();[0,30,200,800,2000].forEach(function(ms){setTimeout(p,ms);});',
+  '})();'
+].join("\n");
+
 const IMA_STUB_JS = `(function () {
   try {
     var W = window;
@@ -5096,6 +5114,12 @@ if (window !== window.top) {
       // Worker内の相対URLを上流基準で解決し直す小さなシム（ページ内では何もしない）
       if (js && !js.startsWith("/*px-shim*/")) {
         js = "/*px-shim*/" + PROXY_WORKER_SHIM + js;
+      }
+      // PokiSDK: 本物の広告SDKは「広告ブレーク」をはさむまでゲームを開始させない。
+      // プロキシでは広告を配信できないため、読み込み後に広告系メソッドを即解決へ差し替える
+      // （これをしないとゲームのローディングが途中で止まったまま始まらない）。
+      if (response.url && /poki-sdk/i.test(response.url) && !js.includes("__pokiInstant")) {
+        js += POKI_SDK_PATCH;
       }
       // Poki等のゲームSitelock解除 & デバッグモード有効化 & ロケーション参照解決
       if (response.url && (response.url.includes("poki") || response.url.includes("fancade") || response.url.includes("turbowarp"))) {
