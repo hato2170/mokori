@@ -2513,6 +2513,19 @@ app.get("/api/music/fullfile", async (req, res) => {
   const src = String(req.query.src || "soundcloud");
   const id = String(req.query.id || "").trim();
   if (!id) return res.status(400).send("id required");
+  // YouTube 由来は実体を抱えず、レンジ対応のストリーム中継へ逃がす（
+  // 音声は itag=140 の m4a。iOS Safari でもそのままシークできる）
+  if (src === "youtube") {
+    try {
+      const mod = require("./lib/music-full");
+      const audio = await mod.ytAudioUrl(id);
+      if (!audio || !audio.url) return res.status(502).json({ ok: false, error: "音声ストリームを取得できませんでした" });
+      res.setHeader("Cache-Control", "private, max-age=60");
+      return res.redirect(`/api/tube/proxy-stream?url=${encodeURIComponent(audio.url)}`);
+    } catch (err) {
+      return res.status(502).json({ ok: false, error: String(err && err.message || err).slice(0, 150) });
+    }
+  }
   try {
     const mod = require("./lib/music-full");
     const info = src === "audius" ? await mod.audiusFile(id) : await mod.soundcloudFile(id);
@@ -3838,6 +3851,20 @@ app.all("/api/proxy", async (req, res) => {
     }
   }
 
+  // Poki: 言語プレフィックスの無いパス（poki.com/g/drive-mad など）は上流が404を返す。
+  // トップのゲームへの直リンクや検索欄からの入力でもゲームが開くよう、既定の /jp を補う。
+  try {
+    const pk = new URL(targetUrl);
+    if (/(^|\.)poki\.com$/i.test(pk.hostname)) {
+      const LOCALES = new Set(["en", "jp", "ja", "de", "fr", "es", "pt", "pt-br", "it", "nl", "pl", "ru", "tr", "ar", "hi", "id", "th", "vi", "ko", "zh", "zh-cn", "zh-tw", "sv", "da", "no", "fi", "cs", "ro", "hu", "el", "he", "uk", "ms"]);
+      const seg = String(pk.pathname.split("/")[1] || "").toLowerCase();
+      if (!LOCALES.has(seg)) {
+        pk.pathname = "/jp" + (pk.pathname.startsWith("/") ? pk.pathname : "/" + pk.pathname);
+        targetUrl = pk.href;
+      }
+    }
+  } catch (_) {}
+
   // Emscripten/WASM等の相対URLが /api/index.wasm に解決された場合の救済
   if (targetUrl.includes("/api/") && !targetUrl.includes("proxy?url=")) {
     const assetPart = targetUrl.split("/api/").pop();
@@ -4166,10 +4193,14 @@ app.all("/api/proxy", async (req, res) => {
     res.removeHeader("Content-Security-Policy");
     res.removeHeader("Cross-Origin-Opener-Policy");
     res.removeHeader("Cross-Origin-Embedder-Policy");
+    // 上流の Referrer-Policy（poki の strict-origin 等）を中継すると、プロキシ内の
+    // 相対アセット要求がオリジンだけのRefererになり、/api/index.wasm（Pokiゲームの
+    // wasm）の救済が効かずゲームがロードで止まる。同一オリジンには完全URLを送る既定に戻す。
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
 
     for (const [key, val] of response.headers.entries()) {
       const lower = key.toLowerCase();
-      if (!["content-security-policy", "x-frame-options", "cross-origin-opener-policy", "cross-origin-embedder-policy", "content-encoding", "transfer-encoding", "content-length", "connection"].includes(lower)) {
+      if (!["content-security-policy", "x-frame-options", "cross-origin-opener-policy", "cross-origin-embedder-policy", "content-encoding", "transfer-encoding", "content-length", "connection", "referrer-policy", "permissions-policy"].includes(lower)) {
         if (lower === "set-cookie") {
           const rewritten = val.replace(/domain=[^;]+;?/gi, "").replace(/samesite=[^;]+;?/gi, "SameSite=None; Secure;");
           res.append("Set-Cookie", rewritten);
@@ -5833,7 +5864,8 @@ app.get("/api/tube/proxy-stream", async (req, res) => {
     };
     const upstream = await fetch(targetUrl, {
       headers: fetchHeaders,
-      signal: AbortSignal.timeout(20000)
+      // 動画本体は数十MBになる。短いタイムアウトだと再生途中で切れるので長めに取る
+      signal: AbortSignal.timeout(120000)
     });
 
     res.status(upstream.status);
@@ -5926,24 +5958,36 @@ app.get("/api/tube/stream-info", async (req, res) => {
   }
 
   const invidiousHosts = [
+    "echostreamz.com",
     "inv.nadeko.net",
     "yewtu.be",
     "invidious.nerdvpn.de",
-    "invidious.projectsegfau.lt",
     "invidious.privacydev.net",
-    "iv.melmac.space",
-    "echostreamz.com"
+    "iv.melmac.space"
   ];
 
   for (const host of invidiousHosts) {
     try {
-      const apiUrl = `https://${host}/api/v1/videos/${videoId}`;
+      // local=true: 動画URLをインスタンス自身のプロキシ（/videoplayback?...）で返させる。
+      // googlevideo は PO Token 必須になっており、サーバーIPからの直リンクは403になる。
+      const apiUrl = `https://${host}/api/v1/videos/${videoId}?local=true`;
       const invResp = await fetch(apiUrl, {
         headers: { "User-Agent": "Mozilla/5.0" },
-        signal: AbortSignal.timeout(3500)
+        signal: AbortSignal.timeout(5000)
       });
       if (!invResp.ok) continue;
       const invData = await invResp.json();
+      // 相対パス（local=true）を絶対URLに直す
+      const abs = (u) => {
+        if (!u || typeof u !== "string") return "";
+        if (/^https?:\/\//i.test(u)) return u;
+        return `https://${host}` + (u.startsWith("/") ? u : "/" + u);
+      };
+      for (const list of ["formatStreams", "adaptiveFormats"]) {
+        if (Array.isArray(invData[list])) {
+          invData[list] = invData[list].map(f => (f && f.url ? { ...f, url: abs(f.url) } : f));
+        }
+      }
 
       let videoUrl = "";
       let audioUrl = "";

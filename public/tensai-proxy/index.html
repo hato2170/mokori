@@ -293,50 +293,35 @@
           <div class="name">TurboWarp</div>
           <div class="desc">高速Scratch</div>
         </div>
-        <div class="tile" onclick="location.href='/roblox/'" style="border: 2px solid #ef4444; background: rgba(239,68,68,0.15);">
-          <div class="icon">🎮</div>
-          <div class="name" style="color:#fca5a5; font-weight:bold;">Webロブロックス</div>
-          <div class="desc">学タブ・PC完全対応 · 3D＆クラウド</div>
-        </div>
-        <div class="tile" onclick="launchUrl('https://www.youtube.com')" style="border: 2px solid #f87171; background: rgba(248,113,113,0.12);">
+        <div class="tile" onclick="location.href='/tube/'">
           <div class="icon">▶️</div>
-          <div class="name" style="color:#fca5a5; font-weight:bold;">公式YouTube</div>
-          <div class="desc">プロキシ直接閲覧・検索</div>
+          <div class="name">YouTube</div>
+          <div class="desc">検索・再生（若雪幸せTube）</div>
         </div>
-        <div class="tile" onclick="location.href='/downloads/'" style="border: 2px solid #38bdf8; background: rgba(56,189,248,0.15);">
-          <div class="icon">💻</div>
-          <div class="name" style="color:#7dd3fc; font-weight:bold;">geniusOS ISO</div>
-          <div class="desc">Surface・PC対応Live ISO</div>
-        </div>
-        <div class="tile" onclick="location.href='/mail.html'" style="border: 2px solid #06c755; background: rgba(6,199,85,0.12);">
+        <div class="tile" onclick="location.href='/mail.html'">
           <div class="icon">📬</div>
-          <div class="name" style="color:#86efac; font-weight:bold;">捨てメアド発行</div>
+          <div class="name">捨てメアド発行</div>
           <div class="desc">インスタ・TikTok認証用</div>
         </div>
-        <div class="tile" onclick="location.href='/instagram/'" style="border: 2px solid #dc2743; background: rgba(220,39,67,0.14);">
+        <div class="tile" onclick="location.href='/instagram/'">
           <div class="icon">📸</div>
-          <div class="name" style="color:#fda4af; font-weight:bold;">Instagram 見る</div>
+          <div class="name">Instagram 見る</div>
           <div class="desc">リール・投稿をログインなしで再生</div>
         </div>
-        <div class="tile" onclick="location.href='/tiktok/'" style="border: 2px solid #25f4ee; background: rgba(37,244,238,0.12);">
+        <div class="tile" onclick="location.href='/tiktok/'">
           <div class="icon">🎵</div>
-          <div class="name" style="color:#67e8f9; font-weight:bold;">TikTok 見る</div>
+          <div class="name">TikTok 見る</div>
           <div class="desc">おすすめ・ユーザー・タグ・URL再生</div>
         </div>
-        <div class="tile" onclick="launchUrl('https://www.instagram.com/accounts/emailsignup/')">
-          <div class="icon">📸</div>
-          <div class="name">Instagram 登録</div>
-          <div class="desc">新規アカウント作成</div>
-        </div>
         <div class="tile" onclick="launchUrl('https://www.instagram.com/accounts/login/')">
-          <div class="icon">🔑</div>
-          <div class="name">Instagram ログイン</div>
-          <div class="desc">既存アカウントで入る（制限時あり）</div>
+          <div class="icon">📸</div>
+          <div class="name">Instagram ログイン・登録</div>
+          <div class="desc">ログイン / 新規アカウント作成</div>
         </div>
-        <div class="tile" onclick="launchUrl('https://www.tiktok.com/signup')">
+        <div class="tile" onclick="launchUrl('https://www.tiktok.com/login')">
           <div class="icon">📱</div>
-          <div class="name">TikTok 登録</div>
-          <div class="desc">アカウント作成・ログイン</div>
+          <div class="name">TikTok ログイン・登録</div>
+          <div class="desc">ログイン / アカウント作成</div>
         </div>
         <div class="tile" onclick="location.href='/tube/'">
           <div class="icon">❄️</div>
@@ -424,6 +409,13 @@
     }
 
     function launchUrl(url) {
+      // YouTubeはプロキシで直接開くと上流の429で「エラー」画面になるため、
+      // 実際に再生できる若雪幸せTubeへ振り分ける
+      const ytPath = youtubeTubePath(url);
+      if (ytPath) {
+        window.location.href = ytPath;
+        return;
+      }
       activeUrl = url;
       let proxyUrl = "/api/proxy?url=" + encodeURIComponent(url);
 

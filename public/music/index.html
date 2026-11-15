@@ -594,7 +594,7 @@
               await audio.play();
               if (requestId === playRequestId) {
                 document.getElementById("dockPlayBtn").textContent = "⏸";
-                const srcName = data.source === "audius" ? "Audius" : "SoundCloud";
+                const srcName = data.source === "audius" ? "Audius" : (data.source === "youtube" ? "YouTube" : "SoundCloud");
                 document.getElementById("dockArtist").textContent = artist + " · 🎵 フル尺再生中（" + srcName + "）";
               }
             }
