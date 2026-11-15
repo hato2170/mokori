@@ -3823,7 +3823,12 @@ function isCacheableAsset(hostname, pathname) {
   ];
   if (staticHosts.some((d) => h === d || h.endsWith("." + d))) return true;
   // サイト本体のドメインでも、ハッシュ付きの /rsrc.php/ や YouTube のバンドルは不変
-  return p.startsWith("/rsrc.php/") || /\/_\/(?:js|ss)\//.test(p);
+  if (p.startsWith("/rsrc.php/") || /\/_\/(?:js|ss)\//.test(p)) return true;
+  // 🧩 プロキシ側で中身を書き換えるホスト（Poki / Fancade / TurboWarp）のJSは、
+  // 書き換え結果を使い回す。毎回5MB級のバンドルを走査して構文検証し直すと、
+  // TurboWarpの初回表示が2秒近く余計にかかってしまう。
+  const rewriteHosts = ["poki.com", "poki-cdn.com", "fancade.com", "turbowarp.org", "trampoline.turbowarp.xyz"];
+  return /\.js$/i.test(p) && rewriteHosts.some((d) => h === d || h.endsWith("." + d));
 }
 
 function assetCacheGet(key) {
