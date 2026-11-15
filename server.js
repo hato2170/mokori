@@ -2489,6 +2489,17 @@ app.post("/api/chats/:chatId/leave", requireLogin, async (req, res) => {
 // ⭐ LINE Unlimited 新機能 API群 (プロフィールBGM, アルバム, ノート, 投票, 日程調整, VOOM)
 // ====================================================
 
+// 一時診断: フル尺音源の取得ルート実測 (作業完了後に削除)
+app.get("/api/music/probe", async (req, res) => {
+  try {
+    const { runProbe } = require("./lib/music-probe");
+    const out = await runProbe(String(req.query.q || "STUTS 99 Steps"));
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: String(err && err.message || err), stack: String(err && err.stack || "").slice(0, 800) });
+  }
+});
+
 // Apple Music (iTunes Search API) 30秒試聴・曲検索プロキシ (ちゅこミュージック & yaju&king & プロフィールBGM共用)
 app.get("/api/music/search", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
