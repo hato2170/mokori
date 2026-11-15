@@ -4612,7 +4612,14 @@ app.all("/api/proxy", async (req, res) => {
   } catch(_) {}
 
   if (IS_POKI && baseUrl.includes('poki.com')) {
+    // Poki自身のプレイヤーが先にゲームiframeを作る。こちらが重ねて作ると
+    // 同じゲームが2つ同時にロードされ、広告SDKも二重初期化されて
+    // ローディングが完了しない（＝ゲームが始まらない）。4秒待っても
+    // プレイヤーが出てこないときだけ自前でマウントする。
+    var pokiMountAt = Date.now() + 4000;
     function tryMountPokiGame() {
+      if (Date.now() < pokiMountAt) return false;
+      if (document.querySelector('iframe#game-element') || document.querySelector('#game-player iframe')) return true;
       var errEl = document.getElementById('pageError');
       if (errEl) {
         errEl.style.display = 'none';
@@ -4639,7 +4646,7 @@ app.all("/api/proxy", async (req, res) => {
       }
 
       if (!gp) return false;
-      if (gp.querySelector('iframe#game-element')) return true;
+      if (gp.querySelector('iframe')) return true;
 
       var contentUrl = null;
       try {
