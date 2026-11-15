@@ -539,10 +539,11 @@
       }
 
       if (currentMode === "embed") {
-        // YouTube公式埋め込みは、外部ドメインのまま読むと学校iPadのフィルターで止まる。
-        // 自ドメインのプロキシ経由で読むことで、フィルター画面へ飛ばされない。
-        showFrame(proxied(`https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&rel=0`));
-        statusSpan.textContent = "🎥 埋め込み再生（自ドメイン経由）";
+        // 埋め込み再生は「自ドメインのプレイヤー（/tube/embed.html）」を iframe で埋め込む。
+        // YouTube公式の埋め込みは、プロキシ経由でもプレイヤー内部の通信が通らず
+        // 再生が始まらないことが多いため、確実に再生できる自前プレイヤーを使う。
+        showFrame(`${API_BASE}/tube/embed.html?v=${encodeURIComponent(currentVideoId)}`);
+        statusSpan.textContent = "🎥 埋め込み再生（自ドメイン）";
         return;
       }
 
