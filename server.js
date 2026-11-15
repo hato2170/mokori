@@ -3706,7 +3706,7 @@ app.all("/api/proxy", async (req, res) => {
 
   // 🎬 YouTube はモジュールローダーの検証（#base-js の src に /_/js/ と /k=）と
   // location 基準のAPI呼び出しがあるので、専用の扱いをする
-  var IS_YOUTUBE = /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i.test(baseObj.hostname || '');
+  var IS_YOUTUBE = /(^|\\.)youtube\\.com$|(^|\\.)youtu\\.be$/i.test(baseObj.hostname || '');
 
   // 📸 Instagramの「アプリでこのリール動画を見る」全画面ナグを自動で閉じる
   // （動画の上に被さって「見れない」ように感じる最大の原因。閉じるだけなので副作用なし）
@@ -4067,7 +4067,7 @@ app.all("/api/proxy", async (req, res) => {
         // 🎬 YouTube は location を基準に /youtubei/v1/... を作るので、自ホスト宛てでも
         // もこり本体のページ以外は上流へ戻す（そのままだと /youtubei/v1/browse が
         // mokori の404に抜けて「現在オフラインです」判定になる）。
-        if (IS_YOUTUBE && !/^\/(?:api\/proxy|tensai-proxy|tube|music|instagram|tiktok|roblox|mail\.html|downloads|chat|sns|friends|ai|games|paper|line|favicon|manifest|sw\.js)(?:\/|$|\?)/.test(absUrl.pathname)) {
+        if (IS_YOUTUBE && !/^\\/(?:api\\/proxy|tensai-proxy|tube|music|instagram|tiktok|roblox|mail\\.html|downloads|chat|sns|friends|ai|games|paper|line|favicon|manifest|sw\\.js)(?:\\/|$|\\?)/.test(absUrl.pathname)) {
           return '/api/proxy?url=' + encodeURIComponent(baseObj.origin + absUrl.pathname + absUrl.search);
         }
         return absUrl.pathname + absUrl.search + absUrl.hash;
