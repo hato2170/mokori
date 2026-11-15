@@ -3309,6 +3309,341 @@ if(typeof XMLHttpRequest!=="undefined"&&XMLHttpRequest.prototype){var _o=XMLHttp
 }catch(e){}})();\n`;
 
 // ====================================================
+// 🎬 Google IMA（動画広告SDK）の安全なスタブ
+// 本物の ima3.js は先頭で「読み込み元が google ドメインか」を document.location と
+// <script src> の両方で検証し、プロキシ経由（/api/proxy?url=...）では必ず
+//   Error: IMA SDK is either not loaded from a google domain or is not a supported version.
+// を投げる。広告待ちのゲームはその例外で広告ブレークから戻れなくなる
+// （Pokiで出ていた ⚠ 1件の正体）。広告自体は中継できないので、ゲームが待っている
+// イベント（AD_ERROR / ADS_MANAGER_LOADED / ALL_ADS_COMPLETED）だけを返す
+// API互換スタブを配り、ゲームの進行は止めない。
+// ====================================================
+const IMA_STUB_JS = `(function () {
+  try {
+    var W = window;
+    var existing = W.google && W.google.ima;
+    if (existing && existing.__pxImaStub) return;
+    if (existing && existing.AdsLoader) return;
+
+    function noop() {}
+    function isFn(f) { return typeof f === "function"; }
+
+    function Event(type, extra) {
+      this.type = type;
+      this.target = null;
+      this.currentTarget = null;
+      this._extra = extra || null;
+    }
+    Event.prototype.preventDefault = noop;
+    Event.prototype.stopPropagation = noop;
+    Event.prototype.stopImmediatePropagation = noop;
+    Event.prototype.isDefaultPrevented = function () { return false; };
+
+    function Bus() { this._l = {}; }
+    Bus.prototype.addEventListener = function (type, fn) {
+      if (!type || !isFn(fn)) return;
+      (this._l[type] = this._l[type] || []).push(fn);
+    };
+    Bus.prototype.removeEventListener = function (type, fn) {
+      var a = this._l[type];
+      if (!a) return;
+      var i = a.indexOf(fn);
+      if (i >= 0) a.splice(i, 1);
+    };
+    Bus.prototype.removeAllListeners = function () { this._l = {}; };
+    Bus.prototype._count = function (type) { var a = this._l[type]; return a ? a.length : 0; };
+    Bus.prototype._fire = function (ev) {
+      var a = ev && this._l[ev.type];
+      if (!a || !a.length) return 0;
+      a = a.slice();
+      for (var i = 0; i < a.length; i++) {
+        try { a[i].call(this, ev); } catch (e) { try { console.warn("[ima-stub]", e); } catch (_) {} }
+      }
+      return a.length;
+    };
+
+    function AdError(code, message, type) {
+      this._c = (code == null ? 1005 : code);
+      this._m = message || "Ads are not available here";
+      this._t = type || "unknown";
+    }
+    AdError.prototype.getErrorCode = function () { return this._c; };
+    AdError.prototype.getMessage = function () { return this._m; };
+    AdError.prototype.getType = function () { return this._t; };
+    AdError.prototype.getVastErrorCode = function () { return this._c; };
+    AdError.prototype.getInnerError = function () { return null; };
+    AdError.prototype.toString = function () { return "AdError(" + this._c + "): " + this._m; };
+    AdError.ErrorCode = {
+      UNKNOWN_ERROR: 900, ADS_REQUEST_NETWORK_ERROR: 101, INVALID_AD_TAG: 102,
+      VAST_MALFORMED_RESPONSE: 100, VAST_TRAFFICKING_ERROR: 200, VAST_LOAD_TIMEOUT: 301,
+      VAST_TOO_MANY_REDIRECTS: 302, VAST_NO_ADS_AFTER_WRAPPER: 303,
+      VIDEO_PLAY_ERROR: 400, VAST_MEDIA_LOAD_TIMEOUT: 402, VAST_LINEAR_ASSET_MISMATCH: 403,
+      COMPANION_REQUIRED_ERROR: 602, ADSLOT_TOO_LARGE_FOR_PLAYER: 605,
+      REQUIRED_LISTENER_NOT_LISTENING: 905, REQUIRED_TAG_MISSING: 906,
+      VAST_UNSUPPORTED_VERSION: 103, VAST_AD_NOT_SUPPORTED: 104
+    };
+
+    function AdEvent(type, ad) {
+      Event.call(this, type);
+      this._ad = ad || null;
+      this.ad = ad || null;
+    }
+    AdEvent.prototype = Object.create(Event.prototype);
+    AdEvent.prototype.constructor = AdEvent;
+    AdEvent.prototype.getAd = function () { return this._ad; };
+    AdEvent.prototype.getAdData = function () { return {}; };
+    AdEvent.Type = {
+      AD_BREAK_READY: "adBreakReady", AD_BREAK_START: "adBreakStart", AD_BREAK_END: "adBreakEnd",
+      AD_BUFFERING: "adBuffering", AD_PROGRESS: "adProgress", AD_METADATA: "adMetadata",
+      LOADED: "loaded", STARTED: "start", FIRST_QUARTILE: "firstquartile",
+      MIDPOINT: "midpoint", THIRD_QUARTILE: "thirdquartile", COMPLETE: "complete",
+      PAUSED: "pause", RESUMED: "resume", SKIPPED: "skip",
+      SKIPPABLE_STATE_CHANGED: "skippableStateChanged", CLICK: "click", TAPPED: "tapped",
+      ICON_TAPPED: "iconTapped", USER_CLOSE: "userClose", ALL_ADS_COMPLETED: "allAdsCompleted",
+      CONTENT_PAUSE_REQUESTED: "contentPauseRequested", CONTENT_RESUME_REQUESTED: "contentResumeRequested",
+      AD_PERFORMANCE_MEASUREMENT: "adPerformanceMeasurement", AD_IMPRESSION: "adImpression",
+      INTERACTION: "interaction", VOLUME_CHANGED: "volumeChange", VOLUME_MUTED: "mute",
+      DURATION_CHANGE: "durationChange", AD_POD_DURATION_CHANGED: "adPodDurationChanged",
+      LINEAR_AD_DURATION_CHANGED: "linearAdDurationChanged"
+    };
+
+    function AdErrorEvent(error) {
+      Event.call(this, "adError");
+      this._e = error || new AdError();
+    }
+    AdErrorEvent.prototype = Object.create(Event.prototype);
+    AdErrorEvent.prototype.constructor = AdErrorEvent;
+    AdErrorEvent.prototype.getError = function () { return this._e; };
+    AdErrorEvent.prototype.getUserRequestContext = function () { return null; };
+    AdErrorEvent.Type = { AD_ERROR: "adError", LOAD: "load" };
+
+    function AdDisplayContainer(adContainer, videoElement, clickTracking) {
+      this._a = adContainer || null;
+      this._v = videoElement || null;
+      this._c = clickTracking || null;
+    }
+    AdDisplayContainer.prototype.initialize = noop;
+    AdDisplayContainer.prototype.destroy = noop;
+    AdDisplayContainer.prototype.getAdContainer = function () { return this._a; };
+    AdDisplayContainer.prototype.getVideoElement = function () { return this._v; };
+
+    function ImaSdkSettings() {
+      this._numRedirects = 4;
+      this._autoPlayAdBreaks = true;
+      this._vpaidAllowed = true;
+      this._playerType = "";
+      this._playerVersion = "";
+    }
+    ImaSdkSettings.prototype.setVpaidAllowed = noop;
+    ImaSdkSettings.prototype.setVpaidMode = noop;
+    ImaSdkSettings.prototype.setDisableCustomPlaybackForIOS10Plus = noop;
+    ImaSdkSettings.prototype.setAutoPlayAdBreaks = noop;
+    ImaSdkSettings.prototype.setNumRedirects = noop;
+    ImaSdkSettings.prototype.setPpid = noop;
+    ImaSdkSettings.prototype.setPlayerType = noop;
+    ImaSdkSettings.prototype.setPlayerVersion = noop;
+    ImaSdkSettings.prototype.setSessionId = noop;
+    ImaSdkSettings.prototype.setLocale = noop;
+    ImaSdkSettings.prototype.setRestrictToCustomPlayback = noop;
+    ImaSdkSettings.prototype.setMaxRedirects = noop;
+    ImaSdkSettings.prototype.setFeatureFlags = noop;
+    ImaSdkSettings.prototype.getNumRedirects = function () { return this._numRedirects; };
+    ImaSdkSettings.prototype.getPpid = function () { return ""; };
+    ImaSdkSettings.prototype.getPlayerType = function () { return this._playerType; };
+    ImaSdkSettings.prototype.getPlayerVersion = function () { return this._playerVersion; };
+    ImaSdkSettings.prototype.getLocale = function () { return "en"; };
+    ImaSdkSettings.prototype.isVpaidAllowed = function () { return true; };
+    ImaSdkSettings.prototype.getAutoPlayAdBreaks = function () { return true; };
+    ImaSdkSettings.prototype.isRestrictToCustomPlayback = function () { return false; };
+
+    var globalSettings = new ImaSdkSettings();
+
+    function AdsRenderingSettings() {
+      this.restoreCustomPlaybackStateOnAdBreakComplete = false;
+      this.uiElements = [];
+      this.enablePreloading = false;
+      this.bitrate = -1;
+      this.mimeTypes = [];
+      this.playMuted = false;
+    }
+    AdsRenderingSettings.prototype.setMimeTypes = function () {};
+    AdsRenderingSettings.prototype.setUiElements = function () {};
+
+    function AdsRequest(obj) {
+      this.adTagUrl = "";
+      this.adsResponse = "";
+      this.linearAdSlotWidth = 640;
+      this.linearAdSlotHeight = 360;
+      this.nonlinearAdSlotWidth = 640;
+      this.nonlinearAdSlotHeight = 100;
+      this.adWillAutoPlay = false;
+      this.adWillPlayMuted = false;
+      this.omidAccessModeRules = {};
+      this.vastLoadTimeout = -1;
+      this.loadTimeout = -1;
+      if (obj) for (var k in obj) { try { this[k] = obj[k]; } catch (_) {} }
+    }
+    AdsRequest.prototype.setAdWillAutoPlay = function (v) { this.adWillAutoPlay = !!v; };
+    AdsRequest.prototype.setAdWillPlayMuted = function (v) { this.adWillPlayMuted = !!v; };
+    AdsRequest.prototype.setVastLoadTimeout = function (v) { this.vastLoadTimeout = v; };
+    AdsRequest.prototype.setLoadTimeout = function (v) { this.loadTimeout = v; };
+    AdsRequest.prototype.setContinuousPlayback = function () {};
+    AdsRequest.prototype.setContentDuration = function () {};
+    AdsRequest.prototype.setContentKeywords = function () {};
+    AdsRequest.prototype.setContentTitle = function () {};
+
+    function AdsManager(loader) {
+      Bus.call(this);
+      this._loader = loader || null;
+      this._started = false;
+      this._volume = 1;
+    }
+    AdsManager.prototype = Object.create(Bus.prototype);
+    AdsManager.prototype.constructor = AdsManager;
+    AdsManager.prototype._fireBoth = function (ev) {
+      var n = this._fire(ev);
+      if (this._loader && this._loader._fire) { try { n += this._loader._fire(ev); } catch (_) {} }
+      return n;
+    };
+    AdsManager.prototype.init = noop;
+    AdsManager.prototype.start = function () {
+      var self = this;
+      if (self._started) return;
+      self._started = true;
+      setTimeout(function () {
+        self._fireBoth(new AdEvent(AdEvent.Type.CONTENT_PAUSE_REQUESTED));
+        setTimeout(function () {
+          self._fireBoth(new AdEvent(AdEvent.Type.ALL_ADS_COMPLETED));
+          self._fireBoth(new AdEvent(AdEvent.Type.CONTENT_RESUME_REQUESTED));
+        }, 0);
+      }, 0);
+    };
+    AdsManager.prototype.stop = noop;
+    AdsManager.prototype.pause = noop;
+    AdsManager.prototype.resume = noop;
+    AdsManager.prototype.destroy = noop;
+    AdsManager.prototype.resize = noop;
+    AdsManager.prototype.focus = noop;
+    AdsManager.prototype.skip = noop;
+    AdsManager.prototype.collapse = noop;
+    AdsManager.prototype.expand = noop;
+    AdsManager.prototype.click = noop;
+    AdsManager.prototype.setClickElement = noop;
+    AdsManager.prototype.setVolume = function (v) { this._volume = v; };
+    AdsManager.prototype.getVolume = function () { return this._volume; };
+    AdsManager.prototype.getRemainingTime = function () { return 0; };
+    AdsManager.prototype.getCuePoints = function () { return []; };
+    AdsManager.prototype.getCurrentAd = function () { return null; };
+    AdsManager.prototype.getAdSkippableState = function () { return false; };
+    AdsManager.prototype.isCustomPlaybackUsed = function () { return false; };
+    AdsManager.prototype.getAdSkippableState = function () { return false; };
+
+    function AdsManagerLoadedEvent(manager, userRequestContext) {
+      Event.call(this, "adsManagerLoaded");
+      this._m = manager || null;
+      this._u = userRequestContext || null;
+    }
+    AdsManagerLoadedEvent.prototype = Object.create(Event.prototype);
+    AdsManagerLoadedEvent.prototype.constructor = AdsManagerLoadedEvent;
+    AdsManagerLoadedEvent.prototype.getAdsManager = function () { return this._m; };
+    AdsManagerLoadedEvent.prototype.getUserRequestContext = function () { return this._u; };
+    AdsManagerLoadedEvent.Type = { ADS_MANAGER_LOADED: "adsManagerLoaded" };
+
+    function AdsLoader(container) {
+      Bus.call(this);
+      this._container = container || null;
+      this._requested = false;
+    }
+    AdsLoader.prototype = Object.create(Bus.prototype);
+    AdsLoader.prototype.constructor = AdsLoader;
+    AdsLoader.prototype.getSettings = function () { return globalSettings; };
+    AdsLoader.prototype.contentComplete = function () {
+      this._fire(new AdEvent(AdEvent.Type.ALL_ADS_COMPLETED));
+    };
+    AdsLoader.prototype.destroy = noop;
+    AdsLoader.prototype.requestAds = function (request) {
+      var self = this;
+      if (self._requested) return;
+      self._requested = true;
+      setTimeout(function () {
+        var handled = self._fire(new AdErrorEvent(new AdError(1005, "Ads are skipped inside the proxy", "vast")));
+        if (handled) return;
+        var wantsManager = self._count(AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED) > 0;
+        var manager = new AdsManager(self);
+        self._fire(new AdsManagerLoadedEvent(manager, request));
+        if (wantsManager) {
+          setTimeout(function () { manager.start(); }, 0);
+        }
+      }, 0);
+    };
+
+    var ImaSdkFactory = {
+      getInstance: function () {
+        return {
+          createAdDisplayContainer: function (a, v, c) { return new AdDisplayContainer(a, v, c); },
+          createAdsLoader: function (c) { return new AdsLoader(c); },
+          createAdsRequest: function () { return new AdsRequest(); },
+          createAdsRenderingSettings: function () { return new AdsRenderingSettings(); },
+          createImaSdkSettings: function () { return new ImaSdkSettings(); }
+        };
+      }
+    };
+
+    var ima = {
+      __pxImaStub: true,
+      VERSION: "3.799.0",
+      AdsLoader: AdsLoader,
+      AdsRequest: AdsRequest,
+      AdsManager: AdsManager,
+      AdsManagerLoadedEvent: AdsManagerLoadedEvent,
+      AdDisplayContainer: AdDisplayContainer,
+      AdError: AdError,
+      AdErrorEvent: AdErrorEvent,
+      AdEvent: AdEvent,
+      AdsRenderingSettings: AdsRenderingSettings,
+      ImaSdkSettings: ImaSdkSettings,
+      ImaSdkFactory: ImaSdkFactory,
+      settings: globalSettings,
+      ViewMode: { NORMAL: "normal", FULLSCREEN: "fullscreen" },
+      UiElements: { AD_ATTRIBUTION: "adAttribution", COUNTDOWN: "countdown" },
+      AdType: { LINEAR: "linear", NONLINEAR: "nonlinear", COMPANION: "companion" },
+      OmidAccessMode: { LIMITED: "limited", DOMAIN: "domain", FULL: "full" },
+      OmidVerificationVendor: { OTHER: 1, GOOGLE: 2, MOAT: 3 }
+    };
+
+    try {
+      if (typeof Proxy === "function") {
+        ima = new Proxy(ima, {
+          get: function (t, p) {
+            if (p in t) return t[p];
+            if (typeof p !== "string") return undefined;
+            if (p === "then" || p === "toJSON" || p === "inspect" || p === "constructor" || p === "prototype") return undefined;
+            var stub = function () {
+              return new Proxy({}, {
+                get: function (o, q) {
+                  if (q === "then") return undefined;
+                  return function () { return undefined; };
+                }
+              });
+            };
+            try { t[p] = stub; } catch (_) {}
+            return stub;
+          }
+        });
+      }
+    } catch (_) {}
+
+    W.google = W.google || {};
+    try {
+      Object.defineProperty(W.google, "ima", { value: ima, writable: true, configurable: true, enumerable: true });
+    } catch (_) {
+      W.google.ima = ima;
+    }
+  } catch (_) {}
+})();`;
+
+
+// ====================================================
 // 🗄 不変アセットのキャッシュ（Instagram / TikTok / YouTube の CDN 用）
 // Instagram は1ページで20〜30本・十数MBのJS/CSSを読む。プロキシが毎回それを
 // Meta のCDNへ取りに行くと、データセンターIPはすぐ 429 を食らって
@@ -3537,6 +3872,16 @@ app.all("/api/proxy", async (req, res) => {
 
   if (isBlockedHost(parsedTarget.hostname)) {
     return res.status(403).send(renderProxyError("アクセス制限", "安全保護のため、内部ネットワークやプライベートIPへの接続はブロックされています。"));
+  }
+
+  // 🎬 Google IMA（動画広告SDK）は、本物を中継しても「googleドメインから読み込まれていない」
+  // と判定されて必ず例外になる（＝Pokiの ⚠ 1件）。ここでAPI互換スタブに差し替え、
+  // 広告SDKの失敗でゲームの広告ブレークが止まらないようにする。
+  if (/(^|\.)imasdk\.googleapis\.com$/i.test(parsedTarget.hostname) || /\/sdkloader\/ima3[^/]*\.js$/i.test(parsedTarget.pathname)) {
+    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=1800");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.send(IMA_STUB_JS);
   }
 
   // Instagramのリール/投稿ページ、TikTokの動画ページは、公式サイトが見せないので、もこり内ビューアで再生させる
@@ -3940,6 +4285,12 @@ app.all("/api/proxy", async (req, res) => {
       });
 
       const isPokiSite = /(^|\.)poki\.com$|poki-cdn\.com$|turbowarp\.org$|fancade\.com$/i.test(parsedTarget.hostname);
+      // 🎬 ページのスクリプトより先に広告SDKの互換スタブを読みませる（同期スクリプトなので
+      // 後続のゲームコードが google.ima を触る時点では必ず存在する）。本物を読みに行っても
+      // 同じスタブが返るので二重にはならない。
+      const imaPreseed = isPokiSite
+        ? `<script src="/api/proxy?url=${encodeURIComponent("https://imasdk.googleapis.com/js/sdkloader/ima3.js")}"></script>`
+        : "";
       const interceptScript = `
 <script>
 (function() {
@@ -4115,7 +4466,7 @@ app.all("/api/proxy", async (req, res) => {
       if (msg === 'Script error.' || errs.indexOf(msg) >= 0 || errs.length >= 8) return;
       // 🧹 サイト内部の無害な計測SDKのエラーはバッジに数えない（TikTok の
       // sync_web_sdk / a.init、Instagram の getMessage など）。見ても何もできない。
-      if (/(sync_web_sdk|init is not a function|getMessage is not a function|ResizeObserver loop|__gCrWeb|Non-Error promise rejection|googletagmanager|doubleclick)/i.test(msg)) return;
+      if (/(sync_web_sdk|init is not a function|getMessage is not a function|ResizeObserver loop|__gCrWeb|Non-Error promise rejection|googletagmanager|doubleclick|IMA SDK|imasdk|google\.ima|AdsLoader|AdsManager|adTagUrl|VAST|AdError)/i.test(msg)) return;
       errs.push(msg);
       paint();
     }
@@ -4642,7 +4993,7 @@ if (window !== window.top) {
 ` : "";
 
       if (html.includes("<head")) {
-        html = html.replace(/<head([^>]*)>/i, `<head$1>${interceptScript}`);
+        html = html.replace(/<head([^>]*)>/i, `<head$1>${imaPreseed}${interceptScript}`);
       } else if (html.includes("<body")) {
         html = html.replace(/<body([^>]*)>/i, `<body$1>${interceptScript}`);
       } else {
