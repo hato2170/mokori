@@ -4010,26 +4010,34 @@ app.all("/api/proxy", async (req, res) => {
     }
   } catch (_) {}
 
-  // Emscripten/WASM等の相対URLが /api/index.wasm に解決された場合の救済
+  // Emscripten/WASM等の相対URLが /api/index.wasm に解決された場合の救済。
+  // ⚠ これは「ページと同じホストの /api/… が相対解決で迷子になった」ときの救済なので、
+  // 別ホストの本物のAPIパス（turbowarp.org のページ → trampoline.turbowarp.org/api/projects/…）
+  // には絶対に適用しない。以前はここでターボワープのプロジェクト取得まで書き換えてしまい、
+  // JSONの代わりにHTMLが返って「This project is unshared.」になっていた。
   if (targetUrl.includes("/api/") && !targetUrl.includes("proxy?url=")) {
     const assetPart = targetUrl.split("/api/").pop();
     const referer = req.headers.referer || "";
     if (referer.includes("proxy?url=")) {
       try {
         const parentTarget = decodeURIComponent(referer.split("proxy?url=")[1].split("&")[0]);
-        const parentDir = parentTarget.substring(0, parentTarget.lastIndexOf("/") + 1);
-        const candidates = [
-          parentDir + "webapp/" + assetPart,
-          parentDir + assetPart
-        ];
-        for (const cand of candidates) {
-          try {
-            const probe = await fetch(cand, { method: "HEAD", headers: { "User-Agent": "Mozilla/5.0" } });
-            if (probe.ok) {
-              targetUrl = cand;
-              break;
-            }
-          } catch (_) {}
+        const parentHost = new URL(parentTarget).hostname.toLowerCase();
+        const targetHost = new URL(targetUrl).hostname.toLowerCase();
+        if (parentHost === targetHost) {
+          const parentDir = parentTarget.substring(0, parentTarget.lastIndexOf("/") + 1);
+          const candidates = [
+            parentDir + "webapp/" + assetPart,
+            parentDir + assetPart
+          ];
+          for (const cand of candidates) {
+            try {
+              const probe = await fetch(cand, { method: "HEAD", headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
+              if (probe.ok) {
+                targetUrl = cand;
+                break;
+              }
+            } catch (_) {}
+          }
         }
       } catch (_) {}
     }
