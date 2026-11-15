@@ -3565,6 +3565,19 @@ app.all("/api/proxy", async (req, res) => {
 
   var IS_POKI = ${isPokiSite};
 
+  // 🧭 SPAのルーター対策: TikTokは location.pathname が既知のルートでないと
+  // 自前の /404 へ飛ばしてしまう。プロキシのURLは常に /api/proxy なので、
+  // 表示上のパスだけを「本物のサイトのパス」に合わせる（history.replaceState は
+  // 通信を起こさないので安全。再読み込みは __px_origin Cookie 側で救済される）。
+  var IS_TIKTOK = /(^|\.)tiktok\.com$/i.test(baseObj.hostname || '');
+  if (IS_TIKTOK) {
+    try {
+      var upPath = baseObj.pathname || '/';
+      if (!upPath || upPath === '/') upPath = '/foryou';
+      if (upPath.indexOf('/api/') !== 0) history.replaceState(history.state, '', upPath + (baseObj.search || '') + (baseObj.hash || ''));
+    } catch (_) {}
+  }
+
   // 🚦 リロードループ検知（同じURLを短時間に何度も読み直したら止める）
   (function () {
     try {
