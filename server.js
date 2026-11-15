@@ -8,6 +8,27 @@ const bcrypt = require("bcryptjs");
 
 const app = express();
 app.set("trust proxy", 1);
+
+// 🔬 プロキシ経路の実測ログ（Instagram 429 の切り分け用・直近200件をメモリに保持）
+const proxyTraceLog = [];
+app.use((req, res, next) => {
+  if (!/^\/api\/proxy(\/|$)/.test(req.path || "")) return next();
+  const startedAt = Date.now();
+  const entry = { t: new Date().toISOString(), m: req.method, url: String(req.query.url || "").slice(0, 240) };
+  res.on("finish", () => {
+    entry.status = res.statusCode;
+    entry.ms = Date.now() - startedAt;
+    const up = res.getHeader("x-tensai-upstream");
+    if (up) entry.upstream = String(up);
+    proxyTraceLog.push(entry);
+    if (proxyTraceLog.length > 200) proxyTraceLog.shift();
+  });
+  next();
+});
+app.get("/api/proxy/trace", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ now: new Date().toISOString(), count: proxyTraceLog.length, items: proxyTraceLog.slice(-150) });
+});
 app.use(express.json({ limit: "15mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: "15mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
@@ -3557,6 +3578,7 @@ app.all("/api/proxy", async (req, res) => {
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Cache-Control", "public, max-age=1800");
         res.setHeader("X-Tensai-Cache", "HIT");
+        res.setHeader("X-Tensai-Upstream", "CACHE");
         return res.end(hit.buf);
       }
     }
@@ -3578,6 +3600,8 @@ app.all("/api/proxy", async (req, res) => {
       } catch (_) {}
     }
     const contentType = response.headers.get("content-type") || "";
+    // 上流（Instagram）が実際に返したステータスを外から見えるようにする
+    res.setHeader("X-Tensai-Upstream", String(response.status));
 
     // Instagramが回線制限（429）を返したときは、壊れたページではなく案内を出す
     if (response.status === 429 && isInstagram && (req.headers.accept || "").includes("text/html")) {
