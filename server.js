@@ -3249,7 +3249,7 @@ function pickUAForHost(hostname, clientUA) {
   return clientUA || UA_DESKTOP_CHROME;
 }
 
-async function fetchUpstream(targetUrl, baseHeaders, fetchOpts, { allowUAChange = true, timeoutMs = 0 } = {}) {
+async function fetchUpstream(targetUrl, baseHeaders, fetchOpts, { allowUAChange = true, timeoutMs = 0, retries = 0 } = {}) {
   const uaList = [];
   if (baseHeaders["User-Agent"]) uaList.push(baseHeaders["User-Agent"]);
   if (allowUAChange && !uaList.includes(UA_DESKTOP_CHROME)) uaList.push(UA_DESKTOP_CHROME);
@@ -3259,20 +3259,27 @@ async function fetchUpstream(targetUrl, baseHeaders, fetchOpts, { allowUAChange 
     // 文書は待ち時間を切る。上流が無応答のまま数十秒ぶら下がると、Safari側が
     // 「問題が発生したため、ページを読み込めませんでした」で打ち切ってしまう。
     const attemptOpts = timeoutMs > 0 ? { ...fetchOpts, signal: AbortSignal.timeout(timeoutMs) } : fetchOpts;
-    try {
-      const response = await fetch(targetUrl, { ...attemptOpts, headers });
-      const wantsDoc = String(headers["Accept"] || "").includes("text/html");
-      // 上流が文書そのものを拒否したときだけ、UAを替えて一度やり直す（429は回線制限なので再試行しない）
-      if (i === 0 && wantsDoc && uaList.length > 1 && [401, 403, 406, 451, 502, 503].includes(response.status)) {
-        lastError = new Error("upstream refused: HTTP " + response.status);
-        continue;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(targetUrl, { ...attemptOpts, headers });
+        const wantsDoc = String(headers["Accept"] || "").includes("text/html");
+        // 上流が文書そのものを拒否したときだけ、UAを替えて一度やり直す（429は回線制限なので再試行しない）
+        if (i === 0 && wantsDoc && uaList.length > 1 && [401, 403, 406, 451, 502, 503].includes(response.status)) {
+          lastError = new Error("upstream refused: HTTP " + response.status);
+          break;
+        }
+        return response;
+      } catch (err) {
+        lastError = err;
+        // 接続自体が届かない/DNS不能なら、UAを変えても同じなので即あきらめる
+        const code = err && err.cause ? String(err.cause.code || "") : "";
+        if (["UND_ERR_CONNECT_TIMEOUT", "ENOTFOUND", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN"].includes(code)) return Promise.reject(err);
+        // 「接続が途中で切れた」系（MetaがデータセンターIPを弾く典型）は少し待ってもう一度
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 600));
+          continue;
+        }
       }
-      return response;
-    } catch (err) {
-      lastError = err;
-      // 接続自体が届かない/DNS不能なら、UAを変えても同じなので即あきらめる
-      const code = err && err.cause ? String(err.cause.code || "") : "";
-      if (["UND_ERR_CONNECT_TIMEOUT", "ENOTFOUND", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN"].includes(code)) break;
     }
   }
   throw lastError || new Error("upstream fetch failed");
@@ -3715,7 +3722,10 @@ app.all("/api/proxy", async (req, res) => {
 
     let response = await fetchUpstream(targetUrl, headers, fetchOpts, {
       allowUAChange: !isInstagram,
-      timeoutMs: upstreamTimeout
+      timeoutMs: upstreamTimeout,
+      // InstagramはデータセンターIPの接続を時々切る。一度だけやり直して、
+      // その1回でページ全体が502（＝スピナー）になるのを防ぐ。
+      retries: isInstagram ? 1 : 0
     });
     // 429 はデータセンターIPへのレート制限。GET なら少し待ってやり直す
     // （Instagram の Bootloading module failed／無限スピナーの直接原因）。
