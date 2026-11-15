@@ -3356,9 +3356,9 @@ if(typeof XMLHttpRequest!=="undefined"&&XMLHttpRequest.prototype){var _o=XMLHttp
 // メモリに溜め、ブラウザ側にもキャッシュさせる。
 // ====================================================
 const assetCache = new Map();
-const ASSET_CACHE_TTL_MS = 30 * 60 * 1000;
-const ASSET_CACHE_MAX_BYTES = 24 * 1024 * 1024;
-const ASSET_CACHE_MAX_ITEM = 4 * 1024 * 1024;
+const ASSET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const ASSET_CACHE_MAX_BYTES = 48 * 1024 * 1024;
+const ASSET_CACHE_MAX_ITEM = 8 * 1024 * 1024;
 let assetCacheBytes = 0;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -5960,4 +5960,47 @@ app.use((req, res, next) => {
 
 app.listen(port, () => {
   console.log(`mokori server listening on port ${port}`);
+  try { warmProxyCache(); } catch (_) {}
 });
+
+// 🔥 Renderの無料枠は再起動が多く、再起動直後の初回アクセスがMetaの429や
+// スロースタートで「Bootloading module failed」の無限スピナーになりやすい。
+// 自分の /api/proxy を通してページとJS/CSSを温めておき、利用者の初回表示で
+// Metaへ行かない（＝429を踏む回数そのものを減らす）ようにする。
+let warmTimer = null;
+function warmProxyCache() {
+  if (String(process.env.DISABLE_WARM || "") === "1") return;
+  const warmedAt = Date.now();
+  const run = async () => {
+    const target = "https://www.instagram.com/";
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/api/proxy?url=${encodeURIComponent(target)}`, {
+        headers: { "User-Agent": UA_IOS_SAFARI, "Accept": "text/html,application/xhtml+xml" },
+        signal: AbortSignal.timeout(30000)
+      });
+      if (!r.ok) return;
+      const html = await r.text();
+      const assets = [...String(html).matchAll(/(?:src|href)="(\/api\/proxy\?url=[^"]+)"/g)]
+        .map((m) => m[1].replace(/&amp;/g, "&"))
+        .filter((u, i, a) => a.indexOf(u) === i)
+        .slice(0, 16);
+      for (const a of assets) {
+        try {
+          const ar = await fetch(`http://127.0.0.1:${port}${a}`, {
+            headers: { "User-Agent": UA_IOS_SAFARI, "Accept": "*/*" },
+            signal: AbortSignal.timeout(30000)
+          });
+          await ar.arrayBuffer();
+          await sleep(200);
+        } catch (_) {}
+      }
+    } catch (_) {}
+    console.log(`[warm] instagram proxy cache warmed in ${Date.now() - warmedAt}ms`);
+  };
+  run();
+  // 定期的に温め直す（15分ごと。Metaへのアクセスは1回/15分で済む）
+  if (!warmTimer) {
+    warmTimer = setInterval(run, 15 * 60 * 1000);
+    if (warmTimer.unref) warmTimer.unref();
+  }
+}
