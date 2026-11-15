@@ -3585,13 +3585,19 @@ app.all("/api/proxy", async (req, res) => {
         if (!upsell) return;
         // 閉じるボタンはダイアログの外側にあることが多いので、ラベルが完全一致するものだけを押す
         // （「Instagramを開く」「登録する」等は絶対に押さない）
-        var cand = document.querySelectorAll('[aria-label="閉じる"],[aria-label="Close"],[aria-label="close"]');
+        var cand = document.querySelectorAll('[aria-label="閉じる"],[aria-label="Close"],img[alt="閉じる"],img[alt="Close"]');
         for (var k = 0; k < cand.length; k++) {
           var el = cand[k];
           try {
             if (el.closest('[role="dialog"]')) continue;
-            if (!el.getClientRects || el.getClientRects().length === 0) continue;
-            el.click();
+            var target = el;
+            if (el.tagName === 'IMG' || el.tagName === 'svg' || el.tagName === 'svg' || el.tagName === 'SPAN' || el.tagName === 'DIV') {
+              target = el.closest('button,[role="button"]') || null;
+            }
+            if (!target) continue;
+            if (target.tagName === 'A' || target.closest('a[href]')) continue;
+            if (!target.getClientRects || target.getClientRects().length === 0) continue;
+            target.click();
             closed++;
             return;
           } catch (_) {}
