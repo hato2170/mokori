@@ -2491,9 +2491,22 @@ app.post("/api/chats/:chatId/leave", requireLogin, async (req, res) => {
 
 // 一時診断: フル尺音源の取得ルート実測 (作業完了後に削除)
 app.get("/api/music/probe", async (req, res) => {
+  const t0 = Date.now();
   try {
-    const { runProbe } = require("./lib/music-probe");
-    const out = await runProbe(String(req.query.q || "STUTS 99 Steps"));
+    const m = require("./lib/music-probe");
+    const q = String(req.query.q || "STUTS 99 Steps");
+    const step = String(req.query.step || "po");
+    let out;
+    if (step === "players") {
+      const v = String(req.query.v || "") || await m.searchVideoId(q);
+      const po = req.query.po === "1" ? await m.makePoToken() : null;
+      out = await m.runPlayers(v, po);
+      out.poToken = po ? { ok: po.ok, ms: po.ms, error: po.error, poTokenLen: po.poTokenLen, visitorDataLen: po.visitorDataLen } : null;
+    } else {
+      out = await m.runProbe(q, { step });
+      delete out._po;
+    }
+    out.ms = Date.now() - t0;
     res.json(out);
   } catch (err) {
     res.status(500).json({ error: String(err && err.message || err), stack: String(err && err.stack || "").slice(0, 800) });
