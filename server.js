@@ -5426,6 +5426,14 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
   };
 
   const currentTheme = themes[service] || themes.shiatube;
+  // 学校iPad向けEducation埋め込みURL（以前は未定義のまま参照していて500になっていた）
+  let eduPassParams = "";
+  try {
+    eduPassParams = (await getLiveEduParam()) || "";
+  } catch (_) {
+    eduPassParams = "";
+  }
+  const eduEmbedUrl = `https://www.youtubeeducation.com/embed/${videoId}${eduPassParams}${eduPassParams ? "&" : "?"}playlist=${videoId}`;
   const serviceEmbeds = {
     shiatube: `https://piped.video/embed/${videoId}`,
     wakametube: `https://inv.nadeko.net/embed/${videoId}`,
@@ -5713,19 +5721,26 @@ const SELF_PATH_PREFIXES = [
 ];
 
 function proxyOriginFromRequest(req) {
+  // 🧭 Referer（＝そのリクエストを出したプロキシ内のページ）を最優先で信じる。
+  // Cookie だけだと、iframe や CDNのHTMLエラーページが __px_origin を上書きして
+  // /s/_/… が別サイトへ中継され、YouTubeが真っ白になることがあった。
+  // ページの中のリクエストには必ず自分自身のプロキシURLが Referer として付く。
+  const ref = String(req.headers.referer || "");
+  if (ref.includes("proxy?url=")) {
+    try {
+      const inner = decodeURIComponent((ref.split("proxy?url=")[1] || "").split("&")[0]);
+      if (inner) {
+        const o = new URL(inner);
+        if (o.protocol === "http:" || o.protocol === "https:") return o.origin;
+      }
+    } catch (_) {}
+  }
   const cookie = String(req.headers.cookie || "");
   const m = /(?:^|;\s*)__px_origin=([^;]*)/.exec(cookie);
   if (m && m[1]) {
     try {
       const o = decodeURIComponent(m[1]);
       if (/^https?:\/\/[^\s]+$/i.test(o)) return o.replace(/\/+$/, "");
-    } catch (_) {}
-  }
-  const ref = String(req.headers.referer || "");
-  if (ref.includes("proxy?url=")) {
-    try {
-      const inner = decodeURIComponent((ref.split("proxy?url=")[1] || "").split("&")[0]);
-      if (inner) return new URL(inner).origin;
     } catch (_) {}
   }
   return null;
