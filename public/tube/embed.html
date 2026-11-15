@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="referrer" content="no-referrer">
+  <title>若雪幸せTube · 全画面プレイヤー</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+    video#mp4Video {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+    #msg {
+      position: absolute; inset: 0;
+      display: none;
+      flex-direction: column; align-items: center; justify-content: center;
+      gap: 12px; padding: 24px; text-align: center;
+      color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", sans-serif;
+      font-size: 14px; line-height: 1.7;
+      background: #020617;
+    }
+    #msg strong { font-size: 16px; }
+    #msg button {
+      background: #0284c7; color: #fff; border: 0; border-radius: 10px;
+      padding: 10px 18px; font-size: 14px; font-weight: 700; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <video id="mp4Video" controls playsinline autoplay preload="metadata"></video>
+  <audio id="syncAudio" style="display:none;"></audio>
+  <div id="msg">
+    <strong id="msgTitle">この動画は再生できませんでした</strong>
+    <div id="msgBody">通信が混み合っているか、配信URLを取得できませんでした。</div>
+    <button onclick="load()">🔁 もう一度読み込む</button>
+  </div>
+  <script>
+    // 自ドメイン内だけで完結する全画面プレイヤー（外部ドメインへは一切取りに行かない）
+    const params = new URLSearchParams(location.search);
+    const videoId = (params.get("v") || "").trim();
+    const video = document.getElementById("mp4Video");
+    const audio = document.getElementById("syncAudio");
+
+    video.addEventListener("play", () => { if (audio.src) audio.play().catch(() => {}); });
+    video.addEventListener("pause", () => { if (audio.src) audio.pause(); });
+    video.addEventListener("seeking", () => { if (audio.src) audio.currentTime = video.currentTime; });
+    video.addEventListener("timeupdate", () => {
+      if (audio.src && Math.abs(video.currentTime - audio.currentTime) > 0.4) {
+        audio.currentTime = video.currentTime + 0.1;
+      }
+    });
+    video.addEventListener("error", () => {
+      if (!video.currentSrc) return;
+      show("この動画は再生できませんでした", "配信URLの有効期限切れか、元動画の制限が考えられます。");
+    });
+
+    function show(title, body) {
+      document.getElementById("msgTitle").textContent = title;
+      document.getElementById("msgBody").innerHTML = body;
+      document.getElementById("msg").style.display = "flex";
+    }
+    function hide() { document.getElementById("msg").style.display = "none"; }
+
+    async function load() {
+      if (!videoId) {
+        show("動画が指定されていません", "URLに ?v=動画ID を付けて開いてください。");
+        return;
+      }
+      hide();
+      video.removeAttribute("src");
+      video.load();
+      audio.removeAttribute("src");
+      audio.load();
+      try {
+        const res = await fetch(`/api/tube/stream-info?v=${encodeURIComponent(videoId)}`, { cache: "no-store" });
+        const data = await res.json();
+        if (data.ok && data.videoUrl) {
+          video.src = data.videoUrl;
+          if (data.audioUrl) { audio.src = data.audioUrl; audio.load(); }
+          video.load();
+          video.play().catch(() => {});
+          return;
+        }
+        show("この動画は直接再生できませんでした", "配信URLを取得できませんでした。「もう一度読み込む」を押してください。");
+      } catch (_) {
+        show("通信に失敗しました", "「もう一度読み込む」を押してください。");
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

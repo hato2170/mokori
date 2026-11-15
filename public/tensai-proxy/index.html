@@ -393,6 +393,27 @@
       }
     }
 
+    // 🧩 TurboWarp は「プロジェクト以外のページ」を iframe 内で開くと
+    // 「Invalid TurboWarp Embed :(」を出す。プロジェクトは /embed へ寄せ、
+    // トップページは iframe では開けないので新しいタブ（自ドメインプロキシ）で開く。
+    function turboWarpPath(value) {
+      try {
+        const u = new URL(/^https?:\/\//i.test(value) ? value : "https://" + value);
+        const host = u.hostname.toLowerCase();
+        if (host !== "turbowarp.org" && host !== "www.turbowarp.org") return null;
+        const segs = u.pathname.split("/").filter(Boolean);
+        const id = /^\d{4,}$/.test(segs[0] || "") ? segs[0] : "";
+        const isEmbed = (segs[1] || "").toLowerCase() === "embed";
+        if (id && !isEmbed) {
+          return { embed: `https://turbowarp.org/${id}/embed${u.search || "?autoplay=true"}` };
+        }
+        if (!id) return { home: true };
+        return null;
+      } catch (_) {
+        return null;
+      }
+    }
+
     function openProxyUrl() {
       const input = document.getElementById("targetUrlInput");
       let url = (input.value || "").trim();
@@ -414,6 +435,15 @@
       const ytPath = youtubeTubePath(url);
       if (ytPath) {
         window.location.href = ytPath;
+        return;
+      }
+
+      // TurboWarp: プロジェクト以外は iframe 内で開けない（Invalid TurboWarp Embed）
+      const twPath = turboWarpPath(url);
+      if (twPath && twPath.embed) {
+        url = twPath.embed;
+      } else if (twPath && twPath.home) {
+        window.open("/api/proxy?url=" + encodeURIComponent("https://turbowarp.org") + "&_tw=1", "_blank", "noopener");
         return;
       }
       activeUrl = url;

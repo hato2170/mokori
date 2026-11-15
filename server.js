@@ -3,6 +3,12 @@ const path = require("path");
 const https = require("https");
 const vm = require("vm");
 const { Readable } = require("stream");
+const dns = require("dns");
+// Render などのクラウド環境では、外向きの IPv6 接続が確立しないまま固まり
+// fetch が UND_ERR_CONNECT_TIMEOUT（fetch failed）で落ちることがある。
+// 名前解決の結果を IPv4 優先にしておく（DNS の AAAA が先に返るホスト対策）。
+// 例: 天才プロキシで「相手のサイトが一時的に応答していない…」と出る原因のひとつ。
+try { dns.setDefaultResultOrder("ipv4first"); } catch (_) {}
 const express = require("express");
 const admin = require("firebase-admin");
 const bcrypt = require("bcryptjs");
@@ -3299,9 +3305,25 @@ async function fetchUpstream(targetUrl, baseHeaders, fetchOpts, { allowUAChange 
         return response;
       } catch (err) {
         lastError = err;
-        // 接続自体が届かない/DNS不能なら、UAを変えても同じなので即あきらめる
         const code = err && err.cause ? String(err.cause.code || "") : "";
-        if (["UND_ERR_CONNECT_TIMEOUT", "ENOTFOUND", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN"].includes(code)) return Promise.reject(err);
+        // 🕒 接続タイムアウト（UND_ERR_CONNECT_TIMEOUT / ETIMEDOUT）は
+        // 「相手が一瞬だけ応答しない」「IPv6 側で固まる」だけで起きる。
+        // UA を変える意味は無いが、少し待って同じ URL を引き直すと通ることが多いので
+        // 一度だけ即リトライする（以前はここで即諦めて 502 画面になっていた）。
+        const connectTimeout = ["UND_ERR_CONNECT_TIMEOUT", "ETIMEDOUT", "UND_ERR_SOCKET", "ECONNRESET"].includes(code);
+        // DNS 不能・経路そのものが無い場合は UA を変えても同じなので即あきらめる
+        const unreachable = ["ENOTFOUND", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN"].includes(code);
+        if (connectTimeout && !err.__tubeConnectRetried) {
+          try {
+            await new Promise((r) => setTimeout(r, 700));
+            const retryResponse = await fetch(targetUrl, { ...attemptOpts, headers });
+            return retryResponse;
+          } catch (retryErr) {
+            if (retryErr && typeof retryErr === "object") retryErr.__tubeConnectRetried = true;
+            lastError = retryErr;
+          }
+        }
+        if (unreachable || connectTimeout) return Promise.reject(lastError);
         // 「接続が途中で切れた」系（MetaがデータセンターIPを弾く典型）は少し待ってもう一度
         if (attempt < retries) {
           await new Promise((r) => setTimeout(r, 600));
@@ -4014,6 +4036,32 @@ app.all("/api/proxy", async (req, res) => {
       }
     }
   } catch (_) {}
+
+  // 🧩 TurboWarp: プロジェクト以外のページ（トップなど）を iframe 内で開くと、
+  // TurboWarp側が frame 内からの読み込みを拒否して「Invalid TurboWarp Embed :(
+  // See docs.turbowarp.org/embedding for more information.」になる。
+  // iframe から来たときは必ず /embed に寄せ、/embed を作れないページは
+  // 自ドメインの案内ページを返して行き止まりにしない。
+  {
+    let tw = null;
+    try { tw = new URL(targetUrl); } catch (_) {}
+    if (tw && /^(?:www\.)?turbowarp\.org$/i.test(tw.hostname)) {
+      const dest = String(req.headers["sec-fetch-dest"] || "").toLowerCase();
+      const framed = dest === "iframe" || dest === "frame" || String(req.query._frame || "") === "1";
+      const segs = tw.pathname.split("/").filter(Boolean);
+      const projectId = /^\d{4,}$/.test(segs[0] || "") ? segs[0] : "";
+      const isEmbed = (segs[1] || "").toLowerCase() === "embed";
+      if (framed && !isEmbed && String(req.query._tw || "") !== "1") {
+        if (projectId) {
+          const embedUrl = `https://turbowarp.org/${projectId}/embed${tw.search || "?autoplay=true"}`;
+          return res.redirect(`/api/proxy?url=${encodeURIComponent(embedUrl)}&_tw=1`);
+        }
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        return res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>TurboWarp</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b1220;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN",sans-serif;padding:24px;text-align:center}.card{max-width:420px;background:#111a2e;border:1px solid #24334d;border-radius:16px;padding:22px}a.btn{display:inline-block;margin-top:14px;background:#0284c7;color:#fff;text-decoration:none;border-radius:10px;padding:11px 18px;font-weight:700}input{width:100%;box-sizing:border-box;margin-top:14px;background:#0b1220;border:1px solid #2d3d59;border-radius:10px;padding:11px 12px;color:#fff;font-size:14px}p{font-size:13px;color:#94a3b8;line-height:1.7}</style></head><body><div class="card"><div style="font-size:34px">🧩</div><h2 style="font-size:17px;margin:8px 0">TurboWarp</h2><p>TurboWarpのトップページはアプリ内（iframe）では開けません。<br>新しいタブで開くか、下にプロジェクトIDかURLを入れてください。</p><a class="btn" href="/api/proxy?url=${encodeURIComponent("https://turbowarp.org")}&_tw=1" target="_blank" rel="noopener">🌐 新しいタブで開く</a><input id="twp" placeholder="プロジェクトID 例: 544538470" /><a class="btn" href="#" onclick="var v=(document.getElementById('twp').value||'').trim();if(!v)return false;var m=v.match(/([0-9]{4,})/);if(!m)return false;location.href='/api/proxy?url='+encodeURIComponent('https://turbowarp.org/'+m[1]+'/embed?autoplay=true')+'&_tw=1';return false;">▶ プロジェクトを開く</a></div></body></html>`);
+      }
+    }
+  }
 
   // Emscripten/WASM等の相対URLが /api/index.wasm に解決された場合の救済。
   // ⚠ これは「ページと同じホストの /api/… が相対解決で迷子になった」ときの救済なので、
@@ -6088,10 +6136,28 @@ app.get("/api/tube/thumb", async (req, res) => {
       return Readable.fromWeb(upstream.body).pipe(res);
     }
   } catch (_) {}
-  res.redirect(`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`);
+  // 代替ホスト（img.youtube.com は別CDN）をサーバー側で取りに行く
+  try {
+    const alt = await fetch(`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (alt.ok && alt.body) {
+      res.setHeader("Content-Type", "image/jpeg");
+      return Readable.fromWeb(alt.body).pipe(res);
+    }
+  } catch (_) {}
+  // ⚠ 外部（i.ytimg.com 等）へ 302 リダイレクトしない。学校iPadのフィルターは
+  // 「外部ドメインへ取りに行った」時点でフィルター画面を出すため、サムネイル1枚でも
+  // 外へ出さず、自ドメインのプレースホルダー画像を返す。
+  res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=300");
+  return res.send(`<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" viewBox="0 0 480 270"><rect width="480" height="270" fill="#0f172a"/><circle cx="240" cy="118" r="34" fill="#0284c7"/><path d="M229 100l26 18-26 18z" fill="#fff"/><text x="240" y="186" fill="#38bdf8" font-family="-apple-system,sans-serif" font-size="20" text-anchor="middle">若雪幸せTube</text></svg>`);
 });
 
 const streamInfoCache = new Map();
+// 直近で動画情報を返せたInvidiousインスタンス。次の検索ではここを先に試す。
+let tubeWorkingHost = "";
 
 app.get("/api/tube/stream-info", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -6136,21 +6202,28 @@ app.get("/api/tube/stream-info", async (req, res) => {
   const eduParams = cachedEduParam || "";
   const eduEmbedUrl = `https://www.youtubeeducation.com/embed/${videoId}${eduParams}${eduParams ? "&" : "?"}playlist=${videoId}`;
 
-  if (streamInfoCache.has(videoId)) {
+  if (streamInfoCache.has(videoId) && String(req.query.refresh || "") !== "1") {
     const cached = streamInfoCache.get(videoId);
     if (Date.now() - cached.time < 300000) {
       return res.json({ ok: true, eduEmbedUrl, ...cached.data });
     }
   }
 
-  const invidiousHosts = [
+  // 実測で応答するインスタンスを先頭に並べる（先頭が生きていれば1回のfetchで済む）。
+  // 死んでいるホストを毎回待つと、その分だけ再生開始が遅れて「読み込みのまま」に見える。
+  const invidiousHostList = [
     "echostreamz.com",
-    "inv.nadeko.net",
-    "yewtu.be",
+    "yt.chocolatemoo53.com",
     "invidious.nerdvpn.de",
+    "inv.nadeko.net",
+    "invidious.tiekoetter.com",
+    "iv.melmac.space",
     "invidious.privacydev.net",
-    "iv.melmac.space"
+    "yewtu.be"
   ];
+  const invidiousHosts = tubeWorkingHost
+    ? [tubeWorkingHost, ...invidiousHostList.filter((h) => h !== tubeWorkingHost)]
+    : invidiousHostList;
 
   for (const host of invidiousHosts) {
     try {
@@ -6159,10 +6232,12 @@ app.get("/api/tube/stream-info", async (req, res) => {
       const apiUrl = `https://${host}/api/v1/videos/${videoId}?local=true`;
       const invResp = await fetch(apiUrl, {
         headers: { "User-Agent": "Mozilla/5.0" },
-        signal: AbortSignal.timeout(5000)
+        signal: AbortSignal.timeout(7000)
       });
       if (!invResp.ok) continue;
       const invData = await invResp.json();
+      // インスタンスは 200 でも { error: "access_denied" } を返すことがある
+      if (!invData || invData.error) continue;
       // 相対パス（local=true）を絶対URLに直す
       const abs = (u) => {
         if (!u || typeof u !== "string") return "";
@@ -6217,11 +6292,17 @@ app.get("/api/tube/stream-info", async (req, res) => {
       const proxiedMusicUrl = musicSourceUrl ? `/api/tube/proxy-stream?url=${encodeURIComponent(musicSourceUrl)}` : "";
 
       const durationSec = invData.lengthSeconds || 180;
+      // 音声が別トラック（DASH）か、音声込みの1本（muxed）かをクライアントへ伝える
+      const muxedPlayback = !audioUrl;
+      // 実際にストリームを返せたインスタンスを記録（次回の先頭候補）
+      tubeWorkingHost = host;
       const resultData = {
         videoId,
         title: invData.title || "動画",
         author: invData.author || "",
         duration: durationSec,
+        muxed: muxedPlayback,
+        sourceHost: host,
         videoUrl: proxiedVideoUrl,
         audioUrl: proxiedAudioUrl,
         musicUrl: proxiedMusicUrl,
@@ -6256,8 +6337,9 @@ app.get("/api/tube/stream", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const videoId = String(req.query.v || "").trim();
   if (!videoId) return res.status(400).send("Video ID required");
-  const eduParam = await getLiveEduParam();
-  return res.redirect(`https://www.youtubeeducation.com/embed/${videoId}${eduParam}&playlist=${videoId}`);
+  // ⚠ 外部（youtubeeducation.com）へ飛ばさない。学校iPadのフィルターで止められ、
+  // フィルター画面に遷移してしまうため、自ドメイン内のプレイヤーへ回す。
+  return res.redirect(`/tube/embed.html?v=${encodeURIComponent(videoId)}`);
 });
 
 // 5. 各種YouTube代替ミラー中継（しあTube、わかめTube、YukiTube、YouTube＋）
@@ -6320,7 +6402,14 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
     yukitube: `https://yewtu.be/embed/${videoId}`,
     youtubeplus: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0`
   };
-  const defaultEmbedSrc = serviceEmbeds[service] || `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0`;
+  const defaultEmbedRaw = serviceEmbeds[service] || `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0`;
+  // 埋め込みは必ず自ドメイン（/api/proxy）経由で読む。
+  // 学校iPadのフィルターは youtube-nocookie / piped / yewtu などの外部ドメイン自体を
+  // 止めてしまうため、iframe の src を外部URLにするとフィルター画面へ飛ばされる。
+  const proxiedEmbed = (u) => `/api/proxy?url=${encodeURIComponent(u)}`;
+  const defaultEmbedSrc = proxiedEmbed(defaultEmbedRaw);
+  // iframe からトップページを書き換えさせない（学校フィルター等の外部画面へ飛ばす妨害）
+  const FRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups allow-presentation allow-modals";
 
   const html = `<!DOCTYPE html>
 <html lang="ja">
@@ -6360,16 +6449,16 @@ app.get("/api/tube/mirror/:service", async (req, res) => {
     </div>
   </div>
   <div class="player-container">
-    <iframe id="mainPlayerFrame" src="${defaultEmbedSrc}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture; accelerometer; gyroscope"></iframe>
+    <iframe id="mainPlayerFrame" src="${defaultEmbedSrc}" sandbox="${FRAME_SANDBOX}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture; accelerometer; gyroscope"></iframe>
   </div>
   <div class="notice-bar">
     <div>${currentTheme.desc} · 🛡️ i-フィルター@cloud完全回避</div>
     <a href="${currentTheme.externalUrl}" target="_blank" rel="noopener" class="ext-btn">🌐 本家サイトで開く</a>
   </div>
   <script>
-    const eduSrc = "${eduEmbedUrl}";
-    const mirrorSrc = "${currentTheme.externalUrl}";
-    let currentIsEdu = ${defaultEmbedSrc === eduEmbedUrl ? "true" : "false"};
+    const eduSrc = "${proxiedEmbed(eduEmbedUrl)}";
+    const mirrorSrc = "${proxiedEmbed(currentTheme.externalUrl)}";
+    let currentIsEdu = ${proxiedEmbed(defaultEmbedRaw) === proxiedEmbed(eduEmbedUrl) ? "true" : "false"};
 
     function switchMode(m) {
       const f = document.getElementById("mainPlayerFrame");

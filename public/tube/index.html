@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <meta name="theme-color" content="#0a0f1d">
-  <title>若雪幸せTube · MP4動画プレイヤー</title>
+  <meta name="referrer" content="no-referrer">
+  <title>若雪幸せTube · 自ドメイン再生プレイヤー</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -72,7 +73,7 @@
       cursor: pointer;
     }
 
-    /* MP4スタイル プレイヤー枠 */
+    /* プレイヤー枠 */
     .player-card {
       background: #111827;
       border: 1px solid #1f2937;
@@ -190,6 +191,36 @@
       color: #94a3b8;
     }
 
+    /* 再生できなかったときの案内（プレイヤー内に出す・外部へは飛ばさない） */
+    .player-notice {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      text-align: center;
+      padding: 20px;
+      background: rgba(2, 6, 23, 0.92);
+      z-index: 30;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #cbd5e1;
+    }
+    .player-notice strong { color: #f8fafc; font-size: 15px; }
+    .notice-btn {
+      background: #0284c7;
+      color: #fff;
+      border: 0;
+      border-radius: 10px;
+      padding: 9px 16px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .notice-btn.ghost { background: #1e293b; border: 1px solid #334155; }
+
     /* 緊急回避 */
     #panicOverlay {
       position: fixed;
@@ -249,23 +280,32 @@
       <button onclick="searchVideos()">🔍 検索</button>
     </div>
 
-    <!-- MP4 / 埋め込みプレイヤー -->
+    <!-- 自ドメインプレイヤー -->
     <div class="player-card">
       <div class="video-wrap" id="playerWrap" style="position:relative; width:100%; aspect-ratio:16/9; background:#000;">
         <video id="mp4Video" controls playsinline preload="metadata" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; display:block; z-index:2; outline:none; background:#000;"></video>
         <audio id="syncAudio" style="display:none;"></audio>
-        <iframe id="tubeFrame" src="" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="position:absolute; top:0; left:0; width:100%; height:100%; border:0; display:none; z-index:1;"></iframe>
+        <iframe id="tubeFrame" src="about:blank" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation allow-modals" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="no-referrer" allowfullscreen style="position:absolute; top:0; left:0; width:100%; height:100%; border:0; display:none; z-index:1;"></iframe>
+        <div class="player-notice" id="playerNotice">
+          <strong id="noticeTitle">この動画は直接再生できませんでした</strong>
+          <div id="noticeBody">通信が混み合っているか、この動画の配信URLを取得できませんでした。</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:center;">
+            <button class="notice-btn" id="noticeRetry">🔁 もう一度読み込む</button>
+            <button class="notice-btn ghost" onclick="switchPlayerMode('embed')">🎥 埋め込みモードへ</button>
+          </div>
+        </div>
       </div>
       <div class="player-info">
-        <div class="video-title" id="currentTitle">若雪幸せTube (学タブ特化プレイヤー)</div>
+        <div class="video-title" id="currentTitle">若雪幸せTube (自ドメイン再生プレイヤー)</div>
         <div class="video-meta">
           <span id="currentAuthor">動画を選択してください</span>
           <span id="currentViews"></span>
           <span id="currentStatus" style="color:#38bdf8; font-weight:bold; margin-left:8px;">✨ 準備完了</span>
         </div>
         <div class="player-controls">
-          <button class="ctrl-btn" id="btnModeEdu" onclick="switchPlayerMode('edu')" style="background:#0284c7; font-weight:bold;">🎓 学校iPad (公式Education)</button>
-          <button class="ctrl-btn" id="btnModeMp4" onclick="switchPlayerMode('mp4')">🎬 MP4直接再生</button>
+          <button class="ctrl-btn" id="btnModeMp4" onclick="switchPlayerMode('mp4')" style="background:#0284c7; font-weight:bold;">🎬 MP4直接再生</button>
+          <button class="ctrl-btn" id="btnModeEmbed" onclick="switchPlayerMode('embed')">🎥 埋め込み再生</button>
+          <button class="ctrl-btn" id="btnModeEdu" onclick="switchPlayerMode('edu')">🎓 学校iPad (Education)</button>
           <button class="ctrl-btn" id="btnModeSia" onclick="switchPlayerMode('shiatube')">⚡ しあTube</button>
           <button class="ctrl-btn" id="btnModeWakame" onclick="switchPlayerMode('wakametube')">🥬 わかめTube</button>
           <button class="ctrl-btn" id="btnModeYuki" onclick="switchPlayerMode('yukitube')">❄️ YukiTube</button>
@@ -310,39 +350,45 @@
     ];
 
     let currentVideoId = "";
-    let currentMode = "edu";
+    // ⭐ 既定は「自ドメイン内で完結するMP4直接再生」。
+    // YouTube埋め込みを初期値にすると、学校iPadではYouTube側（外部ドメイン）を読みに行って
+    // フィルター画面へ飛ばされるため、最初から自ドメイン再生にする。
+    let currentMode = "mp4";
+    let currentEduEmbedUrl = "";
     let liveEduParam = "";
     const API_BASE = window.location.origin.includes("mokori") ? "" : "https://mokori00.onrender.com";
+    // 埋め込み系は必ず自ドメインのプロキシ経由で読む（外部ドメインを直接読ませない）
+    const proxied = (u) => `${API_BASE}/api/proxy?url=${encodeURIComponent(u)}`;
 
     const mp4Video = document.getElementById("mp4Video");
     const syncAudio = document.getElementById("syncAudio");
+    const mediaStatus = document.getElementById("currentStatus");
+    const noticeEl = document.getElementById("playerNotice");
+    const frameEl = document.getElementById("tubeFrame");
 
-    // Audio / Video synchronization for native MP4 playback
-    mp4Video.addEventListener("play", () => {
-      if (syncAudio.src) syncAudio.play().catch(() => {});
-    });
-    mp4Video.addEventListener("playing", () => {
-      if (syncAudio.src) syncAudio.play().catch(() => {});
-    });
-    mp4Video.addEventListener("pause", () => {
-      if (syncAudio.src) syncAudio.pause();
-    });
-    mp4Video.addEventListener("seeking", () => {
-      if (syncAudio.src) syncAudio.currentTime = mp4Video.currentTime;
-    });
+    function setMp4Status(message) {
+      if (mediaStatus) mediaStatus.textContent = message;
+    }
+    function showNotice(title, body) {
+      document.getElementById("noticeTitle").textContent = title;
+      document.getElementById("noticeBody").innerHTML = body;
+      noticeEl.style.display = "flex";
+    }
+    function hideNotice() {
+      noticeEl.style.display = "none";
+    }
+
+    // 音声トラックが別（DASH）のときの簡易同期
+    mp4Video.addEventListener("play", () => { if (syncAudio.src) syncAudio.play().catch(() => {}); });
+    mp4Video.addEventListener("playing", () => { if (syncAudio.src) syncAudio.play().catch(() => {}); });
+    mp4Video.addEventListener("pause", () => { if (syncAudio.src) syncAudio.pause(); });
+    mp4Video.addEventListener("seeking", () => { if (syncAudio.src) syncAudio.currentTime = mp4Video.currentTime; });
     mp4Video.addEventListener("timeupdate", () => {
       if (syncAudio.src && Math.abs(mp4Video.currentTime - syncAudio.currentTime) > 0.4) {
         syncAudio.currentTime = mp4Video.currentTime + 0.1;
       }
     });
-    mp4Video.addEventListener("ratechange", () => {
-      if (syncAudio.src) syncAudio.playbackRate = mp4Video.playbackRate;
-    });
-
-    const mediaStatus = document.getElementById("currentStatus");
-    function setMp4Status(message) {
-      if (mediaStatus) mediaStatus.textContent = message;
-    }
+    mp4Video.addEventListener("ratechange", () => { if (syncAudio.src) syncAudio.playbackRate = mp4Video.playbackRate; });
 
     let bufferStallTimer = null;
     mp4Video.addEventListener("loadstart", () => setMp4Status("⏳ MP4ストリームを読み込み中..."));
@@ -353,24 +399,18 @@
     });
     mp4Video.addEventListener("playing", () => {
       clearTimeout(bufferStallTimer);
-      setMp4Status("🎬 動画を再生中");
+      setMp4Status("🎬 再生中（自ドメイン内）");
+      hideNotice();
     });
     mp4Video.addEventListener("waiting", () => {
       setMp4Status("⏳ 動画をバッファリング中...");
       clearTimeout(bufferStallTimer);
-      bufferStallTimer = setTimeout(() => {
-        if (mp4Video.paused || mp4Video.readyState < 3) {
-          console.warn("Buffer stall detected, auto-switching to high-speed mirror player");
-          switchPlayerMode("edu");
-        }
-      }, 1500);
+      // ⚠ ここで外部の埋め込みへ自動で切り替えない（学校iPadで外部ドメインを読みに行き、
+      // フィルター画面へ飛ばされる原因だった）。我慢強く待つだけにする。
     });
     mp4Video.addEventListener("stalled", () => {
-      setMp4Status("⚠️ 動画の読み込みが停滞しています");
+      setMp4Status("⚠️ 動画の読み込みが停滞しています（もう少し待ってください）");
       clearTimeout(bufferStallTimer);
-      bufferStallTimer = setTimeout(() => {
-        switchPlayerMode("edu");
-      }, 1500);
     });
     mp4Video.addEventListener("pause", () => {
       if (!mp4Video.ended) setMp4Status("⏸ 動画を一時停止中");
@@ -379,8 +419,9 @@
     mp4Video.addEventListener("error", () => {
       clearTimeout(bufferStallTimer);
       if (!mp4Video.currentSrc) return;
-      console.warn("MP4 video stream error, auto-switching to mirror player");
-      switchPlayerMode("edu");
+      // 自動遷移はしない。プレイヤーの中に案内を出して、選んでもらう。
+      setMp4Status("⚠️ 再生できませんでした");
+      showNotice("この動画は直接再生できませんでした", "配信URLの有効期限切れか、元動画の制限が考えられます。<br>「もう一度読み込む」か、埋め込みモードを試してください。");
     });
 
     function renderCards(list) {
@@ -405,79 +446,74 @@
       });
     }
 
-    const EDU_PARAMS = "?autoplay=1&mute=0&controls=1&start=0&origin=https%3A%2F%2Fcreate.kahoot.it&playsinline=1&showinfo=0&rel=0&iv_load_policy=3&modestbranding=1&fs=1&cc_load_policy=0&enablejsapi=1&widgetid=1&forigin=https%3A%2F%2Fcreate.kahoot.it%2Flearner%2Fcb8cb5ae-d835-4c4a-bc2d-9cc78519d646%2Fcourse%2F6fba06e3-1f76-47a8-9a4a-53c53eb86286%2F0&aoriginsup=1&vf=6&embed_config=%7B%22enc%22%3A%22AXH1ezmGkMf2FLv0BY163EhJHuZ7l-eqFdNKi-qqyyuWZ4ocVXbnfgWJAKgkE9Jn93hXkK3xo4n7q68b750DYQJ1MI07Fu_t7iQSF6CVUg5jx-oGzkIa688Nrse8VNYp8pl1JaBrLbvstbMKzRBnfm2h46Wf28CKkQ%3D%3D%22%2C%22hideTitle%22%3Afalse%7D";
-
     async function loadLiveEduParam() {
       try {
         const res = await fetch(`${API_BASE}/api/tube/edu-param`);
         const data = await res.json();
-        if (data.ok && data.params) {
-          liveEduParam = data.params;
-        }
+        if (data.ok && data.params) liveEduParam = data.params;
       } catch (_) {}
-    }
-
-    function clearMediaLoadTimer() {
-      if (bufferStallTimer) {
-        clearTimeout(bufferStallTimer);
-        bufferStallTimer = null;
-      }
     }
 
     let playerLoadId = 0;
 
-    async function updatePlayerSrc(autoplay = true) {
+    function showFrame(url) {
+      const videoEl = document.getElementById("mp4Video");
+      videoEl.style.display = "none";
+      videoEl.pause();
+      syncAudio.pause();
+      hideNotice();
+      frameEl.style.display = "block";
+      frameEl.style.zIndex = "10";
+      frameEl.src = url;
+    }
+
+    function hideFrame() {
+      frameEl.style.display = "none";
+      frameEl.style.zIndex = "1";
+      frameEl.src = "about:blank";
+      document.getElementById("mp4Video").style.display = "block";
+    }
+
+    async function updatePlayerSrc(autoplay = true, refresh = false) {
       const loadId = ++playerLoadId;
-      clearMediaLoadTimer();
-      const frame = document.getElementById("tubeFrame");
+      clearTimeout(bufferStallTimer);
       const videoEl = document.getElementById("mp4Video");
       const audioEl = document.getElementById("syncAudio");
       const statusSpan = document.getElementById("currentStatus");
 
-      if (currentMode === "edu") {
-        videoEl.style.display = "none";
-        videoEl.pause();
-        audioEl.pause();
-        frame.style.display = "block";
-        frame.style.zIndex = "10";
-        frame.src = `https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&rel=0`;
-        statusSpan.textContent = "🎬 学校iPad (アンブロック高速再生中)";
-      } else if (currentMode === "mp4") {
-        frame.style.display = "none";
-        frame.src = "about:blank";
-        videoEl.style.display = "block";
+      if (!currentVideoId) {
+        setMp4Status("✨ 準備完了 · 動画を選んでください");
+        return;
+      }
+
+      if (currentMode === "mp4") {
+        hideFrame();
+        hideNotice();
         videoEl.pause();
         audioEl.pause();
         audioEl.removeAttribute("src");
         audioEl.load();
         videoEl.removeAttribute("src");
         videoEl.load();
-        if (!currentVideoId) {
-          statusSpan.textContent = "✨ 準備完了 · 動画を選んでください";
-          return;
-        }
         videoEl.poster = `${API_BASE}/api/tube/thumb?v=${currentVideoId}`;
         statusSpan.textContent = "⏳ MP4ストリーム接続中...";
 
         try {
-          const res = await fetch(`${API_BASE}/api/tube/stream-info?v=${encodeURIComponent(currentVideoId)}`, { cache: "no-store" });
+          const res = await fetch(`${API_BASE}/api/tube/stream-info?v=${encodeURIComponent(currentVideoId)}${refresh ? "&refresh=1" : ""}`, { cache: "no-store" });
           if (!res.ok) throw new Error(`stream-info HTTP ${res.status}`);
           const data = await res.json();
           if (loadId !== playerLoadId) return;
+          if (data.eduEmbedUrl) currentEduEmbedUrl = data.eduEmbedUrl;
 
-          const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-          const sourceUrl = data.videoUrl
-            ? new URL(data.videoUrl, API_BASE || window.location.origin).href
-            : (isSafari ? data.hlsUrl : "");
-          if (data.ok && sourceUrl) {
-            videoEl.src = sourceUrl;
-            if (data.videoUrl && data.audioUrl) {
-              audioEl.src = new URL(data.audioUrl, API_BASE || window.location.origin).href;
+          if (data.ok && data.videoUrl) {
+            videoEl.src = data.videoUrl;
+            if (data.audioUrl) {
+              audioEl.src = data.audioUrl;
               audioEl.load();
             }
             videoEl.load();
             if (autoplay) {
-              videoEl.play().catch(error => {
+              videoEl.play().catch(() => {
                 if (loadId !== playerLoadId || !videoEl.paused) return;
                 statusSpan.textContent = "▶️ 再生準備完了。再生ボタンを押してください";
               });
@@ -486,61 +522,65 @@
             }
             return;
           }
-          console.warn("MP4 stream resolution fallback, auto-switching to unblocked player");
-          frame.style.display = "block";
-          frame.style.zIndex = "10";
-          frame.src = `https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&rel=0`;
-          statusSpan.textContent = "🎬 学校iPad・アンブロック高速再生中";
-          return;
+          // 直接再生のURLが取れなかったときも、外部（YouTube）へは飛ばさない
+          statusSpan.textContent = "⚠️ MP4 URLを取得できませんでした";
+          showNotice("この動画は直接再生できませんでした", "配信URLを取得できませんでした。<br>少し待って「もう一度読み込む」を押すか、埋め込みモードを試してください。");
         } catch (e) {
+          if (loadId !== playerLoadId) return;
           console.warn("MP4 stream resolution error:", e);
-          if (loadId === playerLoadId) {
-            frame.style.display = "block";
-            frame.style.zIndex = "10";
-            frame.src = `https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&rel=0`;
-            statusSpan.textContent = "🎬 学校iPad・アンブロック高速再生中";
-          }
+          statusSpan.textContent = "⚠️ MP4 URLを取得できませんでした";
+          showNotice("通信に失敗しました", "サーバーから動画URLを取得できませんでした。<br>「もう一度読み込む」を押してください。");
         }
-      } else if (currentMode === "shiatube") {
-        videoEl.style.display = "none";
-        videoEl.pause();
-        audioEl.pause();
-        frame.style.display = "block";
-        frame.src = `${API_BASE}/api/tube/mirror/shiatube?v=${currentVideoId}`;
-        statusSpan.textContent = "⚡ しあTube (埋め込みを読み込み中...)";
-      } else if (currentMode === "wakametube") {
-        videoEl.style.display = "none";
-        videoEl.pause();
-        audioEl.pause();
-        frame.style.display = "block";
-        frame.src = `${API_BASE}/api/tube/mirror/wakametube?v=${currentVideoId}`;
-        statusSpan.textContent = "🥬 わかめTube (埋め込みを読み込み中...)";
-      } else if (currentMode === "yukitube") {
-        videoEl.style.display = "none";
-        videoEl.pause();
-        audioEl.pause();
-        frame.style.display = "block";
-        frame.src = `${API_BASE}/api/tube/mirror/yukitube?v=${currentVideoId}`;
-        statusSpan.textContent = "❄️ YukiTube (埋め込みを読み込み中...)";
-      } else if (currentMode === "youtubeplus") {
-        videoEl.style.display = "none";
-        videoEl.pause();
-        audioEl.pause();
-        frame.style.display = "block";
-        frame.src = `${API_BASE}/api/tube/mirror/youtubeplus?v=${currentVideoId}`;
-        statusSpan.textContent = "➕ YouTube＋ (埋め込みを読み込み中...)";
-      } else if (currentMode === "proxy") {
-        videoEl.style.display = "none";
-        videoEl.pause();
-        audioEl.pause();
-        frame.style.display = "block";
-        frame.src = `${API_BASE}/api/tube/mirror/shiatube?v=${currentVideoId}`;
-        statusSpan.textContent = "🛡️ プロキシ埋め込みを読み込み中...";
+        return;
+      }
+
+      if (currentMode === "embed") {
+        // YouTube公式埋め込みは、外部ドメインのまま読むと学校iPadのフィルターで止まる。
+        // 自ドメインのプロキシ経由で読むことで、フィルター画面へ飛ばされない。
+        showFrame(proxied(`https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&rel=0`));
+        statusSpan.textContent = "🎥 埋め込み再生（自ドメイン経由）";
+        return;
+      }
+
+      if (currentMode === "edu") {
+        let eduUrl = currentEduEmbedUrl;
+        if (!eduUrl) {
+          try {
+            const res = await fetch(`${API_BASE}/api/tube/stream-info?v=${encodeURIComponent(currentVideoId)}${refresh ? "&refresh=1" : ""}`, { cache: "no-store" });
+            const data = await res.json();
+            if (loadId !== playerLoadId) return;
+            eduUrl = data.eduEmbedUrl || "";
+            if (eduUrl) currentEduEmbedUrl = eduUrl;
+          } catch (_) {}
+        }
+        if (!eduUrl) {
+          const params = (await (async () => { await loadLiveEduParam(); return liveEduParam; })()) || "";
+          eduUrl = `https://www.youtubeeducation.com/embed/${currentVideoId}${params}${params ? "&" : "?"}playlist=${currentVideoId}`;
+        }
+        showFrame(proxied(eduUrl));
+        statusSpan.textContent = "🎓 学校iPad (Education・自ドメイン経由)";
+        return;
+      }
+
+      // 各種ミラー（しあTube / わかめTube / YukiTube / YouTube＋）は
+      // すべて自ドメインの /api/tube/mirror ページ（中のiframeも自ドメインプロキシ経由）
+      const mirrorMap = {
+        shiatube: "shiatube",
+        wakametube: "wakametube",
+        yukitube: "yukitube",
+        youtubeplus: "youtubeplus",
+        proxy: "shiatube"
+      };
+      const svc = mirrorMap[currentMode];
+      if (svc) {
+        showFrame(`${API_BASE}/api/tube/mirror/${svc}?v=${encodeURIComponent(currentVideoId)}`);
+        statusSpan.textContent = "🛡️ ミラープレイヤー（自ドメイン経由）";
       }
     }
 
     function playVideo(id, title, author, views) {
       currentVideoId = id;
+      currentEduEmbedUrl = "";
       document.getElementById("currentTitle").textContent = title;
       document.getElementById("currentAuthor").textContent = author || "YouTube";
       document.getElementById("currentViews").textContent = views || "";
@@ -550,13 +590,14 @@
 
     function switchPlayerMode(mode) {
       currentMode = mode;
-      ["Edu", "Mp4", "Sia", "Wakame", "Yuki", "YtPlus", "Proxy"].forEach(m => {
+      ["Edu", "Mp4", "Embed", "Sia", "Wakame", "Yuki", "YtPlus", "Proxy"].forEach(m => {
         const btn = document.getElementById("btnMode" + m);
         if (btn) btn.style.background = "#27272a";
       });
       const activeMap = {
         edu: "btnModeEdu",
         mp4: "btnModeMp4",
+        embed: "btnModeEmbed",
         shiatube: "btnModeSia",
         wakametube: "btnModeWakame",
         yukitube: "btnModeYuki",
@@ -567,16 +608,13 @@
       updatePlayerSrc(true);
     }
 
-    function openDirectSia() {
-      window.open(`https://siatube.com/watch?v=${currentVideoId}`, "_blank");
-    }
-
     function openTensaiProxy() {
-      window.open(`${API_BASE}/api/proxy?url=${encodeURIComponent("https://siatube.com/watch?v=" + currentVideoId)}`, "_blank");
+      window.open(`${API_BASE}/api/proxy?url=${encodeURIComponent("https://www.youtube-nocookie.com/embed/" + currentVideoId)}`, "_blank");
     }
 
     function openExternalPip() {
-      window.open(`${API_BASE}/api/tube/stream?v=${currentVideoId}`, "_blank");
+      // 外部（YouTube）ではなく自ドメインの全画面プレイヤーを開く
+      window.open(`${API_BASE}/tube/embed.html?v=${encodeURIComponent(currentVideoId)}`, "_blank");
     }
 
     function copyShareUrl() {
@@ -588,7 +626,7 @@
       const q = document.getElementById("searchInput").value.trim();
       if (!q) return;
       document.getElementById("resultsHeader").textContent = `「${q}」の検索結果`;
-      
+
       try {
         const res = await fetch(`${API_BASE}/api/tube/search?q=${encodeURIComponent(q)}`);
         const data = await res.json();
@@ -607,8 +645,7 @@
       const overlay = document.getElementById("panicOverlay");
       overlay.style.display = (overlay.style.display === "flex") ? "none" : "flex";
       if (overlay.style.display === "flex") {
-        const frame = document.getElementById("tubeFrame");
-        frame.src = "about:blank";
+        frameEl.src = "about:blank";
       } else {
         updatePlayerSrc(false);
       }
@@ -618,10 +655,19 @@
       if (e.key === "Escape") toggleStealth();
     });
 
+    document.getElementById("noticeRetry").addEventListener("click", () => {
+      hideNotice();
+      updatePlayerSrc(true, true);
+    });
+
     // 初期ロード
     const urlParams = new URLSearchParams(window.location.search);
     const vParam = urlParams.get("v");
     const qParam = urlParams.get("q");
+    const modeParam = (urlParams.get("mode") || "").toLowerCase();
+    if (["mp4", "embed", "edu", "shiatube", "wakametube", "yukitube", "youtubeplus"].includes(modeParam)) {
+      switchPlayerMode(modeParam);
+    }
 
     if (vParam) {
       currentVideoId = vParam;
