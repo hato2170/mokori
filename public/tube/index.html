@@ -506,9 +506,13 @@
           if (data.eduEmbedUrl) currentEduEmbedUrl = data.eduEmbedUrl;
 
           if (data.ok && data.videoUrl) {
-            videoEl.src = data.videoUrl;
+            // ⚠ APIは相対パス（/api/tube/proxy-stream?url=...）を返す。
+            // myyajuu のような別ドメインのページでは、そのままだと自分のドメインの
+            // /api/tube/proxy-stream（存在しない）に解決されて「Format error」になる。
+            const absolute = (u) => (/^https?:\/\//i.test(u) ? u : (API_BASE || window.location.origin) + (u.startsWith("/") ? u : "/" + u));
+            videoEl.src = absolute(data.videoUrl);
             if (data.audioUrl) {
-              audioEl.src = data.audioUrl;
+              audioEl.src = absolute(data.audioUrl);
               audioEl.load();
             }
             videoEl.load();

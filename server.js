@@ -6096,11 +6096,19 @@ app.get("/api/tube/proxy-stream", async (req, res) => {
       "Referer": "https://www.youtube.com/",
       ...(range ? { Range: range } : {})
     };
-    const upstream = await fetch(targetUrl, {
+    let upstream = await fetch(targetUrl, {
       headers: fetchHeaders,
       // 動画本体は数十MBになる。短いタイムアウトだと再生途中で切れるので長めに取る
       signal: AbortSignal.timeout(120000)
     });
+    // Invidious経由のURLは時々 403/410 を返す（発行元の一時的な制限）。
+    // その1回で「Format error」にしないよう、少し待って同じURLを引き直す。
+    if ([403, 410, 429, 502, 503].includes(upstream.status)) {
+      try {
+        await new Promise((r) => setTimeout(r, 500));
+        upstream = await fetch(targetUrl, { headers: fetchHeaders, signal: AbortSignal.timeout(120000) });
+      } catch (_) {}
+    }
 
     res.status(upstream.status);
     for (const [k, v] of upstream.headers.entries()) {
