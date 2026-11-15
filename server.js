@@ -8,27 +8,6 @@ const bcrypt = require("bcryptjs");
 
 const app = express();
 app.set("trust proxy", 1);
-
-// 🔬 プロキシ経路の実測ログ（Instagram 429 の切り分け用・直近200件をメモリに保持）
-const proxyTraceLog = [];
-app.use((req, res, next) => {
-  if (!/^\/api\/proxy(\/|$)/.test(req.path || "")) return next();
-  const startedAt = Date.now();
-  const entry = { t: new Date().toISOString(), m: req.method, url: String(req.query.url || "").slice(0, 240) };
-  res.on("finish", () => {
-    entry.status = res.statusCode;
-    entry.ms = Date.now() - startedAt;
-    const up = res.getHeader("x-tensai-upstream");
-    if (up) entry.upstream = String(up);
-    proxyTraceLog.push(entry);
-    if (proxyTraceLog.length > 200) proxyTraceLog.shift();
-  });
-  next();
-});
-app.get("/api/proxy/trace", (req, res) => {
-  res.setHeader("Cache-Control", "no-store");
-  res.json({ now: new Date().toISOString(), count: proxyTraceLog.length, items: proxyTraceLog.slice(-150) });
-});
 app.use(express.json({ limit: "15mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: "15mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
