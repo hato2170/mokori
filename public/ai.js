@@ -33,6 +33,17 @@ async function workerFetch(path, options = {}) {
       try { sessionStorage.setItem("mokori_ai_use_proxy", "true"); } catch (_) {}
       return await fetch(`${activeApiUrl}${path}`, options);
     }
+    // フィルターがHTTP 200のままHTMLのブロックページを返す場合（JSONでない応答）も
+    // そのまま渡すと「Unexpected token <」で壊れるため、Render経由で取り直す
+    if (res.ok && activeApiUrl !== PROXY_URL) {
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.toLowerCase().includes("application/json")) {
+        console.warn("Direct Workers API returned a non-JSON response (filter block page), falling back to Render proxy:", path);
+        activeApiUrl = PROXY_URL;
+        try { sessionStorage.setItem("mokori_ai_use_proxy", "true"); } catch (_) {}
+        return await fetch(`${activeApiUrl}${path}`, options);
+      }
+    }
     return res;
   } catch (err) {
     if (activeApiUrl !== PROXY_URL && err?.name !== "AbortError") {
@@ -64,6 +75,7 @@ let authGateEl = $("authGate");
 let authGateTitleEl = $("authGateTitle");
 let authMessageEl = $("authMessage");
 let modelSelectEl = $("modelSelect");
+let authLoginLinkEl = $("authLoginLink");
 
 // Sessions / Project elements
 let sessionTitleDisplay = $("sessionTitleDisplay");
@@ -97,6 +109,8 @@ function ensureDomElements() {
   if (!authGateTitleEl) authGateTitleEl = $("authGateTitle");
   if (!authMessageEl) authMessageEl = $("authMessage");
   if (!modelSelectEl) modelSelectEl = $("modelSelect");
+  if (!authLoginLinkEl) authLoginLinkEl = $("authLoginLink");
+  initModelSelect();
   if (!sessionTitleDisplay) sessionTitleDisplay = $("sessionTitleDisplay");
   if (!sessionsBtn) sessionsBtn = $("sessionsBtn");
   if (!newChatBtn) newChatBtn = $("newChatBtn");
@@ -158,13 +172,29 @@ function showError(message) {
   errorEl.hidden = false;
 }
 
-if (modelSelectEl) {
+// モデル選択の選択肢を生成（HTML側の <select> は空なのでJSで埋める）
+function initModelSelect() {
+  if (!modelSelectEl) modelSelectEl = $("modelSelect");
+  if (!modelSelectEl) return;
+  if (modelSelectEl.options.length === 0) {
+    for (const [id, info] of Object.entries(MODEL_CATALOG)) {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = info.name;
+      modelSelectEl.appendChild(option);
+    }
+  }
+  if (!MODEL_CATALOG[selectedModelId]) selectedModelId = "@cf/meta/llama-3.2-3b-instruct";
   modelSelectEl.value = selectedModelId;
   modelSelectEl.disabled = false;
-  modelSelectEl.addEventListener("change", (event) => {
-    if (MODEL_CATALOG[event.target.value]) selectedModelId = event.target.value;
-  });
+  if (!modelSelectEl.dataset.bound) {
+    modelSelectEl.dataset.bound = "1";
+    modelSelectEl.addEventListener("change", (event) => {
+      if (MODEL_CATALOG[event.target.value]) selectedModelId = event.target.value;
+    });
+  }
 }
+initModelSelect();
 
 let webSearchEnabled = false;
 if (webSearchToggle) {
@@ -981,12 +1011,14 @@ async function handleAuthChange(user) {
 
   if (!currentUid || !user) {
     if (authGateTitleEl) authGateTitleEl.textContent = "SNSのログインが必要です";
-    if (authMessageEl) authMessageEl.textContent = "AIチャットを利用するには、SNSにログインしてください。ログイン後、このページに戻ってください。";
+    if (authMessageEl) authMessageEl.textContent = "AIスタジオを使うには、もこり（SNS）にログインしてください。ログイン後、このページに戻ると自動で使えるようになります。";
+    if (authLoginLinkEl) authLoginLinkEl.hidden = false;
     if (errorEl) errorEl.hidden = true;
     if (statusEl) statusEl.textContent = "SNSへのログインが必要です。";
     syncUI();
     return;
   }
+  if (authLoginLinkEl) authLoginLinkEl.hidden = true;
 
   const uidForRequest = currentUid;
   const authVersionForRequest = authStateVersion;
