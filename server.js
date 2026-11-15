@@ -3399,6 +3399,8 @@ app.use((req, res, next) => {
 // 🧲 同じInstagramページを同時に開いたときの合流（1回だけ上流へ取りに行き、全員に配る）。
 // 学校で何人もが同時に開くと、Renderの無料枠と Metaのレート制限の両方が一度に押される。
 const proxyInflightDocs = new Map();
+// ページキャッシュと一緒に預けるSet-Cookie（キャッシュを配る相手にも同じ無名の身元を見せる）
+const igDocCookieCache = new Map();
 function proxyDocWait(key) {
   const e = proxyInflightDocs.get(key);
   return e ? e.promise : null;
@@ -3416,6 +3418,62 @@ function proxyDocStart(key) {
   const timer = setTimeout(entry.done, 15000);
   if (timer.unref) timer.unref();
   return entry.done;
+}
+
+// 🍪 上流Cookieのジャー（Instagram用）。プロキシはブラウザのCookieを上流へ送らないため、
+// Instagramの ajax が csrftoken/mid/ig_did を持たないリクエストになり、ログインや
+// モジュール取得が 404/429 で落ちていた。利用者ごと（__px_sid）に上流Cookieを預かる。
+const upstreamCookieJar = new Map(); // sid -> Map(host -> Map(name -> value))
+const PJAR_MAX_SESSIONS = 300;
+const PJAR_MAX_COOKIES = 40;
+function pjarSid(req, res) {
+  let sid = "";
+  try {
+    const m = /(?:^|;\s*)__px_sid=([A-Za-z0-9]{8,40})/.exec(String(req.headers.cookie || ""));
+    if (m) sid = m[1];
+  } catch (_) {}
+  if (!sid) {
+    sid = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    try { res.append("Set-Cookie", `__px_sid=${sid}; Path=/; Max-Age=604800; SameSite=Lax`); } catch (_) {}
+  }
+  return sid;
+}
+function pjarGet(sid, host) {
+  const hosts = upstreamCookieJar.get(sid);
+  const jar = hosts && hosts.get(host);
+  if (!jar || !jar.size) return "";
+  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+function pjarStore(sid, host, setCookies) {
+  if (!setCookies || !setCookies.length) return;
+  let hosts = upstreamCookieJar.get(sid);
+  if (!hosts) {
+    if (upstreamCookieJar.size >= PJAR_MAX_SESSIONS) upstreamCookieJar.delete(upstreamCookieJar.keys().next().value);
+    hosts = new Map();
+    upstreamCookieJar.set(sid, hosts);
+  }
+  let jar = hosts.get(host);
+  if (!jar) { jar = new Map(); hosts.set(host, jar); }
+  for (const raw of setCookies) {
+    const pair = String(raw).split(";")[0];
+    const idx = pair.indexOf("=");
+    if (idx <= 0) continue;
+    const name = pair.slice(0, idx).trim();
+    const value = pair.slice(idx + 1).trim();
+    if (!name) continue;
+    if (/^(?:max-age=0|expires=thu, 01 jan 1970)/i.test(value)) { jar.delete(name); continue; }
+    jar.set(name, value);
+  }
+  while (jar.size > PJAR_MAX_COOKIES) jar.delete(jar.keys().next().value);
+}
+function pjarSetCookies(response) {
+  try {
+    if (typeof response.headers.getSetCookie === "function") return response.headers.getSetCookie();
+    const single = response.headers.get("set-cookie");
+    return single ? [single] : [];
+  } catch (_) {
+    return [];
+  }
 }
 
 app.all("/api/proxy", async (req, res) => {
@@ -3527,6 +3585,8 @@ app.all("/api/proxy", async (req, res) => {
     // MetaはデータセンターIPに 429 を返すことがあり、その1回で画面が無限スピナーになる。
     // 一度取れたページはそのまま返し、上流が失敗したときは期限切れのコピーでも返す。
     const wantsHtmlDoc = req.method === "GET" && String(req.headers.accept || "").includes("text/html");
+    // Instagramには利用者ごとの上流Cookieを預かる（無ければ発行）
+    const pjarSidValue = isInstagram ? pjarSid(req, res) : "";
     const igPopular = parsedTarget.pathname.startsWith("/popular/");
     // ログイン・登録・DMなどトークン（lsd/csrftoken）を伴う画面はキャッシュしない。
     // 古いトークンのHTMLを返すと、その後のPOSTがCSRFエラーになるため。
@@ -3538,6 +3598,15 @@ app.all("/api/proxy", async (req, res) => {
     if (pageCacheKey) {
       const hit = socialCacheGet(pageCacheKey);
       if (hit) {
+        // キャッシュに預けてあるSet-Cookieを、この利用者のジャーとブラウザにも渡す
+        const savedCookies = igDocCookieCache.get(pageCacheKey);
+        if (savedCookies && savedCookies.length && pjarSidValue) {
+          pjarStore(pjarSidValue, hostLower, savedCookies);
+          for (const raw of savedCookies) {
+            const rewritten = String(raw).replace(/domain=[^;]+;?/gi, "").replace(/samesite=[^;]+;?/gi, "SameSite=None; Secure;");
+            res.append("Set-Cookie", rewritten);
+          }
+        }
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
         res.setHeader("X-Tensai-Cache", "PAGE");
@@ -3620,6 +3689,11 @@ app.all("/api/proxy", async (req, res) => {
     if (req.headers["range"]) {
       headers["Range"] = req.headers["range"];
     }
+    // Instagramには預かっている上流Cookie（csrftoken/mid/ig_did等）を付けて送る
+    if (isInstagram) {
+      const cookieHeader = pjarGet(pjarSidValue, hostLower);
+      if (cookieHeader) headers["Cookie"] = cookieHeader;
+    }
 
     const fetchOpts = {
       method: req.method,
@@ -3693,6 +3767,10 @@ app.all("/api/proxy", async (req, res) => {
     const contentType = response.headers.get("content-type") || "";
     // 上流（Instagram）が実際に返したステータスを外から見えるようにする
     res.setHeader("X-Tensai-Upstream", String(response.status));
+    // 上流が発行したCookieを預かる（次のajax・ログインで同じ上流に見せるため）
+    if (pjarSidValue) {
+      try { pjarStore(pjarSidValue, hostLower, pjarSetCookies(response)); } catch (_) {}
+    }
 
     // 上流が 429/5xx を返しても、一度取れているページがあればそれを返す
     // （無限スピナー・「リンクが破損しています」を出さないための最後の砦）
@@ -4609,7 +4687,14 @@ if (window !== window.top) {
       } catch (_) {}
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Pragma", "no-cache");
-      if (pageCacheKey) { socialCacheSet(pageCacheKey, html, pageCacheTtl); docDone(); }
+      if (pageCacheKey) {
+        socialCacheSet(pageCacheKey, html, pageCacheTtl);
+        try {
+          igDocCookieCache.set(pageCacheKey, pjarSetCookies(response));
+          if (igDocCookieCache.size > 40) igDocCookieCache.delete(igDocCookieCache.keys().next().value);
+        } catch (_) {}
+        docDone();
+      }
       return res.send(html);
     }
 
