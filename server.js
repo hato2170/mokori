@@ -6276,8 +6276,9 @@ async function fetchInvidiousInfo(host, videoId, timeoutMs = 6000) {
       f.type.includes("video/mp4") &&
       !/\b(vp0?9|av0?1|hev1|hvc1|dvh1|dvhe)\b/i.test(f.type);
 
-    // 画質の好み：720p までを優先（帯域と確実さのバランス）。144p は最後。
-    const QUALITY_ORDER = ["720p", "480p", "360p", "240p", "144p", "1080p"];
+    // 画質の好み：まず「確実に再生できる」ことを優先して 360p から。
+    // 高画質ほど帯域を食い、Render 中継では詰まりやすい（＝映像が止まる原因）。
+    const QUALITY_ORDER = ["360p", "480p", "720p", "240p", "144p", "1080p"];
     const pick = (list) => {
       if (!list || !list.length) return null;
       for (const q of QUALITY_ORDER) {
