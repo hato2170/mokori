@@ -3311,7 +3311,8 @@ app.all("/api/proxy", async (req, res) => {
   }
 
   // Instagramのリール/投稿ページ、TikTokの動画ページは、公式サイトが見せないので、もこり内ビューアで再生させる
-  if (req.method === "GET" && (req.headers.accept || "").includes("text/html")) {
+  // （プロキシ内SPAの再読み込み _spa=1 は、そのままSPAで開き直す）
+  if (req.method === "GET" && String(req.query._spa || "") !== "1" && (req.headers.accept || "").includes("text/html")) {
     const hostForRedirect = parsedTarget.hostname.toLowerCase();
     const pathForRedirect = parsedTarget.pathname;
     if (!pathForRedirect.includes("/embed/")) {
@@ -3616,7 +3617,10 @@ app.all("/api/proxy", async (req, res) => {
     try {
       var upPath = baseObj.pathname || '/';
       if (!upPath || upPath === '/') upPath = '/foryou';
-      if (upPath.indexOf('/api/') !== 0) history.replaceState(history.state, '', upPath + (baseObj.search || '') + (baseObj.hash || ''));
+      if (upPath.indexOf('/api/') !== 0) {
+        window.__pxFakePath = true;
+        history.replaceState(history.state, '', upPath + (baseObj.search || '') + (baseObj.hash || ''));
+      }
     } catch (_) {}
   }
 
@@ -4086,17 +4090,23 @@ app.all("/api/proxy", async (req, res) => {
       window.__proxy_href = v.url.href;
       return v.proxied ? (v.proxied.pathname + v.proxied.search) : ('/api/proxy?url=' + encodeURIComponent(v.url.href));
     }
+    // 偽装パス運用中（TikTok）は、URLも上流のパスに合わせておく。
+    // そうしないとSPAのルーターが /api/proxy を読んで404へ飛ぶ。再読み込みは
+    // __px_origin Cookie + _spa=1 の救済で元の画面に戻る。
+    function visualPath(v) {
+      return v.url.pathname + (v.url.search || '') + (v.url.hash || '');
+    }
     history.pushState = function(state, title, url) {
       if (url) {
         var v = resolveVirtual(url);
-        if (v) arguments[2] = applyVirtual(v);
+        if (v) arguments[2] = window.__pxFakePath ? visualPath(v) : applyVirtual(v);
       }
       return origPush.apply(this, arguments);
     };
     history.replaceState = function(state, title, url) {
       if (url) {
         var v = resolveVirtual(url);
-        if (v) arguments[2] = applyVirtual(v);
+        if (v) arguments[2] = window.__pxFakePath ? visualPath(v) : applyVirtual(v);
       }
       return origReplace.apply(this, arguments);
     };
@@ -5540,7 +5550,7 @@ app.use((req, res, next) => {
   const origin = proxyOriginFromRequest(req);
   if (!origin) return next();
   const target = origin + req.originalUrl;
-  return res.redirect(307, "/api/proxy?url=" + encodeURIComponent(target));
+  return res.redirect(307, "/api/proxy?url=" + encodeURIComponent(target) + "&_spa=1");
 });
 
 app.listen(port, () => {
