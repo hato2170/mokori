@@ -3581,13 +3581,13 @@ app.all("/api/proxy", async (req, res) => {
           var txt = dialogs[i].innerText || '';
           if (txt.indexOf('アプリでこのリール') < 0 && txt.indexOf('アプリを利用すると') < 0) continue;
           var btns = dialogs[i].querySelectorAll('button,[role="button"]');
+          var picked = null;
           for (var j = 0; j < btns.length; j++) {
-            var lbl = String(btns[j].getAttribute('aria-label') || btns[j].innerText || '');
-            if (lbl.indexOf('閉じる') >= 0 || lbl.toLowerCase().indexOf('close') >= 0) {
-              try { btns[j].click(); closed++; } catch (_) {}
-              break;
-            }
+            var lbl = String(btns[j].getAttribute('aria-label') || btns[j].innerText || '') + ' ' + String(btns[j].outerHTML || '').slice(0, 400);
+            if (lbl.indexOf('閉じる') >= 0 || lbl.toLowerCase().indexOf('close') >= 0) { picked = btns[j]; break; }
           }
+          if (!picked && btns.length) picked = btns[0];
+          if (picked) { try { picked.click(); closed++; } catch (_) {} }
         }
       }, 700);
       setTimeout(function () { clearInterval(timer); }, 20000);
