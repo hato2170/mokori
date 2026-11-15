@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
+const vm = require("vm");
 const { Readable } = require("stream");
 const express = require("express");
 const admin = require("firebase-admin");
@@ -3253,10 +3254,24 @@ const UA_IOS_SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Ap
 const UA_DESKTOP_CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 const UA_YOUTUBE = UA_DESKTOP_CHROME;
 
+// 📱 端末がスマホかどうか（iPadはデスクトップ扱い: 画面が広く、PC版のままでも崩れない）
+function isMobileClientUA(ua) {
+  const s = String(ua || "");
+  if (/iPad/i.test(s)) return false;
+  return /iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry|Opera Mini/i.test(s);
+}
+
 function pickUAForHost(hostname, clientUA) {
   const h = String(hostname || "").toLowerCase();
   if (h.includes("instagram.com") || h.includes("cdninstagram.com") || h.includes("fbcdn.net")) return UA_IOS_SAFARI;
-  if (h.includes("tiktok") || h.includes("ttwstatic") || h.includes("ibytedtos") || h.includes("ibyteimg")) return UA_DESKTOP_CHROME;
+  if (h.includes("tiktok") || h.includes("ttwstatic") || h.includes("ibytedtos") || h.includes("ibyteimg")) {
+    // TikTokはUAで違う画面を返す。PC版のログイン画面は幅390pxのiPhoneでは
+    // カードが重なってボタンが切れる（＝「デザインがぶっ壊れてる」の正体）。
+    // スマホから来たときは端末のUAをそのまま上流へ渡し、TikTok自身の
+    // モバイル画面（スマホ用に組まれたレイアウト）を返してもらう。
+    if (isMobileClientUA(clientUA)) return clientUA;
+    return UA_DESKTOP_CHROME;
+  }
   // YouTubeはiPhone SafariのUAだとデータセンターIPからの接続を切られる（実測: fetch failed）
   if (h.includes("youtube.com") || h.includes("youtu.be") || h.includes("ytimg.com") || h.includes("googlevideo.com") || h.includes("googleusercontent.com")) return UA_YOUTUBE;
   return clientUA || UA_DESKTOP_CHROME;
@@ -3309,6 +3324,116 @@ const PROXY_ORIGIN_COOKIE = "__px_origin";
 // 「不明なエラーが発生しました」になっていた。Workerの中だけに、上流基準で
 // 解決し直す小さなシムを先頭に注入する（通常のページ用スクリプトでは何もしない）。
 // ====================================================
+// 🧭 バンドル内の location 参照を、プロキシ用のモック location へ差し替える。
+// 以前は `location.href` を `(条件 ? モック.href : location.href)` という【式】に
+// 置き換えていたため、`location.href = url` のように代入の左辺に来ると Safari/JSC が
+//   SyntaxError: Left side of assignment is not a reference
+// を投げ、そのバンドルは1行も実行されなくなっていた（TurboWarp が起動しなかった原因。
+// player.js 12行目・vendors~…player.js 13行目＝差し込みシムの直後の行で必ず失敗していた）。
+// いまは「関数呼び出しの戻り値のプロパティ」= PX_LOC_EXPR.href の形だけを作る。
+// これは読み取りにも代入の左辺にも使える参照なので、どちらでも構文エラーにならない。
+//
+// 置き換え先はグローバル変数ではなく、その場で完結した式にしてある。Worker が
+// blob から作られていたり、シムを通らない文書（iframeのsrcdoc等）だったりしても、
+// 「モックが無ければ本物の location」に自分でフォールバックするため、
+// 未定義参照でバンドルが落ちることがない。
+const PX_LOC_EXPR = "(function(){try{return (typeof window!=='undefined'&&window.__proxy_location)||location;}catch(e){return location;}})()";
+function pxRewriteLocationRefs(js) {
+  const rewriteCode = (code) => {
+    if (code.indexOf("location") < 0) return code;
+    // ① 裸の location への代入（location = url / window.location = url）は
+    //    モックの href セッターへ回す（`==`/`===` の比較は対象外）
+    let s = code.replace(/\b(?:window|self|document)\s*\.\s*location\s*=(?!=)/g, PX_LOC_EXPR + ".href =");
+    s = s.replace(/(^|[^.\w$])location\s*=(?!=)/g, "$1" + PX_LOC_EXPR + ".href =");
+    // ② window.location / self.location / document.location は本体ごとモックへ
+    s = s.replace(/\b(?:window|self|document)\s*\.\s*location\b/g, PX_LOC_EXPR);
+    // ③ 素の location はプロパティ参照・メソッド呼び出しだけを置き換える
+    //    （オブジェクトのキー `{location: ...}` は触らない）
+    s = s.replace(/(^|[^.\w$])location\b(?!\s*:)/g, "$1" + PX_LOC_EXPR);
+    return s;
+  };
+  // 文字列・テンプレート・コメント・正規表現リテラルの中は書き換えない
+  // （"location.pathname" のような文字列まで壊すと、サイト側の判定が狂うため）
+  let out = "";
+  let i = 0;
+  let seg = 0;
+  const n = js.length;
+  let prevSig = "";
+  const REGEX_OK = "([{!&|?:;,+-*%~^<>=";
+  while (i < n) {
+    const c = js[i];
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < n) {
+        const d = js[j];
+        if (d === "\\") { j += 2; continue; }
+        if (d === c) { j++; break; }
+        if (c !== "`" && (d === "\n" || d === "\r")) { j++; break; }
+        j++;
+      }
+      out += rewriteCode(js.slice(seg, i)) + js.slice(i, j);
+      seg = j;
+      i = j;
+      prevSig = c;
+      continue;
+    }
+    if (c === "/" && js[i + 1] === "/") {
+      let j = i + 2;
+      while (j < n && js[j] !== "\n") j++;
+      out += rewriteCode(js.slice(seg, i)) + js.slice(i, j);
+      seg = j;
+      i = j;
+      continue;
+    }
+    if (c === "/" && js[i + 1] === "*") {
+      let j = js.indexOf("*/", i + 2);
+      j = j < 0 ? n : j + 2;
+      out += rewriteCode(js.slice(seg, i)) + js.slice(i, j);
+      seg = j;
+      i = j;
+      continue;
+    }
+    if (c === "/" && (prevSig === "" || REGEX_OK.indexOf(prevSig) >= 0)) {
+      let j = i + 1;
+      let inClass = false;
+      let closed = false;
+      while (j < n) {
+        const d = js[j];
+        if (d === "\\") { j += 2; continue; }
+        if (d === "\n") break;
+        if (inClass) { if (d === "]") inClass = false; }
+        else if (d === "[") inClass = true;
+        else if (d === "/") { j++; closed = true; break; }
+        j++;
+      }
+      if (closed) {
+        while (j < n && /[a-z]/i.test(js[j])) j++;
+        out += rewriteCode(js.slice(seg, i)) + js.slice(i, j);
+        seg = j;
+        i = j;
+        prevSig = "/";
+        continue;
+      }
+    }
+    if (c !== " " && c !== "\n" && c !== "\t" && c !== "\r") prevSig = c;
+    i++;
+  }
+  out += rewriteCode(js.slice(seg, n));
+  return out;
+}
+
+// 差し替え後のコードが本当に構文として通るか確かめる（実行はしない）。
+// ESモジュール（import/export を含むファイル）はここでは通らないので、
+// その場合は「元も通らない＝判定不能」として差し替えをそのまま採用する。
+function pxJsCompiles(src) {
+  try {
+    new vm.Script(src, { filename: "px-loc-check.js" });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 const PROXY_WORKER_SHIM = `(function(){try{
 if(typeof document!=="undefined"||typeof location==="undefined")return;
 var q=location.search||"",m=/[?&]url=([^&]*)/.exec(q);if(!m)return;
@@ -4203,7 +4328,7 @@ app.all("/api/proxy", async (req, res) => {
     }
 
     res.status(response.status);
-    res.setHeader("X-Tensai-Proxy", "v2026-11-15c");
+    res.setHeader("X-Tensai-Proxy", "v2026-11-15d");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "*");
@@ -4982,11 +5107,11 @@ app.all("/api/proxy", async (req, res) => {
       const navBar = `
 <div id="__tensai_proxy_bar" style="position:fixed; top:0; left:0; width:100%; height:38px; background:rgba(15,23,42,0.96); backdrop-filter:blur(8px); border-bottom:1px solid rgba(255,255,255,0.15); z-index:2147483647; display:flex; align-items:center; justify-content:space-between; padding:0 12px; box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,sans-serif; color:#fff; font-size:12px;">
   <div style="display:flex; align-items:center; gap:8px;">
-    <span style="font-weight:bold; color:#38bdf8;">⚡ 天才プロキシ</span>
+    <span class="px-lbl" style="font-weight:bold; color:#38bdf8; white-space:nowrap;">⚡ 天才プロキシ</span>
     <button onclick="history.back()" style="background:#334155; color:#fff; border:0; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:11px;">◀ 戻る</button>
     <button onclick="location.reload()" style="background:#334155; color:#fff; border:0; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:11px;">🔄 更新</button>
   </div>
-  <div style="flex:1; max-width:450px; margin:0 10px;">
+  <div class="px-dest" style="flex:1; min-width:0; max-width:450px; margin:0 10px;">
     <form onsubmit="event.preventDefault(); var u=document.getElementById('__proxy_dest').value; if(u){ if(!u.startsWith('http')) u='https://'+u; location.href='/api/proxy?url='+encodeURIComponent(u); }" style="display:flex; margin:0;">
       <input id="__proxy_dest" type="text" value="${baseUrl.replace(/"/g, '&quot;')}" style="width:100%; height:26px; border-radius:13px; border:1px solid #475569; background:#1e293b; color:#f8fafc; padding:0 10px; font-size:11px; box-sizing:border-box;">
     </form>
@@ -5000,7 +5125,15 @@ app.all("/api/proxy", async (req, res) => {
         isYouTubeSite
           ? " #masthead-container { top: 38px !important; } #page-manager { margin-top: 38px !important; }"
           : ""
-      } </style>
+      }
+/* 📱 スマホ幅（iPhone 390px等）ではバーを一段小さくして、サイトのレイアウトを
+   押し潰さないようにする。URL欄とロゴ文字は隠し、操作ボタンだけを残す。 */
+@media (max-width: 520px) {
+  #__tensai_proxy_bar { height: 34px !important; padding: 0 8px !important; }
+  #__tensai_proxy_bar .px-lbl, #__tensai_proxy_bar .px-dest { display: none !important; }
+  #__tensai_proxy_bar button, #__tensai_proxy_bar a { font-size: 11px !important; padding: 3px 7px !important; }
+  body { margin-top: 34px !important; }
+} </style>
 <script>
 if (window !== window.top) {
   var __b = document.getElementById('__tensai_proxy_bar');
@@ -5125,13 +5258,20 @@ if (window !== window.top) {
       if (response.url && (response.url.includes("poki") || response.url.includes("fancade") || response.url.includes("turbowarp"))) {
         js = js.replace(/\bvar\s+pokiDebug\s*=\s*false;/g, "var pokiDebug = true;");
         js = js.replace(/\bpokiDebug\s*=\s*false\b/g, "pokiDebug = true");
-        js = js.replace(/\bself\.location\b/g, "window.__proxy_location");
-        js = js.replace(/\bwindow\.location\b/g, "window.__proxy_location");
-        js = js.replace(/\bdocument\.location\b/g, "window.__proxy_location");
-        js = js.replace(/(?<![\.\w\$])location\.pathname\b/g, "(window.__proxy_location ? window.__proxy_location.pathname : location.pathname)");
-        js = js.replace(/(?<![\.\w\$])location\.search\b/g, "(window.__proxy_location ? window.__proxy_location.search : location.search)");
-        js = js.replace(/(?<![\.\w\$])location\.hash\b/g, "(window.__proxy_location ? window.__proxy_location.hash : location.hash)");
-        js = js.replace(/(?<![\.\w\$])location\.href\b/g, "(window.__proxy_location ? window.__proxy_location.href : location.href)");
+        // 🧭 location の差し替えは「壊れたら元のまま返す」方式。
+        // 1本のバンドルが構文エラーになると、そのサイトはまるごと起動しなくなる
+        // （TurboWarp がこれで真っ白だった）。差し替え後のコードを実際にコンパイルして
+        // 確かめ、通らないときは未加工のコードを返す。
+        const locRewritten = pxRewriteLocationRefs(js);
+        if (locRewritten !== js) {
+          const okRewritten = pxJsCompiles(locRewritten) || !pxJsCompiles(js);
+          if (okRewritten) {
+            js = locRewritten;
+            res.setHeader("X-Tensai-Loc", "rewritten");
+          } else {
+            res.setHeader("X-Tensai-Loc", "kept-original");
+          }
+        }
       }
       res.setHeader("Content-Type", "application/javascript; charset=utf-8");
       res.setHeader("Cache-Control", assetKey ? "public, max-age=1800" : "no-cache, no-store, must-revalidate");
