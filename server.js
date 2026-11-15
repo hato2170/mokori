@@ -3528,7 +3528,10 @@ app.all("/api/proxy", async (req, res) => {
     // 一度取れたページはそのまま返し、上流が失敗したときは期限切れのコピーでも返す。
     const wantsHtmlDoc = req.method === "GET" && String(req.headers.accept || "").includes("text/html");
     const igPopular = parsedTarget.pathname.startsWith("/popular/");
-    const pageCacheKey = wantsHtmlDoc && isInstagram
+    // ログイン・登録・DMなどトークン（lsd/csrftoken）を伴う画面はキャッシュしない。
+    // 古いトークンのHTMLを返すと、その後のPOSTがCSRFエラーになるため。
+    const igCacheableDoc = wantsHtmlDoc && isInstagram && !/^\/(?:accounts|direct|api|graphql)\b/i.test(parsedTarget.pathname);
+    const pageCacheKey = igCacheableDoc
       ? (igPopular ? "ig-page:" + targetUrl : "ig-doc:" + targetUrl)
       : null;
     const pageCacheTtl = igPopular ? 5 * 60 * 1000 : 90 * 1000;
