@@ -4343,7 +4343,11 @@ app.all("/api/proxy", async (req, res) => {
     <a href="/tensai-proxy/" style="background:#0284c7; color:#fff; text-decoration:none; border-radius:4px; padding:3px 8px; font-size:11px; font-weight:bold;">🏠 ホーム</a>
   </div>
 </div>
-<style id="__tensai_proxy_style"> body { margin-top: 38px !important; } </style>
+<style id="__tensai_proxy_style"> body { margin-top: 38px !important; }${
+        isYouTubeSite
+          ? " #masthead-container { top: 38px !important; } #page-manager { margin-top: 38px !important; }"
+          : ""
+      } </style>
 <script>
 if (window !== window.top) {
   var __b = document.getElementById('__tensai_proxy_bar');
