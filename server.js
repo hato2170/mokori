@@ -3203,6 +3203,9 @@ async function fetchUpstream(targetUrl, baseHeaders, fetchOpts, { allowUAChange 
       return response;
     } catch (err) {
       lastError = err;
+      // 接続自体が届かない/DNS不能なら、UAを変えても同じなので即あきらめる
+      const code = err && err.cause ? String(err.cause.code || "") : "";
+      if (["UND_ERR_CONNECT_TIMEOUT", "ENOTFOUND", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN"].includes(code)) break;
     }
   }
   throw lastError || new Error("upstream fetch failed");
