@@ -3509,7 +3509,10 @@ app.all("/api/proxy", async (req, res) => {
       }
     }
 
-    const wantsDocument = String(headers["Accept"] || "").includes("text/html") || req.method === "GET";
+    // タイムアウトは「文書」だけ短く切る。JSバンドル（YouTubeのbase.jsは約10MB）まで
+    // 14秒で切ると、遅いときに 502 になり画面が白くなる。
+    const wantsDocument = String(headers["Accept"] || "").includes("text/html");
+    const upstreamTimeout = wantsDocument ? 14000 : 45000;
 
     // 不変アセットはキャッシュから返す（Ctrl+再読み込み等の明示的な再取得のときだけ取り直す）
     const cacheableAsset = req.method === "GET" && !req.headers.range && isCacheableAsset(hostLower, parsedTarget.pathname);
@@ -3529,7 +3532,7 @@ app.all("/api/proxy", async (req, res) => {
 
     let response = await fetchUpstream(targetUrl, headers, fetchOpts, {
       allowUAChange: !isInstagram,
-      timeoutMs: wantsDocument ? 14000 : 0
+      timeoutMs: upstreamTimeout
     });
     // 429 はデータセンターIPへのレート制限。GET なら一度だけ少し待ってやり直す
     // （Instagram の Bootloading module failed／無限スピナーの直接原因）。
@@ -3539,7 +3542,7 @@ app.all("/api/proxy", async (req, res) => {
         const retryHeaders = { ...headers, "User-Agent": defaultUA === UA_DESKTOP_CHROME ? UA_IOS_SAFARI : UA_DESKTOP_CHROME };
         response = await fetchUpstream(targetUrl, retryHeaders, fetchOpts, {
           allowUAChange: false,
-          timeoutMs: wantsDocument ? 14000 : 0
+          timeoutMs: upstreamTimeout
         });
       } catch (_) {}
     }
@@ -4371,7 +4374,12 @@ if (window !== window.top) {
         const prevCookie = String(req.headers.cookie || "");
         const existing = /(?:^|;\s*)__px_origin=([^;]*)/.exec(prevCookie);
         const encodedOrigin = encodeURIComponent(origin);
-        if (!existing || existing[1] !== encodedOrigin) {
+        // 🍪 上流のオリジンは「トップレベルの文書」だけが書き換える。iframe の中身
+        // （YouTube内の accounts.google.com 等）まで書き換えると、救済ミドルウェアが
+        // /s/_/… を間違った上流（Googleのログイン）へ中継してページが壊れる。
+        const dest = String(req.headers["sec-fetch-dest"] || "").toLowerCase();
+        const fromSubframe = dest === "iframe" || dest === "frame" || dest === "embed" || dest === "object";
+        if (!fromSubframe && (!existing || existing[1] !== encodedOrigin)) {
           res.append("Set-Cookie", `${PROXY_ORIGIN_COOKIE}=${encodedOrigin}; Path=/; Max-Age=1800; SameSite=Lax`);
         }
       } catch (_) {}
