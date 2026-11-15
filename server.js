@@ -6340,7 +6340,7 @@ async function probePlayableMedia(url) {
         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15",
         Range: "bytes=0-1023"
       },
-      signal: AbortSignal.timeout(3500)
+      signal: AbortSignal.timeout(2500)
     });
     if (!resp.ok) return false;
     const ct = String(resp.headers.get("content-type") || "");
@@ -6489,7 +6489,7 @@ app.get("/api/tube/stream-info", async (req, res) => {
 
   // 1ホストぶん：フォーマット取得＋実際に先頭が取れるかの確認
   const probeHost = async (host) => {
-    const info = await fetchInvidiousInfo(host, videoId, 7000);
+    const info = await fetchInvidiousInfo(host, videoId, 5000);
     if (!info) return null;
     const [videoOk, audioOk] = await Promise.all([
       probePlayableMedia(info.videoUrl),
