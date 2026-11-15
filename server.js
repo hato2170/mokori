@@ -6471,7 +6471,7 @@ app.get("/api/tube/stream-info", async (req, res) => {
 
   let adaptiveFallback = null;
   let tried = 0;
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + 18000;
 
   for (const host of hostOrder) {
     if (tried >= 4 || Date.now() > deadline) break;
@@ -6504,13 +6504,22 @@ app.get("/api/tube/stream-info", async (req, res) => {
     // 音声込み1本がどのホストの一覧にも無い場合の最後の手段。
     // /latest_version・itag18 が通れば、映像だけ＋別音声という不安定な形を避けられる。
     if (Date.now() < deadline) {
-      const muxedUrl = await tryLatestVersionMuxed(adaptiveFallback.host, videoId);
-      if (muxedUrl) {
-        tubeMuxedHost = adaptiveFallback.host;
-        tubeWorkingHost = adaptiveFallback.host;
-        const resultData = buildResult({ ...adaptiveFallback, muxed: true, videoUrl: muxedUrl, audioUrl: "", quality: "360p" });
-        streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
-        return res.json({ ok: true, ...resultData });
+      // 一覧に音声込みが無くても、/latest_version は返せるインスタンスがある
+      // （例: echostreamz）。音声込み優先ホストから順に試す。
+      const muxedHosts = [];
+      for (const h of [tubeMuxedHost, "echostreamz.com", ...hostOrder]) {
+        if (h && !muxedHosts.includes(h)) muxedHosts.push(h);
+      }
+      for (const h of muxedHosts) {
+        if (Date.now() > deadline) break;
+        const muxedUrl = await tryLatestVersionMuxed(h, videoId);
+        if (muxedUrl) {
+          tubeMuxedHost = h;
+          tubeWorkingHost = h;
+          const resultData = buildResult({ ...adaptiveFallback, host: h, muxed: true, videoUrl: muxedUrl, audioUrl: "", quality: "360p" });
+          streamInfoCache.set(videoId, { time: Date.now(), data: resultData });
+          return res.json({ ok: true, ...resultData });
+        }
       }
     }
     tubeWorkingHost = adaptiveFallback.host;
