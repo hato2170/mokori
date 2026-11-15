@@ -3620,6 +3620,13 @@ app.all("/api/proxy", async (req, res) => {
           if (absUrl.hostname.toLowerCase() === selfHostName) {
             return absUrl.pathname + absUrl.search + absUrl.hash;
           }
+          // 💡 YouTube は「本物のパス」をそのまま配る（中継はサーバー側の
+          // __px_origin Cookie 救済がやる）。location.pathname や a.href が本物の
+          // YouTube のままでないと、SPA のルーターやモジュールローダーが壊れる
+          // （Error("rc") → (0,_.xi) is not a function →「現在オフラインです」）。
+          if (isYouTubeSite && /(^|\.)youtube\.com$/i.test(absUrl.hostname)) {
+            return absUrl.pathname + absUrl.search + absUrl.hash;
+          }
           // 💡 YouTube のJS/CSSバンドルだけは「ルート相対の疑似パス」で配る。
           // モジュールローダーが #base-js の src に `/_/js/` と `/k=` が含まれるか検証し、
           // 無いと Error("rc") を投げて起動を止める（その後モジュールが全部 null になり
@@ -4064,12 +4071,6 @@ app.all("/api/proxy", async (req, res) => {
       var absUrl = new URL(u, baseUrl);
       // もこり本体（自ドメイン）宛ては中継しない
       if (absUrl.hostname === window.location.hostname) {
-        // 🎬 YouTube は location を基準に /youtubei/v1/... を作るので、自ホスト宛てでも
-        // もこり本体のページ以外は上流へ戻す（そのままだと /youtubei/v1/browse が
-        // mokori の404に抜けて「現在オフラインです」判定になる）。
-        if (IS_YOUTUBE && !/^\\/(?:api\\/proxy|tensai-proxy|tube|music|instagram|tiktok|roblox|mail\\.html|downloads|chat|sns|friends|ai|games|paper|line|favicon|manifest|sw\\.js)(?:\\/|$|\\?)/.test(absUrl.pathname)) {
-          return '/api/proxy?url=' + encodeURIComponent(baseObj.origin + absUrl.pathname + absUrl.search);
-        }
         return absUrl.pathname + absUrl.search + absUrl.hash;
       }
       if (absUrl.pathname.endsWith('.js') && !absUrl.searchParams.has('_v')) {
@@ -4131,6 +4132,10 @@ app.all("/api/proxy", async (req, res) => {
   }
 
   window.addEventListener('click', function(e) {
+    // 🎬 YouTube のクリックは横取りしない。href が本物のパスなので、YouTube 自身の
+    // SPA ルーターに任せるのが確実（横取りすると毎回フルロードになり、ウォッチ
+    // ページのHTML取得でGoogleのロボット確認を食らう）。
+    if (IS_YOUTUBE) return;
     var target = e.target && e.target.nodeType === 1 ? e.target : e.target && e.target.parentElement;
     var anchor = target && target.closest ? target.closest('a[href]') : null;
     // リール・投稿・動画ページは、もこり内ビューアへ（SPAの割り込みより先に処理する）
