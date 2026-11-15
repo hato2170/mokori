@@ -3651,7 +3651,7 @@ app.all("/api/proxy", async (req, res) => {
           pn = document.createElement('div');
           pn.id = '__px_err_panel';
           pn.style.cssText = 'position:fixed;left:8px;right:8px;bottom:36px;z-index:2147483646;max-height:45vh;overflow:auto;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:12px;padding:10px 12px;font:11px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;';
-          pn.textContent = '⚠ このページで起きたエラー（' + errs.length + '件）\n' + errs.join('\n');
+          var NL = String.fromCharCode(10); pn.textContent = '⚠ このページで起きたエラー（' + errs.length + '件）' + NL + errs.join(NL);
           (document.body || document.documentElement).appendChild(pn);
         });
         (document.body || document.documentElement).appendChild(b);
