@@ -393,6 +393,7 @@
     //  ・停滞したら自動で取り直し、同じ位置から再開する
     // ---------------------------------------------------------------
     let currentQuality = "";
+    let audioMissing = false;
     let splitAudio = false;
     let watchdogTimer = null;
     let lastProgressWall = 0;
@@ -524,7 +525,7 @@
       playStartedWall = Date.now();
       markProgress();
       startWatchdog();
-      setMp4Status("🎬 再生中（自ドメイン内" + (currentQuality ? "・" + currentQuality : "") + "）");
+      setMp4Status("🎬 再生中（自ドメイン内" + (currentQuality ? "・" + currentQuality : "") + "）" + (audioMissing ? "・音声なし" : ""));
       hideNotice();
       startSplitAudio();
     });
@@ -642,6 +643,7 @@
             // /api/tube/proxy-stream（存在しない）に解決されて「Format error」になる。
             const absolute = (u) => (/^https?:\/\//i.test(u) ? u : (API_BASE || window.location.origin) + (u.startsWith("/") ? u : "/" + u));
             currentQuality = data.quality || "";
+            audioMissing = !!data.noAudio;
 
             // 音声込みの1本（muxed）なら <video> 1個で完結。iOS でいちばん安定する。
             // 映像だけのストリームのときだけ音声を別要素で鳴らす（video は muted にする）。

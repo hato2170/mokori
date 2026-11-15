@@ -6340,7 +6340,7 @@ async function probePlayableMedia(url) {
         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15",
         Range: "bytes=0-1023"
       },
-      signal: AbortSignal.timeout(2500)
+      signal: AbortSignal.timeout(3000)
     });
     if (!resp.ok) return false;
     const ct = String(resp.headers.get("content-type") || "");
@@ -6462,6 +6462,7 @@ app.get("/api/tube/stream-info", async (req, res) => {
       duration: info.duration || 180,
       muxed: !!info.muxed,
       videoOnly: !info.muxed && !!info.audioUrl,
+      noAudio: !!info.noAudio,
       quality: info.quality || "",
       sourceHost: info.host,
       videoUrl: proxiedVideoUrl,
@@ -6500,6 +6501,7 @@ app.get("/api/tube/stream-info", async (req, res) => {
 
   const deadline = Date.now() + 18000;
   let bestAdaptive = null;
+  let bestVideoOnly = null; // 映像は取れるが音声が取れない候補（最後の手段）
 
   // インスタンスは「たまに」失敗する（404/500/403）。順番に待つと遅いので並列に試し、
   // 音声込みの1本が見つかった時点で返す（遅いホストを待たない）。
@@ -6538,6 +6540,7 @@ app.get("/api/tube/stream-info", async (req, res) => {
     if (winner) return finish(winner);
     for (const r of results) {
       if (r && r.videoOk && r.audioOk && !bestAdaptive) bestAdaptive = r;
+      if (r && r.videoOk && !r.audioOk && !bestVideoOnly) bestVideoOnly = r;
     }
     if (bestAdaptive && Date.now() > deadline - 6000) break;
   }
@@ -6571,6 +6574,12 @@ app.get("/api/tube/stream-info", async (req, res) => {
       if (r && r.videoOk && r.audioOk) return finish(r);
       if (r && r.videoOk) return finish(r);
     }
+  }
+
+  // 音声がどうしても取れない場合でも、映像が出るならそちらを返す
+  // （無音でも「真っ白な失敗画面」よりは見られる）。
+  if (bestVideoOnly) {
+    return finish({ ...bestVideoOnly, audioUrl: "", noAudio: true });
   }
 
   // 全部だめでも、直前に返せていたストリームURLがあればそれを使う
