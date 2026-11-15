@@ -94,7 +94,8 @@ let imageGenBtn = $("genImageBtn") || $("imageGenBtn");
 let attachBtn = $("attachBtn");
 let fileInput = $("fileInput");
 let clearChatBtn = $("clearChatBtn");
-let attachmentPreviewArea = $("attachmentPreviewArea");
+// HTML側のIDは attachmentPreview（旧版のattachmentPreviewAreaも拾う）
+let attachmentPreviewArea = $("attachmentPreviewArea") || $("attachmentPreview");
 let attachmentName = $("attachmentName");
 let removeAttachmentBtn = $("removeAttachmentBtn");
 
@@ -125,7 +126,7 @@ function ensureDomElements() {
   if (!attachBtn) attachBtn = $("attachBtn");
   if (!fileInput) fileInput = $("fileInput");
   if (!clearChatBtn) clearChatBtn = $("clearChatBtn");
-  if (!attachmentPreviewArea) attachmentPreviewArea = $("attachmentPreviewArea");
+  if (!attachmentPreviewArea) attachmentPreviewArea = $("attachmentPreviewArea") || $("attachmentPreview");
   if (!attachmentName) attachmentName = $("attachmentName");
   if (!removeAttachmentBtn) removeAttachmentBtn = $("removeAttachmentBtn");
 }
@@ -314,14 +315,15 @@ if (attachBtn && fileInput) {
 }
 
 function showAttachmentPreview(name, icon) {
-  attachmentName.textContent = `${icon} ${name}`;
-  attachmentPreviewArea.hidden = false;
+  if (attachmentName) attachmentName.textContent = `${icon} ${name}`;
+  if (attachmentPreviewArea) attachmentPreviewArea.hidden = false;
 }
 
 function clearAttachment() {
   attachmentReadVersion += 1;
   currentAttachment = null;
-  attachmentPreviewArea.hidden = true;
+  // 添付プレビューの要素が見つからない環境でも認証・送信処理を止めない
+  if (attachmentPreviewArea) attachmentPreviewArea.hidden = true;
   if (fileInput) fileInput.value = "";
 }
 
