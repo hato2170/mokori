@@ -265,7 +265,7 @@ if (attachBtn && fileInput) {
     if (!file) return;
 
     currentAttachment = null;
-    attachmentPreviewArea.hidden = true;
+    if (attachmentPreviewArea) attachmentPreviewArea.hidden = true;
     if (file.type.startsWith("image/")) {
       const readVersion = ++attachmentReadVersion;
       const uidForRead = currentUid;
