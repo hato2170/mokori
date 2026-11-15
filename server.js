@@ -3477,9 +3477,16 @@ app.all("/api/proxy", async (req, res) => {
     for (const name of ["authorization", "content-type", "if-match", "if-none-match", "if-range", "if-modified-since", "if-unmodified-since", "x-requested-with", "x-api-key"]) {
       if (req.headers[name]) headers[name] = req.headers[name];
     }
-    // YouTube の InnerTube API は独自ヘッダーが無いと 400 を返す
+    // 各サイト独自の X-* ヘッダーは中継する。Instagram は x-ig-app-id / x-csrftoken、
+    // YouTube は x-youtube-client-name などが無いと API（bootloader・InnerTube）が
+    // エラーや 429 になる。ホップバイホップの転送ヘッダーだけ除外する。
+    for (const name of Object.keys(req.headers)) {
+      if (!name.startsWith("x-")) continue;
+      if (/^x-forwarded|x-real-ip|x-request-start|x-timer/i.test(name)) continue;
+      if (headers[name] === undefined) headers[name] = req.headers[name];
+    }
     if (isYouTubeHost) {
-      for (const name of ["x-youtube-client-name", "x-youtube-client-version", "x-goog-visitor-id", "x-goog-authuser", "x-origin", "x-client-data", "x-goog-pageid"]) {
+      for (const name of ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest"]) {
         if (req.headers[name]) headers[name] = req.headers[name];
       }
     }
