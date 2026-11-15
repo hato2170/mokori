@@ -3182,15 +3182,18 @@ function pickUAForHost(hostname, clientUA) {
   return clientUA || UA_DESKTOP_CHROME;
 }
 
-async function fetchUpstream(targetUrl, baseHeaders, fetchOpts, { allowUAChange = true } = {}) {
+async function fetchUpstream(targetUrl, baseHeaders, fetchOpts, { allowUAChange = true, timeoutMs = 0 } = {}) {
   const uaList = [];
   if (baseHeaders["User-Agent"]) uaList.push(baseHeaders["User-Agent"]);
   if (allowUAChange && !uaList.includes(UA_DESKTOP_CHROME)) uaList.push(UA_DESKTOP_CHROME);
   let lastError = null;
   for (let i = 0; i < uaList.length; i++) {
     const headers = { ...baseHeaders, "User-Agent": uaList[i] };
+    // 文書は待ち時間を切る。上流が無応答のまま数十秒ぶら下がると、Safari側が
+    // 「問題が発生したため、ページを読み込めませんでした」で打ち切ってしまう。
+    const attemptOpts = timeoutMs > 0 ? { ...fetchOpts, signal: AbortSignal.timeout(timeoutMs) } : fetchOpts;
     try {
-      const response = await fetch(targetUrl, { ...fetchOpts, headers });
+      const response = await fetch(targetUrl, { ...attemptOpts, headers });
       const wantsDoc = String(headers["Accept"] || "").includes("text/html");
       // 上流が文書そのものを拒否したときだけ、UAを替えて一度やり直す（429は回線制限なので再試行しない）
       if (i === 0 && wantsDoc && uaList.length > 1 && [401, 403, 406, 451, 502, 503].includes(response.status)) {
@@ -3413,7 +3416,11 @@ app.all("/api/proxy", async (req, res) => {
       }
     }
 
-    const response = await fetchUpstream(targetUrl, headers, fetchOpts, { allowUAChange: !isInstagram });
+    const wantsDocument = String(headers["Accept"] || "").includes("text/html") || req.method === "GET";
+    const response = await fetchUpstream(targetUrl, headers, fetchOpts, {
+      allowUAChange: !isInstagram,
+      timeoutMs: wantsDocument ? 14000 : 0
+    });
     const contentType = response.headers.get("content-type") || "";
 
     // Instagramが回線制限（429）を返したときは、壊れたページではなく案内を出す
