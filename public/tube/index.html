@@ -538,6 +538,8 @@
       if (!mp4Video.paused) setMp4Status("⏳ バッファリング中…");
     });
     mp4Video.addEventListener("pause", () => {
+      // 埋め込み/ミラー表示中に内部で一時停止しても、MP4の状態表示を上書きしない
+      if (currentMode !== "mp4") return;
       if (!mp4Video.ended) setMp4Status("⏸ 動画を一時停止中");
     });
     mp4Video.addEventListener("ended", () => { stopWatchdog(); setMp4Status("動画の再生が終了しました"); });
