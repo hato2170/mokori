@@ -196,6 +196,42 @@
       color: #94a3b8;
     }
 
+    /* iOS Safari が自動再生を拒否したときの「タップして再生」ボタン。
+       アプリ内のボタンなので、押した瞬間に play() を呼べば必ず再生できる。 */
+    #tapToPlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(2, 6, 23, 0.45);
+      border: 0;
+      z-index: 20;
+      cursor: pointer;
+    }
+    #tapToPlay span {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: #f8fafc;
+      font-size: 13px;
+      font-weight: 700;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+    }
+    #tapToPlay .tap-icon {
+      width: 66px;
+      height: 66px;
+      border-radius: 50%;
+      background: rgba(2, 132, 199, 0.92);
+      border: 2px solid rgba(255,255,255,0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      padding-left: 4px;
+    }
+
     /* 再生できなかったときの案内（プレイヤー内に出す・外部へは飛ばさない） */
     .player-notice {
       position: absolute;
@@ -292,6 +328,9 @@
         <!-- 音声が別トラックのとき用。display:none だと iOS が再生を止めることがあるので
              1px の見える要素として置いておく（音声セッションはこちらが持つ） -->
         <audio id="syncAudio" playsinline preload="auto" style="position:absolute; left:0; bottom:0; width:1px; height:1px; opacity:0.01; z-index:0;" aria-hidden="true"></audio>
+        <button id="tapToPlay" type="button" aria-label="タップして再生">
+          <span><i class="tap-icon">▶</i>タップして再生</span>
+        </button>
         <iframe id="tubeFrame" src="about:blank" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation allow-modals" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="no-referrer" allowfullscreen style="position:absolute; top:0; left:0; width:100%; height:100%; border:0; display:none; z-index:1;"></iframe>
         <div class="player-notice" id="playerNotice">
           <strong id="noticeTitle">この動画は直接再生できませんでした</strong>
@@ -384,6 +423,33 @@
     function hideNotice() {
       noticeEl.style.display = "none";
     }
+
+    // iOS Safari の自動再生ブロック（NotAllowedError）対策。
+    // 押した瞬間に play() を呼べば同じ要素は必ず再生できるので、巨大な▶を出す。
+    const tapToPlayEl = document.getElementById("tapToPlay");
+    function showTapToPlay() {
+      if (currentMode !== "mp4") return;
+      tapToPlayEl.style.display = "flex";
+    }
+    function hideTapToPlay() {
+      tapToPlayEl.style.display = "none";
+    }
+    function requestPlay() {
+      const p = mp4Video.play();
+      if (p && p.catch) {
+        p.catch(() => {
+          if (currentMode !== "mp4") return;
+          setMp4Status("▶️ タップして再生してください");
+          showTapToPlay();
+        });
+      }
+    }
+    tapToPlayEl.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideTapToPlay();
+      requestPlay();
+    });
 
     // ---------------------------------------------------------------
     // 再生ヘルス管理（iPhone Safari 対策）
@@ -519,9 +585,16 @@
       }
     });
     mp4Video.addEventListener("canplay", () => {
-      if (mp4Video.paused) setMp4Status("▶️ 再生準備完了。再生ボタンを押してください");
+      // 音声トラックの有無（muxed かどうか）は、再生が始まってから取りに行く。
+      // タップ前に await fetch を挟むと iOS の操作権が失効するため、ここまで待つ。
+      if (currentMode === "mp4" && currentVideoId) applyMp4Meta(playerLoadId);
+      if (mp4Video.paused) {
+        setMp4Status("▶️ 再生準備完了。タップして再生");
+        showTapToPlay();
+      }
     });
     mp4Video.addEventListener("playing", () => {
+      hideTapToPlay();
       playStartedWall = Date.now();
       markProgress();
       startWatchdog();
@@ -586,6 +659,7 @@
 
     function showFrame(url) {
       stopWatchdog();
+      hideTapToPlay();
       const videoEl = document.getElementById("mp4Video");
       videoEl.style.display = "none";
       videoEl.pause();
@@ -603,6 +677,43 @@
       document.getElementById("mp4Video").style.display = "block";
     }
 
+    // 再生開始後に、音声トラックの有無（muxed かどうか）と画質だけ取りに行く。
+    // /api/tube/play が解決済みなので、ここはサーバーのキャッシュから即返る。
+    let metaLoadId = -1;
+    async function applyMp4Meta(loadId) {
+      if (!currentVideoId || currentMode !== "mp4") return;
+      if (metaLoadId === loadId) return;
+      metaLoadId = loadId;
+      const audioEl = document.getElementById("syncAudio");
+      try {
+        const res = await fetch(`${API_BASE}/api/tube/stream-info?v=${encodeURIComponent(currentVideoId)}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (loadId !== playerLoadId || currentMode !== "mp4") return;
+        if (data.eduEmbedUrl) currentEduEmbedUrl = data.eduEmbedUrl;
+        currentQuality = data.quality || "";
+        audioMissing = !!data.noAudio;
+        // 映像だけのストリーム（muxed でない）のときだけ音声を別要素で鳴らす。
+        // その場合は video を muted にして音声セッションを audio 側へ渡す。
+        if (data.muxed === false && data.audioUrl) {
+          const u = /^https?:\/\//i.test(data.audioUrl) ? data.audioUrl : (API_BASE || window.location.origin) + data.audioUrl;
+          if (audioEl.getAttribute("src") !== u) {
+            splitAudio = true;
+            mp4Video.muted = true;
+            audioEl.src = u;
+            try { audioEl.load(); } catch (_) {}
+            startSplitAudio();
+          }
+        }
+        // 画質ラベルが後から分かった場合は、再生中の表示をそのまま更新する
+        if (!mp4Video.paused) {
+          setMp4Status("🎬 再生中（自ドメイン内" + (currentQuality ? "・" + currentQuality : "") + "）" + (audioMissing ? "・音声なし" : ""));
+        }
+      } catch (_) {
+        // メタ情報が取れなくても、映像自体は /api/tube/play 経由で再生できている
+      }
+    }
+
     async function updatePlayerSrc(autoplay = true, refresh = false, resumeAt = 0) {
       const loadId = ++playerLoadId;
       const videoEl = document.getElementById("mp4Video");
@@ -617,67 +728,39 @@
       if (currentMode === "mp4") {
         hideFrame();
         hideNotice();
+        hideTapToPlay();
         stopWatchdog();
         pendingResumeAt = resumeAt > 0 ? resumeAt : 0;
         splitAudio = false;
+        metaLoadId = -1;
         videoEl.pause();
         try { syncAudio.pause(); } catch (_) {}
         audioEl.removeAttribute("src");
         try { audioEl.load(); } catch (_) {}
         videoEl.removeAttribute("src");
-        videoEl.load();
+        try { videoEl.load(); } catch (_) {}
         videoEl.muted = false;
         videoEl.poster = `${API_BASE}/api/tube/thumb?v=${currentVideoId}`;
         statusSpan.textContent = "⏳ MP4ストリーム接続中...";
 
-        try {
-          const res = await fetch(`${API_BASE}/api/tube/stream-info?v=${encodeURIComponent(currentVideoId)}${refresh ? "&refresh=1" : ""}`, { cache: "no-store" });
-          if (!res.ok) throw new Error(`stream-info HTTP ${res.status}`);
-          const data = await res.json();
-          if (loadId !== playerLoadId) return;
-          if (data.eduEmbedUrl) currentEduEmbedUrl = data.eduEmbedUrl;
-
-          if (data.ok && data.videoUrl) {
-            // ⚠ APIは相対パス（/api/tube/proxy-stream?url=...）を返す。
-            // myyajuu のような別ドメインのページでは、そのままだと自分のドメインの
-            // /api/tube/proxy-stream（存在しない）に解決されて「Format error」になる。
-            const absolute = (u) => (/^https?:\/\//i.test(u) ? u : (API_BASE || window.location.origin) + (u.startsWith("/") ? u : "/" + u));
-            currentQuality = data.quality || "";
-            audioMissing = !!data.noAudio;
-
-            // 音声込みの1本（muxed）なら <video> 1個で完結。iOS でいちばん安定する。
-            // 映像だけのストリームのときだけ音声を別要素で鳴らす（video は muted にする）。
-            if (data.audioUrl && data.muxed === false) {
-              splitAudio = true;
-              videoEl.muted = true;
-              audioEl.src = absolute(data.audioUrl);
-              try { audioEl.load(); } catch (_) {}
-            }
-
-            videoEl.src = absolute(data.videoUrl);
-            videoEl.load();
-            playStartedWall = Date.now();
-            lastFrameWall = Date.now();
-            watchVideoFrames();
-            startWatchdog();
-            if (autoplay) {
-              videoEl.play().catch(() => {
-                if (loadId !== playerLoadId || !videoEl.paused) return;
-                statusSpan.textContent = "▶️ 再生準備完了。再生ボタンを押してください";
-              });
-            } else {
-              statusSpan.textContent = "▶️ 再生準備完了。再生ボタンを押してください";
-            }
-            return;
-          }
-          // 直接再生のURLが取れなかったときも、外部（YouTube）へは飛ばさない
-          statusSpan.textContent = "⚠️ MP4 URLを取得できませんでした";
-          showNotice("この動画は直接再生できませんでした", "配信URLを取得できませんでした。<br>少し待って「もう一度読み込む」を押すか、埋め込みモードを試してください。");
-        } catch (e) {
-          if (loadId !== playerLoadId) return;
-          console.warn("MP4 stream resolution error:", e);
-          statusSpan.textContent = "⚠️ MP4 URLを取得できませんでした";
-          showNotice("通信に失敗しました", "サーバーから動画URLを取得できませんでした。<br>「もう一度読み込む」を押してください。");
+        // ⚠ iPhone Safari は「タップと同じタスク内に呼んだ play()」しか許可しない。
+        //    ここで await fetch('/api/tube/stream-info') を挟むと、その間にユーザー操作権が
+        //    失効して play() が NotAllowedError になり、`⏳ バッファリング中` のまま止まる。
+        //    そこで <video src> は自ドメインの /api/tube/play（解決して 302 する入口）にして、
+        //    この関数の同期部分で play() まで呼び切る（await より前）。
+        //    音声トラックの有無などのメタ情報は再生開始（canplay）後に取りに行く。
+        const absolute = (u) => (/^https?:\/\//i.test(u) ? u : (API_BASE || window.location.origin) + (u.startsWith("/") ? u : "/" + u));
+        const playUrl = absolute(`/api/tube/play?v=${encodeURIComponent(currentVideoId)}${refresh ? "&refresh=1" : ""}&t=${Date.now()}`);
+        videoEl.src = playUrl;
+        playStartedWall = Date.now();
+        lastFrameWall = Date.now();
+        watchVideoFrames();
+        startWatchdog();
+        if (autoplay) {
+          requestPlay();
+        } else {
+          statusSpan.textContent = "▶️ タップして再生してください";
+          showTapToPlay();
         }
         return;
       }

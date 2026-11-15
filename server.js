@@ -6090,6 +6090,14 @@ const TUBE_HEAD_CACHE_BYTES = 1048576;
 const TUBE_HEAD_CACHE_MAX = 8;
 
 // 3. 動画ストリームプロキシ (Range対応・Render中継)
+//
+// ⚠ iOS Safari は再生前に必ず `Range: bytes=0-1` を投げ、その直後に `Range: bytes=0-` を
+//    投げる。以前は 0-1 の2バイトを先頭キャッシュに載せ、続く bytes=0- にもその2バイトだけを
+//    206 で返していたため、Safari は「2バイトの動画」として扱い、再生を始められずに
+//    `⏳ バッファリング中` のまま固まっていた（Chromium は最初から bytes=0- を投げるので
+//    この経路を通らず、PC では再生できていた＝端末差の正体）。
+//    キャッシュは「要求された範囲を完全に満たせるとき」だけ使い、満たせないときは
+//    上流へそのまま中継する。
 app.get("/api/tube/proxy-stream", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "*");
@@ -6101,21 +6109,19 @@ app.get("/api/tube/proxy-stream", async (req, res) => {
   const rangeStart = rangeMatch ? parseInt(rangeMatch[1], 10) : -1;
   const rangeEnd = rangeMatch && rangeMatch[2] ? parseInt(rangeMatch[2], 10) : -1;
 
-  // 先頭キャッシュ（0バイト目から始まる要求で、キャッシュ範囲内なら返す）
-  if (rangeStart === 0) {
+  // 先頭キャッシュは「0バイト目から始まり、かつ要求された終端まで持っている」ときだけ使う。
+  // 終端が指定されない要求（bytes=0-）には絶対に短い範囲を返さない（Safari が固まる）。
+  if (rangeStart === 0 && rangeEnd >= 0) {
     const hit = tubeHeadCache.get(targetUrl);
-    if (hit && Date.now() - hit.time < 300000) {
-      const want = rangeEnd >= 0 ? Math.min(rangeEnd + 1, hit.buf.length) : hit.buf.length;
-      if (want > 0 && want <= hit.buf.length) {
-        const slice = hit.buf.subarray(0, want);
-        res.status(206);
-        res.setHeader("Content-Type", hit.contentType);
-        res.setHeader("Accept-Ranges", "bytes");
-        res.setHeader("Content-Range", `bytes 0-${want - 1}/${hit.total}`);
-        res.setHeader("Content-Length", String(want));
-        res.setHeader("Cache-Control", "public, max-age=300");
-        return res.end(slice);
-      }
+    if (hit && Date.now() - hit.time < 300000 && rangeEnd < hit.buf.length) {
+      const want = rangeEnd + 1;
+      res.status(206);
+      res.setHeader("Content-Type", hit.contentType);
+      res.setHeader("Accept-Ranges", "bytes");
+      res.setHeader("Content-Range", `bytes 0-${want - 1}/${hit.total}`);
+      res.setHeader("Content-Length", String(want));
+      res.setHeader("Cache-Control", "public, max-age=300");
+      return res.end(hit.buf.subarray(0, want));
     }
   }
 
@@ -6163,11 +6169,24 @@ app.get("/api/tube/proxy-stream", async (req, res) => {
       const buf = Buffer.from(await upstream.arrayBuffer());
       const totalMatch = /\/(\d+)\s*$/.exec(upstreamRangeHeader);
       const total = totalMatch ? parseInt(totalMatch[1], 10) : clen;
-      if (total > buf.length && buf.length > 0) {
+      // キャッシュに載せるのは「十分に大きい先頭ブロック」だけ。
+      // 2バイトのプローブを載せると、次の bytes=0- に 2 バイトしか返せなくなる。
+      if (total > buf.length && buf.length >= 65536) {
         tubeHeadCache.set(targetUrl, { time: Date.now(), buf, total, contentType: ct });
         while (tubeHeadCache.size > TUBE_HEAD_CACHE_MAX) {
           tubeHeadCache.delete(tubeHeadCache.keys().next().value);
         }
+      }
+      // total が不明（Content-Range も Content-Length も無い）ときは 206 を組み立てず
+      // 上流の応答をそのまま流す（Content-Range の無い 206 は iOS で再生できない）。
+      if (total <= 0) {
+        res.status(upstream.status);
+        for (const [k, v] of upstream.headers.entries()) {
+          if (["content-type", "content-length", "content-range", "accept-ranges", "cache-control"].includes(k.toLowerCase())) {
+            res.setHeader(k, v);
+          }
+        }
+        return res.end(buf);
       }
       res.status(206);
       res.setHeader("Content-Type", ct);
@@ -6599,6 +6618,43 @@ app.get("/api/tube/stream-info", async (req, res) => {
     embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1`,
     thumbnail: `/api/tube/thumb?v=${videoId}`
   });
+});
+
+// 2.5 再生の入口（iOS Safari のユーザー操作権を失わないための302ゲート）
+//
+// iPhone Safari は「タップと同じタスク内に呼んだ video.play()」しか許可しない。
+// 画面側で await fetch('/api/tube/stream-info') を挟んでから src を入れると、その間に
+// 操作権が失効し、play() が NotAllowedError になって `バッファリング中` のまま止まる。
+// そこで <video src="/api/tube/play?v=..."> にしておき、このエンドポイントがURLを解決して
+// 同じドメインの proxy-stream へ 302 で回す（外部ドメインへは出ない）。
+app.get("/api/tube/play", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "no-store");
+  const videoId = String(req.query.v || "").trim();
+  const wantsRefresh = String(req.query.refresh || "") === "1";
+  if (!videoId) return res.status(400).send("v required");
+
+  // リダイレクト先は絶対URLで返す（AVFoundation が相対 Location を扱わない場合の保険）
+  const host = String(req.get("host") || "");
+  const ownOrigin = host ? `${/^(localhost|127\.|0\.0\.0\.0)/.test(host) ? String(req.protocol) : "https"}://${host}` : "";
+  const toStream = (rawUrl) => `${ownOrigin}/api/tube/proxy-stream?url=${encodeURIComponent(rawUrl)}`;
+
+  const cached = streamInfoCache.get(videoId);
+  if (!wantsRefresh && cached && cached.data && cached.data.rawVideoUrl) {
+    return res.redirect(302, toStream(cached.data.rawVideoUrl));
+  }
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/api/tube/stream-info?v=${encodeURIComponent(videoId)}${wantsRefresh ? "&refresh=1" : ""}`, {
+      headers: { "Accept": "application/json" },
+      signal: AbortSignal.timeout(20000)
+    });
+    const d = await r.json();
+    if (d && d.rawVideoUrl) {
+      return res.redirect(302, toStream(d.rawVideoUrl));
+    }
+  } catch (_) {}
+  // 解決できなかった → <video> の error を発火させ、画面側が案内を出す
+  return res.status(502).send("stream unavailable");
 });
 
 app.get("/api/tube/stream", async (req, res) => {
