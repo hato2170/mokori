@@ -3574,7 +3574,7 @@ app.all("/api/proxy", async (req, res) => {
     }
 
     res.status(response.status);
-    res.setHeader("X-Tensai-Proxy", "v2026-11-15b");
+    res.setHeader("X-Tensai-Proxy", "v2026-11-15c");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "*");
