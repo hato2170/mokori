@@ -655,7 +655,9 @@ app.post("/api/__cleanup_tmp_7f3a9c", async (req, res) => {
   const token = req.headers["x-cleanup-token"] || req.query.t;
   if (token !== "c9f1e2a7b4d8") return res.status(403).json({ error: "forbidden" });
   if (!db || !auth) return res.status(503).json({ error: "no db" });
-  const targets = ["chk16v9k", "chk16v9b"];
+  const targets = ((req.body && Array.isArray(req.body.names)) ? req.body.names : ["chk16v9k", "chk16v9b"])
+    .map((s) => String(s || "").trim())
+    .filter((s) => /^chk16v9[a-z]$/.test(s));
   const report = [];
   try {
     for (const uname of targets) {
