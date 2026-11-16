@@ -155,6 +155,42 @@ function checkAuthRateLimit(req, res, maxRequests = 60, windowMs = 60000) {
 }
 
 // ----------------------------------------------------
+// 🔑 ユーザー名の表記揺れ対策
+//   ・「ｔａｍａ５」と「tama5」、「Ｍｏｋｏｒｉ」と「mokori」のような
+//     全角/半角・大文字小文字の違いで「IDかパスワードが違う」にならないよう、
+//     照合キーは NFKC 正規化＋小文字化して扱う（保存済みの名前は変えない）。
+// ----------------------------------------------------
+function normalizeUsernameKey(value) {
+  return String(value == null ? "" : value).normalize("NFKC").trim().toLowerCase();
+}
+
+function isReservedUsernameKey(key) {
+  return key === "." || key === ".." || /^__.*__$/.test(key);
+}
+
+// usernames 索引を「完全一致 → 正規化した名前」の順で引く
+async function findUsernameDoc(rawUsername) {
+  const exactKey = String(rawUsername == null ? "" : rawUsername).trim().toLowerCase();
+  const normalizedKey = normalizeUsernameKey(rawUsername);
+  let doc = await db.collection("usernames").doc(exactKey).get();
+  if (!doc.exists && normalizedKey !== exactKey) {
+    doc = await db.collection("usernames").doc(normalizedKey).get();
+  }
+  return doc;
+}
+
+// パスワード照合（全角英数で打ってしまった場合・前後の空白を救済）
+async function passwordMatches(password, hash) {
+  if (!password || !hash) return false;
+  if (await bcrypt.compare(password, hash)) return true;
+  const nfkc = String(password).normalize("NFKC");
+  if (nfkc !== password && (await bcrypt.compare(nfkc, hash))) return true;
+  const trimmed = nfkc.trim();
+  if (trimmed && trimmed !== nfkc && (await bcrypt.compare(trimmed, hash))) return true;
+  return false;
+}
+
+// ----------------------------------------------------
 // メッセージインメモリキャッシュ (Firestore読み書きクォータ爆発・競合・遅延を完全防止)
 // ----------------------------------------------------
 const messageCache = new Map();
@@ -508,7 +544,7 @@ app.post("/api/register", async (req, res) => {
     });
   }
 
-  const username = String(req.body.username || "").trim();
+  const username = String(req.body.username || "").trim().normalize("NFKC");
   const password = String(req.body.password || "");
 
   if (!/^[\p{L}\p{N}_-]{2,20}$/u.test(username)) {
@@ -523,7 +559,7 @@ app.post("/api/register", async (req, res) => {
     });
   }
 
-  const usernameKey = username.toLowerCase();
+  const usernameKey = normalizeUsernameKey(username);
   const usernameRef = db.collection("usernames").doc(usernameKey);
 
   try {
@@ -593,54 +629,52 @@ app.post("/api/login", async (req, res) => {
 
   // Firestore の予約済みドキュメントID（__xxx__ や . / ..）は読み取り自体が例外になるため、
   // ログイン失敗（401）として扱う（以前は 500「ログインに失敗しました」になっていた）
-  const usernameKey = username.toLowerCase();
-  if (usernameKey === "." || usernameKey === ".." || /^__.*__$/.test(usernameKey)) {
+  const exactKey = username.toLowerCase();
+  const normalizedKey = normalizeUsernameKey(username);
+  if (isReservedUsernameKey(exactKey) || isReservedUsernameKey(normalizedKey)) {
     return res.status(401).json({
       error: "ユーザー名またはパスワードが違います。"
     });
   }
 
   try {
-    const usernameDoc = await db
-      .collection("usernames")
-      .doc(usernameKey)
-      .get();
+    // 完全一致 → 全角/半角・大文字小文字を揃えた名前の順で探す
+    const usernameDoc = await findUsernameDoc(username);
 
     if (!usernameDoc.exists) {
+      console.log(`[Login] username not found: ${normalizedKey}`);
       return res.status(401).json({
-        error: "ユーザー名またはパスワードが違います。"
+        error: "このユーザー名は登録されていません。名前（ID）を変更した場合は、新しいユーザー名でログインしてください。"
       });
     }
 
     const uid = usernameDoc.data().uid;
     if (!uid) {
       return res.status(401).json({
-        error: "ユーザー名またはパスワードが違います。"
+        error: "このユーザー名は登録されていません。名前（ID）を変更した場合は、新しいユーザー名でログインしてください。"
       });
     }
     const userDoc = await db.collection("users").doc(uid).get();
 
     if (!userDoc.exists) {
       return res.status(401).json({
-        error: "ユーザー名またはパスワードが違います。"
+        error: "このユーザー名は登録されていません。名前（ID）を変更した場合は、新しいユーザー名でログインしてください。"
       });
     }
 
     const userData = userDoc.data() || {};
     if (!userData.passwordHash) {
       return res.status(401).json({
-        error: "ユーザー名またはパスワードが違います。"
+        error: "パスワードが違います。"
       });
     }
 
-    const valid = await bcrypt.compare(
-      password,
-      userData.passwordHash
-    );
+    const valid = await passwordMatches(password, userData.passwordHash);
 
     if (!valid) {
+      console.log(`[Login] password mismatch: ${normalizedKey}`);
       return res.status(401).json({
-        error: "ユーザー名またはパスワードが違います。"
+        error: "パスワードが違います。全角/半角・大文字小文字の入力にご注意ください。"
       });
     }
 
@@ -667,10 +701,7 @@ app.get("/api/users/search", requireLogin, async (req, res) => {
       });
     }
 
-    const usernameDoc = await db
-      .collection("usernames")
-      .doc(username.toLowerCase())
-      .get();
+    const usernameDoc = await findUsernameDoc(username);
 
     if (!usernameDoc.exists) {
       return res.status(404).json({
@@ -730,7 +761,7 @@ app.post("/api/friends/request", requireLogin, async (req, res) => {
       if (username.length > 20) {
         return res.status(400).json({ error: "ユーザー名は20文字以内で入力してください。" });
       }
-      const targetDoc = await db.collection("usernames").doc(username.toLowerCase()).get();
+      const targetDoc = await findUsernameDoc(username);
       if (!targetDoc.exists) {
         return res.status(404).json({ error: "そのユーザーは見つかりませんでした。" });
       }
@@ -2590,7 +2621,7 @@ app.put("/api/users/profile", requireLogin, async (req, res) => {
 
     // ユーザー名変更の厳格なバリデーション & 重複検証
     if (username !== undefined) {
-      const newUsername = String(username).trim();
+      const newUsername = String(username).trim().normalize("NFKC");
       if (!/^[\p{L}\p{N}_-]{2,20}$/u.test(newUsername)) {
         return res.status(400).json({
           error: "ユーザー名は2〜20文字で入力してください（文字・数字・_・-が使用可能）。"
@@ -2598,9 +2629,9 @@ app.put("/api/users/profile", requireLogin, async (req, res) => {
       }
 
       const oldUsername = currentData.username || "";
-      if (newUsername.toLowerCase() !== oldUsername.toLowerCase()) {
-        const newKey = newUsername.toLowerCase();
-        const oldKey = oldUsername.toLowerCase();
+      const newKey = normalizeUsernameKey(newUsername);
+      const oldKey = normalizeUsernameKey(oldUsername);
+      if (newKey !== oldKey) {
         const newRef = db.collection("usernames").doc(newKey);
         const oldRef = oldKey ? db.collection("usernames").doc(oldKey) : null;
 
@@ -2614,7 +2645,14 @@ app.put("/api/users/profile", requireLogin, async (req, res) => {
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
           });
           if (oldRef) {
-            transaction.delete(oldRef);
+            // 旧ユーザー名は削除せず「別名（エイリアス）」として残す。
+            // これを消すと、名前を変えた人が古いIDでログインしたときに
+            // 「ユーザー名またはパスワードが違います」になってしまうため。
+            transaction.set(oldRef, {
+              uid: myUid,
+              aliasOf: newKey,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
           }
         });
       }
