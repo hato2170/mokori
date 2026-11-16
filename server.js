@@ -5077,20 +5077,29 @@ app.all("/api/proxy", async (req, res) => {
     }
 
     function watchPokiSitelock(frame, gp) {
+      // サイトロックはゲーム → games.poki.com → game-not-available のように
+      // iframe が入れ子になることがあるので、深さ3まで見る。
+      function deepLocked(win, depth) {
+        try {
+          var doc = win ? win.document : null;
+          if (!doc) return false;
+          var txt = doc.body ? (doc.body.innerText || '') : '';
+          if (txt.indexOf('not available to play') >= 0) return true;
+          if (doc.documentElement && (doc.documentElement.innerHTML || '').indexOf('game-not-available') >= 0) return true;
+          if (depth <= 0) return false;
+          var frames = doc.querySelectorAll('iframe');
+          for (var i = 0; i < frames.length; i++) {
+            try { if (deepLocked(frames[i].contentWindow, depth - 1)) return true; } catch (e) {}
+          }
+        } catch (e) {}
+        return false;
+      }
       var tries = 0;
       var timer = setInterval(function () {
         tries++;
         var locked = false;
         try {
-          var doc = frame.contentDocument;
-          if (doc) {
-            var txt = doc.body ? (doc.body.innerText || '') : '';
-            if (txt.indexOf('not available to play') >= 0) locked = true;
-            var inner = doc.querySelectorAll('iframe');
-            for (var i = 0; i < inner.length; i++) {
-              if ((inner[i].src || '').indexOf('game-not-available') >= 0) locked = true;
-            }
-          }
+          locked = deepLocked(frame.contentWindow, 3);
           var wLoc = frame.contentWindow && frame.contentWindow.location ? (frame.contentWindow.location.href || '') : '';
           if (wLoc.indexOf('sitelock') >= 0) locked = true;
         } catch (e) {}
