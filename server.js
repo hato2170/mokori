@@ -7163,6 +7163,90 @@ function proxyOriginFromRequest(req) {
   return null;
 }
 
+// ----------------------------------------------------
+// ⚠️ 一時的な検証データ後始末用（検証完了後、このブロックごと削除する）
+//    tmpverify で始まる検証用アカウント本人だけが、自分のデータを完全削除できる。
+// ----------------------------------------------------
+const TEMP_PURGE_PREFIX = "tmpverify";
+
+app.post("/api/temp-purge-test-account", requireLogin, async (req, res) => {
+  if (!db || !auth) return res.status(503).json({ error: "データベース未接続" });
+  const myUid = req.user.uid;
+  const report = { chatDocs: [], messages: 0, chatsUpdated: [], errors: [] };
+
+  try {
+    const uDoc = await db.collection("users").doc(myUid).get();
+    if (!uDoc.exists) return res.status(404).json({ error: "ユーザーが見つかりません。" });
+    const myName = String((uDoc.data() || {}).username || "");
+    if (!myName.toLowerCase().startsWith(TEMP_PURGE_PREFIX)) {
+      return res.status(403).json({ error: "検証用アカウント以外は削除できません。" });
+    }
+
+    const namesSnap = await db.collection("users").get();
+    const testUids = new Set();
+    namesSnap.forEach((d) => {
+      const n = String((d.data() || {}).username || "").toLowerCase();
+      if (n.startsWith(TEMP_PURGE_PREFIX)) testUids.add(d.id);
+    });
+
+    const chatsSnap = await db.collection("chats").where("members", "array-contains", myUid).get();
+    for (const chatDoc of chatsSnap.docs) {
+      const chatId = chatDoc.id;
+      const data = chatDoc.data() || {};
+      const members = Array.isArray(data.members) ? data.members : [];
+      const allTest = members.length > 0 && members.every((u) => testUids.has(u));
+
+      if (chatId !== "all_members" && allTest) {
+        await db.recursiveDelete(chatDoc.ref);
+        report.chatDocs.push(chatId);
+        memoryChatMessages.delete(chatId);
+        continue;
+      }
+
+      const msgsSnap = await chatDoc.ref.collection("messages").where("senderUid", "==", myUid).get();
+      if (!msgsSnap.empty) {
+        const batch = db.batch();
+        msgsSnap.forEach((m) => batch.delete(m.ref));
+        await batch.commit();
+        report.messages += msgsSnap.size;
+      }
+
+      const newMembers = members.filter((u) => u !== myUid);
+      const memberInfo = { ...(data.memberInfo || {}) };
+      delete memberInfo[myUid];
+      const updates = { members: newMembers, memberInfo };
+
+      if (data.lastMessage && data.lastMessage.senderUid === myUid) {
+        const latest = await chatDoc.ref.collection("messages").orderBy("createdAt", "desc").limit(1).get();
+        updates.lastMessage = latest.empty ? null : { id: latest.docs[0].id, ...latest.docs[0].data() };
+      }
+
+      await chatDoc.ref.update(updates);
+      report.chatsUpdated.push(chatId);
+      memoryChatMessages.delete(chatId);
+    }
+
+    const unSnap = await db.collection("usernames").where("uid", "==", myUid).get();
+    for (const un of unSnap.docs) {
+      await un.ref.delete();
+    }
+
+    const frSnap = await db.collection("friendRequests").where("fromUid", "==", myUid).get();
+    for (const fr of frSnap.docs) await fr.ref.delete();
+    const frSnap2 = await db.collection("friendRequests").where("toUid", "==", myUid).get();
+    for (const fr of frSnap2.docs) await fr.ref.delete();
+
+    await db.recursiveDelete(db.collection("friendships").doc(myUid));
+    await uDoc.ref.delete();
+
+    await auth.deleteUser(myUid).catch((e) => report.errors.push("auth: " + e.message));
+    invalidateUserNamesCache();
+    return res.json({ ok: true, uid: myUid, username: myName, report });
+  } catch (err) {
+    return res.status(500).json({ error: err.message, report });
+  }
+});
+
 app.use((req, res, next) => {
   if (!["GET", "HEAD", "POST"].includes(req.method)) return next();
   const p = req.path || "/";
