@@ -3254,8 +3254,46 @@ function isBlockedHost(host) {
   return false;
 }
 
-function renderProxyError(title, detail, retryUrl, extra) {
-  const links = (extra && Array.isArray(extra.links)) ? extra.links : [];
+// 🎮 Poki のサイトロック（このゲームは公式サイトの中だけで起動する）用の案内ページ
+function renderPokiLockPage(originalUrl, inFrame) {
+  const mirrors = [
+    { href: "/api/proxy?url=" + encodeURIComponent("https://anonymousbirb5100.github.io/drive-mad/drive-mad-new/"), label: "🚗 Drive Mad" },
+    { href: "/api/proxy?url=" + encodeURIComponent("https://10minutestilldawnonline.github.io/a77/level-devil/"), label: "😈 Level Devil" },
+    { href: "/api/proxy?url=" + encodeURIComponent("https://arcadeclash.github.io/subway-surfers-unblocked/"), label: "🏃 Subway Surfers" },
+    { href: "/tensai-proxy/", label: "🎮 ゲーム一覧へ" }
+  ];
+  const btns = mirrors.map((m) => `<a class="btn btn-sec" href="${m.href}">${m.label}</a>`).join("\n      ");
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>このゲームはプロキシでは起動できません · 天才プロキシ</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f172a; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; text-align: center; }
+    .box { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 26px 20px; max-width: 520px; width: 100%; }
+    h2 { color: #fbbf24; font-size: 17px; line-height: 1.5; margin-bottom: 12px; }
+    p { color: #94a3b8; font-size: 13px; line-height: 1.8; margin-bottom: 16px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    .btn { display: inline-block; padding: 9px 14px; border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 12.5px; }
+    .btn-sec { background: #334155; color: #e2e8f0; }
+    .btn-pri { background: #0284c7; color: #fff; }
+    .foot { margin-top: 16px; font-size: 11px; color: #64748b; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>🎮 このゲームはPoki公式サイトの中だけで起動する仕様です</h2>
+    <p>Poki側のサイト制限で、プロキシからはこのタイトルを起動できません（ゲーム本体の不具合ではありません）。下のミラー版なら同じゲームをそのまま遊べます。</p>
+    <div class="row">${btns}</div>
+    <div class="foot">${inFrame ? "" : "対象: " + String(originalUrl || "").slice(0, 120)}</div>
+  </div>
+</body>
+</html>`;
+}
+
+function renderProxyError(title, detail, retryUrl, extra) {  const links = (extra && Array.isArray(extra.links)) ? extra.links : [];
   const note = (extra && extra.note) ? `<p style="font-size:12px;color:#94a3b8;margin-top:0;">${extra.note}</p>` : "";
   const extraBtns = links.map((l) => `<a href="${l.href}" class="btn ${l.primary ? "btn-primary" : "btn-sec"}">${l.label}</a>`).join("\n      ");
   return `<!DOCTYPE html>
@@ -4554,6 +4592,19 @@ app.all("/api/proxy", async (req, res) => {
     }
 
     if (contentType.includes("text/html")) {
+      // 🎮 Poki: サイトロック（このゲームは他サイトでは遊べない）は、案内ページに差し替える。
+      //    Pokiのゲームは「別サイトで開かれた」と判定するとページごと /sitelock へ
+      //    飛ばしてしまい、プロキシ内では白いメニュー画面になるだけだった。
+      const isPokiHost = /(^|\.)poki\.com$/i.test(parsedTarget.hostname);
+      const isPokiCdnHost = /(^|\.)poki-cdn\.com$/i.test(parsedTarget.hostname);
+      if ((isPokiHost && /\/sitelock/i.test(parsedTarget.pathname)) ||
+          (isPokiCdnHost && /game-not-available/i.test(parsedTarget.pathname))) {
+        res.status(200);
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        return res.send(renderPokiLockPage(targetUrl, isPokiCdnHost));
+      }
+
       let html = await response.text();
       const proxyBase = "/api/proxy?url=";
       const baseUrl = response.url || targetUrl;
