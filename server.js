@@ -6456,6 +6456,19 @@ app.get("/api/tube/proxy-stream", async (req, res) => {
       } catch (_) {}
     }
 
+    // Invidious は「終端なしの Range（bytes=0-）」を 403 で拒むことがある。
+    // ブラウザの <audio>/<video> は最初にこれを送るので、そのままだと
+    // 音声が読み込めず（＝ミュージックが30秒試聴に戻る）。
+    // 終端を付けた Range に切り詰めて引き直す（206の範囲が短いのは仕様上問題ない）。
+    if ([403, 410, 416].includes(upstream.status) && rangeStart >= 0 && rangeEnd < 0) {
+      try {
+        const boundedEnd = rangeStart + 2 * 1024 * 1024 - 1;
+        const boundedHeaders = { ...fetchHeaders, Range: `bytes=${rangeStart}-${boundedEnd}` };
+        const retry = await fetch(targetUrl, { headers: boundedHeaders, signal: ac.signal });
+        if (retry.ok) upstream = retry;
+      } catch (_) {}
+    }
+
     const ct = String(upstream.headers.get("content-type") || "video/mp4");
     const clen = parseInt(String(upstream.headers.get("content-length") || "0"), 10) || 0;
     const upstreamRangeHeader = upstream.headers.get("content-range") || "";
