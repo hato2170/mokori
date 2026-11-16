@@ -5085,11 +5085,13 @@ app.all("/api/proxy", async (req, res) => {
           if (!doc) return false;
           var txt = doc.body ? (doc.body.innerText || '') : '';
           if (txt.indexOf('not available to play') >= 0) return true;
-          if (doc.documentElement && (doc.documentElement.innerHTML || '').indexOf('game-not-available') >= 0) return true;
           if (depth <= 0) return false;
           var frames = doc.querySelectorAll('iframe');
           for (var i = 0; i < frames.length; i++) {
-            try { if (deepLocked(frames[i].contentWindow, depth - 1)) return true; } catch (e) {}
+            try {
+              if ((frames[i].src || '').indexOf('game-not-available') >= 0) return true;
+              if (deepLocked(frames[i].contentWindow, depth - 1)) return true;
+            } catch (e) {}
           }
         } catch (e) {}
         return false;
