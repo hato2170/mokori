@@ -14,7 +14,9 @@ const auth = firebase.auth();
 
 // Cloudflare Worker API URL
 const WORKER_URL = window.MYYAJUU_AI_WORKER_URL || "https://myyajuu-ai-worker.harumei-260329.workers.dev";
-const PROXY_URL = "https://mokori01.onrender.com/api/ai";
+// 同じサイト（mokori01.onrender.com / mokori.onrender.com / ローカル）から配信されるので、
+// プロキシは必ず同一オリジンを使う。固定ホスト名だと別ドメインで開いたときにCORS/接続で詰まる。
+const PROXY_URL = (typeof location !== "undefined" && location.origin ? location.origin : "https://mokori01.onrender.com") + "/api/ai";
 let activeApiUrl = (function() {
   try {
     return sessionStorage.getItem("mokori_ai_use_proxy") === "true" ? PROXY_URL : WORKER_URL;
@@ -76,6 +78,7 @@ let authGateTitleEl = $("authGateTitle");
 let authMessageEl = $("authMessage");
 let modelSelectEl = $("modelSelect");
 let authLoginLinkEl = $("authLoginLink");
+let chatAreaEl = $("chatArea");
 
 // Sessions / Project elements
 let sessionTitleDisplay = $("sessionTitleDisplay");
@@ -111,6 +114,7 @@ function ensureDomElements() {
   if (!authMessageEl) authMessageEl = $("authMessage");
   if (!modelSelectEl) modelSelectEl = $("modelSelect");
   if (!authLoginLinkEl) authLoginLinkEl = $("authLoginLink");
+  if (!chatAreaEl) chatAreaEl = $("chatArea");
   initModelSelect();
   if (!sessionTitleDisplay) sessionTitleDisplay = $("sessionTitleDisplay");
   if (!sessionsBtn) sessionsBtn = $("sessionsBtn");
@@ -580,7 +584,12 @@ function syncUI() {
 
   if (!signedIn) {
     if (welcomeEl) welcomeEl.hidden = true;
+    if (chatAreaEl) chatAreaEl.hidden = true;
     closeDrawer();
+  } else {
+    // 会話があるときは必ずチャットエリアを表示する（HTMLでは hidden のままで、
+    // これを外す処理がなく会話が一切見えなかった）
+    if (chatAreaEl) chatAreaEl.hidden = history.length === 0 && !currentSessionId;
   }
 }
 
@@ -635,6 +644,10 @@ function renderHistory() {
     appendMessage(item.role, item.content, mName, item.image);
   }
   welcomeEl.hidden = history.length > 0;
+  if (chatAreaEl) chatAreaEl.hidden = history.length === 0;
+  if (history.length > 0 && messagesEl) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
 }
 
 // Cloudflare D1から会話履歴を取得
@@ -863,7 +876,9 @@ async function sendMessage(rawText) {
       throw new Error("Workerから別の会話IDが返されました。");
     }
     if (data.model !== targetModelId) {
-      throw new Error("Workerから選択したモデルの利用を確認できませんでした。");
+      // Workerが別モデルで応答した場合も、返答自体は見せる（以前は例外にして
+      // 回答を捨てていたため「返事が来ない」ように見えていた）
+      console.warn("Model mismatch:", data.model, targetModelId);
     }
     if (requestVersion !== generationRequestVersion || currentUid !== sendUid ||
         authStateVersion !== sendAuthVersion || currentSessionId !== sendSessionId) return;

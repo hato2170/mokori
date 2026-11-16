@@ -430,6 +430,7 @@
       flex: 1;
       min-height: 0;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
       padding: 16px;
       display: flex;
       flex-direction: column;
@@ -513,12 +514,20 @@
       margin-bottom: 4px;
       cursor: pointer;
       user-select: none;
+      max-width: 100%;
+      min-width: 0;
+      flex-wrap: wrap;
+      row-gap: 2px;
     }
     .msg-sender-name {
       font-size: 13px;
       font-weight: 700;
       color: #1e293b;
       letter-spacing: -0.2px;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .msg-sender-add-hint {
       font-size: 10px;
@@ -887,17 +896,57 @@
         width: 100%;
       }
       .room-header {
-        padding: 0 10px;
-        gap: 6px;
+        height: 58px;
+        padding: 0 8px;
+        gap: 4px;
+      }
+      .room-left {
+        flex: 1 1 auto;
+        min-width: 0;
+        gap: 8px;
+      }
+      .room-left .avatar {
+        width: 34px;
+        height: 34px;
+        font-size: 17px;
+        flex-shrink: 0;
+      }
+      .room-title-wrap {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .room-title {
+        font-size: 15px;
+        max-width: none;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .room-sub {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .room-actions {
+        flex-shrink: 0;
+        gap: 0;
+      }
+      /* スマホ幅ではヘッダーのボタンを3つに絞る（残りは⋮設定モーダルの「ツール」から） */
+      .room-actions .icon-btn.room-act-extra {
+        display: none;
       }
       .room-actions .icon-btn {
         width: 32px;
         height: 32px;
         font-size: 15px;
       }
-      .room-title {
-        font-size: 15px;
-        max-width: 130px;
+      #backToListBtn {
+        display: flex;
+        width: 30px;
+        height: 30px;
+        font-size: 19px;
+        flex-shrink: 0;
       }
       #chatRoom {
         position: absolute;
@@ -908,8 +957,15 @@
       #chatRoom.mobile-active {
         display: flex;
       }
-      #backToListBtn {
-        display: flex;
+      #messagesContainer {
+        padding: 12px 10px;
+      }
+      .msg-row {
+        max-width: 88%;
+      }
+      .game-invite-card {
+        width: 100%;
+        max-width: 250px;
       }
     }
   </style>
@@ -1025,10 +1081,10 @@
         <div class="room-actions">
           <div id="roomBgmContainer" style="display:flex; align-items:center; margin-right:4px;"></div>
           <button class="icon-btn" onclick="window.startVoiceCall(false)" title="無料通話" style="font-size:16px;">📞</button>
-          <button class="icon-btn" onclick="window.openAlbumsModal()" title="アルバム" style="font-size:16px;">📸</button>
-          <button class="icon-btn" onclick="window.openNotesModal()" title="ノート" style="font-size:16px;">📝</button>
-          <button class="icon-btn" onclick="window.openPollModal()" title="投票" style="font-size:16px;">📊</button>
-          <button class="icon-btn" onclick="window.openGameHub()" title="ゲームを起動して遊ぶ" style="font-size:18px;">🎮</button>
+          <button class="icon-btn room-act-extra" onclick="window.openAlbumsModal()" title="アルバム" style="font-size:16px;">📸</button>
+          <button class="icon-btn room-act-extra" onclick="window.openNotesModal()" title="ノート" style="font-size:16px;">📝</button>
+          <button class="icon-btn room-act-extra" onclick="window.openPollModal()" title="投票" style="font-size:16px;">📊</button>
+          <button class="icon-btn room-act-extra" onclick="window.openGameHub()" title="ゲームを起動して遊ぶ" style="font-size:18px;">🎮</button>
           <button class="icon-btn" id="roomSearchToggleBtn" title="メッセージ検索">🔍</button>
           <button class="icon-btn" id="roomSettingsBtn" title="チャット設定">⋮</button>
         </div>
@@ -1152,19 +1208,33 @@
       <button class="close-modal-btn">✕</button>
     </div>
     <div class="modal-body">
-      <div class="section-title">参加メンバー</div>
-      <div id="groupMemberList" style="max-height:160px;overflow-y:auto;margin-bottom:16px;">
+      <div class="section-title" id="groupMemberTitle">参加メンバー</div>
+      <div id="groupMemberList" style="max-height:min(52vh, 320px);overflow-y:auto;margin-bottom:16px;">
         読み込み中…
       </div>
 
-      <div class="section-title">新しい友達を招待</div>
-      <div id="groupInviteFriendsList" style="max-height:140px;overflow-y:auto;margin-bottom:12px;">
-        読み込み中…
+      <div id="roomToolsSection" style="margin-bottom:16px;">
+        <div class="section-title">ツール</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <button class="btn-sm btn-secondary" onclick="document.getElementById('groupSettingsModal').classList.add('hidden'); window.openAlbumsModal()">📸 アルバム</button>
+          <button class="btn-sm btn-secondary" onclick="document.getElementById('groupSettingsModal').classList.add('hidden'); window.openNotesModal()">📝 ノート</button>
+          <button class="btn-sm btn-secondary" onclick="document.getElementById('groupSettingsModal').classList.add('hidden'); window.openPollModal()">📊 投票</button>
+          <button class="btn-sm btn-secondary" onclick="document.getElementById('groupSettingsModal').classList.add('hidden'); window.openGameHub()">🎮 ゲーム</button>
+        </div>
       </div>
-      <button class="btn-sm" id="groupInviteSubmitBtn" style="width:100%;">招待を追加</button>
 
-      <hr style="border:0;border-top:1px solid var(--border);margin:20px 0;">
-      <button class="btn-sm" id="leaveGroupBtn" style="background:#e04638;width:100%;">このグループを退会する</button>
+      <div id="groupInviteSection">
+        <div class="section-title">新しい友達を招待</div>
+        <div id="groupInviteFriendsList" style="max-height:140px;overflow-y:auto;margin-bottom:12px;">
+          読み込み中…
+        </div>
+        <button class="btn-sm" id="groupInviteSubmitBtn" style="width:100%;">招待を追加</button>
+      </div>
+
+      <div id="groupLeaveSection">
+        <hr style="border:0;border-top:1px solid var(--border);margin:20px 0;">
+        <button class="btn-sm" id="leaveGroupBtn" style="background:#e04638;width:100%;">このグループを退会する</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1896,7 +1966,7 @@
     for (const c of allChats) {
       if (!c || !c.id || seenIds.has(c.id)) continue;
       seenIds.add(c.id);
-      if (c.id === "all_members" || c.name === "🐐 もこり全員グループ" || c.type === "all") {
+      if (c.id === "all_members" || c.name === "🐐 もこり全員グループ" || c.type === "all" || c.isAllMembers === true) {
         if (hasAllMembers) continue;
         hasAllMembers = true;
       }
@@ -1914,7 +1984,7 @@
       item.className = "chat-item" + (chat.id === activeChatId ? " active" : "");
       item.addEventListener("click", () => openChat(chat.id));
 
-      const isGroup = chat.type === "group" || chat.id === "all_members";
+      const isGroup = chat.type === "group" || chat.id === "all_members" || chat.isAllMembers === true;
       const memberCount = isGroup ? ` <span class="member-count">(${chat.members.length})</span>` : "";
       const avatarIcon = chat.id === "all_members" ? "🐐" : (chat.type === "ai" ? "🤖" : (chat.type === "keep" ? "📌" : (isGroup ? "👥" : (chat.name ? chat.name.charAt(0) : "🐐"))));
 
@@ -2080,7 +2150,7 @@
 
   function updateRoomHeader() {
     if (!activeChatData) return;
-    const isAll = activeChatData.type === "all" || activeChatData.id === "all_members";
+    const isAll = activeChatData.isAllMembers === true || activeChatData.type === "all" || activeChatData.id === "all_members";
     const isGroup = activeChatData.type === "group" || isAll;
     const count = activeChatData.members ? activeChatData.members.length : 0;
     document.getElementById("roomTitle").textContent = activeChatData.name || "トーク";
@@ -2389,7 +2459,7 @@
 
       // 自分のメッセージの既読表示 (LINEと同じ)
       if (mine && !msg.unsent) {
-        const isGroup = activeChatData && (activeChatData.type === "group" || activeChatData.type === "all" || activeChatData.id === "all_members");
+        const isGroup = activeChatData && (activeChatData.type === "group" || activeChatData.type === "all" || activeChatData.isAllMembers === true || activeChatData.id === "all_members");
         const readBy = Array.isArray(msg.readBy) ? msg.readBy : [];
         const otherReaders = readBy.filter((u) => u !== currentUser.uid);
 
@@ -2416,9 +2486,7 @@
             readTag.title = "タップして既読をつけた人を確認";
             readTag.onclick = (e) => {
               e.stopPropagation();
-              const partnerUid = activeChatData && (activeChatData.partnerUid || (activeChatData.members && activeChatData.members.find((u) => u !== currentUser.uid)));
-              const pInfo = activeChatData && activeChatData.memberInfo && activeChatData.memberInfo[partnerUid];
-              alert(`既読者: ${pInfo ? pInfo.username : (activeChatData?.name || "相手")}`);
+              window.showReadersModal(otherReaders, activeChatData);
             };
             meta.appendChild(readTag);
           }
@@ -2696,7 +2764,7 @@
     });
   };
 
-  // 既読者一覧モーダル表示
+  // 既読者一覧モーダル表示（UIDではなく必ず「今の名前」で見せる）
   window.showReadersModal = function (readerUids, chatData) {
     let modal = document.getElementById("readersModal");
     if (!modal) {
@@ -2724,18 +2792,40 @@
     if (!readerUids || readerUids.length === 0) {
       listEl.innerHTML = `<div style="text-align:center; color:#94a3b8; font-size:13px; padding:12px;">まだ既読をつけたメンバーはいません</div>`;
     } else {
-      readerUids.forEach(uid => {
+      const COLORS = ["#06c755", "#3b82f6", "#8b5cf6", "#f97316", "#ec4899", "#0ea5e9", "#eab308", "#10b981"];
+      readerUids.forEach((uid, idx) => {
         const info = (chatData && chatData.memberInfo && chatData.memberInfo[uid]) || {};
-        const name = info.username || (uid === "ai_assistant" ? "AIアシスタント" : "ユーザー (" + uid.slice(0, 5) + ")");
+        const known = info.username && info.username !== "ユーザー";
+        const label = known
+          ? info.username
+          : (uid === "ai_assistant" ? "AIアシスタント"
+            : (uid === currentUser.uid ? "あなた" : (uid === (chatData && chatData.partnerUid) ? (chatData.name || "相手") : "メンバー")));
         const row = document.createElement("div");
+        row.setAttribute("data-uid", uid);
         row.style.cssText = "display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:8px; background:#f8fafc;";
-        row.innerHTML = `
-          <div style="width:32px; height:32px; border-radius:50%; background:#06c755; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px;">
-            ${name.charAt(0)}
-          </div>
-          <div style="font-weight:600; font-size:13px; color:#1e293b;">${escapeHtml(name)}</div>
-        `;
+        const color = COLORS[idx % COLORS.length];
+        const avatar = document.createElement("div");
+        avatar.style.cssText = `width:32px; height:32px; border-radius:50%; background:${color}; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px; flex-shrink:0;`;
+        avatar.textContent = label.charAt(0);
+        const nameEl = document.createElement("div");
+        nameEl.style.cssText = "font-weight:600; font-size:13px; color:#1e293b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
+        nameEl.textContent = label + (uid === currentUser.uid ? " (あなた)" : "");
+        row.appendChild(avatar);
+        row.appendChild(nameEl);
         listEl.appendChild(row);
+
+        // memberInfo に名前がない相手（古いメッセージ・退会処理など）はユーザーAPIで名前を取る
+        if (!known && uid !== "ai_assistant" && uid !== currentUser.uid) {
+          api("/api/users/" + encodeURIComponent(uid)).then((res) => {
+            const nm = res && res.user && res.user.username;
+            if (!nm) return;
+            nameEl.textContent = nm + (uid === currentUser.uid ? " (あなた)" : "");
+            avatar.textContent = nm.charAt(0);
+            if (chatData && chatData.memberInfo) {
+              chatData.memberInfo[uid] = { ...(chatData.memberInfo[uid] || {}), username: nm };
+            }
+          }).catch(() => {});
+        }
       });
     }
 
@@ -2972,65 +3062,93 @@
     }
   });
 
-  // グループ詳細 / 招待モーダル
+  // グループ詳細 / メンバー一覧モーダル
   document.getElementById("roomSettingsBtn").addEventListener("click", () => {
     if (!activeChatData) return;
-    if (activeChatData.type !== "group") {
-      alert(`1対1トーク: ${activeChatData.name} さんとのトークです。`);
-      return;
-    }
     openGroupSettingsModal();
   });
 
   function openGroupSettingsModal() {
     const modal = document.getElementById("groupSettingsModal");
-    document.getElementById("groupSettingsTitle").textContent = `${activeChatData.name} の設定`;
+    if (!modal || !activeChatData) return;
+
+    const isAll = activeChatData.isAllMembers === true || activeChatData.id === "all_members";
+    const isGroup = activeChatData.type === "group" || isAll;
+    const members = activeChatData.members || [];
+
+    document.getElementById("groupSettingsTitle").textContent = isAll
+      ? `🐐 もこり全員グループ`
+      : `${activeChatData.name || "トーク"} の設定`;
+    const memberTitle = document.getElementById("groupMemberTitle");
+    if (memberTitle) memberTitle.textContent = `参加メンバー（${members.length}人）`;
     modal.classList.remove("hidden");
 
-    // メンバー一覧描画
+    // メンバー一覧描画（現在の名前・アイコン付き）
     const memberBox = document.getElementById("groupMemberList");
     memberBox.innerHTML = "";
-    (activeChatData.members || []).forEach((uid) => {
+    if (members.length === 0) {
+      memberBox.innerHTML = `<div style="font-size:13px;color:var(--text-muted);">メンバー情報を取得できませんでした</div>`;
+    }
+    const COLORS = ["#06c755", "#3b82f6", "#8b5cf6", "#f97316", "#ec4899", "#0ea5e9", "#eab308", "#10b981"];
+    (activeChatData.members || []).forEach((uid, idx) => {
       const uInfo = activeChatData.memberInfo && activeChatData.memberInfo[uid];
-      const name = uInfo ? uInfo.username : "ユーザー";
+      const isAi = uid === "ai_assistant" || (uInfo && uInfo.isAi);
+      const name = isAi ? "AIアシスタント" : (uInfo && uInfo.username && uInfo.username !== "ユーザー" ? uInfo.username : "メンバー");
       const isOwner = uid === activeChatData.createdUid;
       const isMe = uid === currentUser.uid;
 
       const item = document.createElement("div");
-      item.style.display = "flex";
-      item.style.alignItems = "center";
-      item.style.justifyContent = "space-between";
-      item.style.padding = "6px 0";
-      item.innerHTML = `
-        <span>${escapeHtml(name)} ${isMe ? "(あなた)" : ""}</span>
-        ${isOwner ? '<span style="font-size:11px;color:#ca8a04;font-weight:600;">👑 作成者</span>' : ""}
-      `;
+      item.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);";
+      const left = document.createElement("div");
+      left.style.cssText = "display:flex;align-items:center;gap:10px;min-width:0;";
+      const av = document.createElement("div");
+      av.style.cssText = `width:30px;height:30px;border-radius:50%;background:${isAi ? "#111827" : COLORS[idx % COLORS.length]};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;`;
+      av.textContent = isAi ? "🤖" : name.charAt(0);
+      const nm = document.createElement("span");
+      nm.style.cssText = "font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      nm.textContent = name + (isMe ? " (あなた)" : "");
+      left.appendChild(av);
+      left.appendChild(nm);
+      item.appendChild(left);
+      if (isOwner) {
+        const crown = document.createElement("span");
+        crown.style.cssText = "font-size:11px;color:#ca8a04;font-weight:600;flex-shrink:0;";
+        crown.textContent = "👑 作成者";
+        item.appendChild(crown);
+      }
       memberBox.appendChild(item);
     });
+
+    // 全員グループは「招待」「退会」を出さない（全員が自動参加のため）
+    const inviteSec = document.getElementById("groupInviteSection");
+    const leaveSec = document.getElementById("groupLeaveSection");
+    if (inviteSec) inviteSec.style.display = isGroup && !isAll ? "" : "none";
+    if (leaveSec) leaveSec.style.display = isGroup && !isAll ? "" : "none";
 
     // 招待できる友達一覧描画
     const inviteBox = document.getElementById("groupInviteFriendsList");
     inviteBox.innerHTML = "";
-    const notJoined = allFriends.filter((f) => !activeChatData.members.includes(f.uid));
-
-    if (notJoined.length === 0) {
-      inviteBox.innerHTML = `<div style="font-size:13px;color:var(--text-muted);">招待可能な友達はいません</div>`;
-      document.getElementById("groupInviteSubmitBtn").disabled = true;
-    } else {
-      document.getElementById("groupInviteSubmitBtn").disabled = false;
-      notJoined.forEach((f) => {
-        const label = document.createElement("label");
-        label.style.display = "flex";
-        label.style.alignItems = "center";
-        label.style.gap = "8px";
-        label.style.padding = "4px 0";
-        label.style.cursor = "pointer";
-        label.innerHTML = `
-          <input type="checkbox" name="inviteMemberUid" value="${f.uid}">
-          <span>${escapeHtml(f.username)}</span>
-        `;
-        inviteBox.appendChild(label);
-      });
+    if (isGroup && !isAll) {
+      const notJoined = allFriends.filter((f) => !activeChatData.members.includes(f.uid));
+      if (notJoined.length === 0) {
+        inviteBox.innerHTML = `<div style="font-size:13px;color:var(--text-muted);">招待可能な友達はいません</div>`;
+        document.getElementById("groupInviteSubmitBtn").disabled = true;
+      } else {
+        document.getElementById("groupInviteSubmitBtn").disabled = false;
+        notJoined.forEach((f) => {
+          const label = document.createElement("label");
+          label.style.display = "flex";
+          label.style.alignItems = "center";
+          label.style.gap = "8px";
+          label.style.padding = "4px 0";
+          label.style.cursor = "pointer";
+          label.innerHTML = `
+            <input type="checkbox" name="inviteMemberUid" value="${f.uid}">
+            <span>${escapeHtml(f.username)}</span>
+          `;
+          inviteBox.appendChild(label);
+        });
+      }
     }
   }
 

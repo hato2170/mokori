@@ -432,6 +432,13 @@ async function ensureAllMembersGroup() {
     const memberInfo = { ...(data.memberInfo || {}) };
     let changed = false;
 
+    // 「もこり全員グループ」は必ず“グループトーク”として扱う。
+    // 以前は type: "all" のままで、クライアント側が「1対1トーク」と誤判定して
+    // メンバー一覧を開けなかった。DB側も type: "group" に揃えておく。
+    const patch = {};
+    if (data.type !== "group") patch.type = "group";
+    if (data.isAllMembers !== true) patch.isAllMembers = true;
+
     for (const uDoc of usersSnap.docs) {
       const uid = uDoc.id;
       const uData = uDoc.data() || {};
@@ -452,13 +459,17 @@ async function ensureAllMembersGroup() {
 
     if (changed) {
       await allRef.update({
+        ...patch,
         members,
         memberInfo,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
       console.log(`[AllMembers] synced: ${members.length} members`);
+    } else if (Object.keys(patch).length > 0) {
+      await allRef.update(patch);
+      console.log(`[AllMembers] type fixed to group`);
     }
-    return { ok: true, members: members.length, changed };
+    return { ok: true, members: members.length, changed: changed || Object.keys(patch).length > 0 };
   } catch (e) {
     console.warn("[AllMembers] sync failed:", e.message);
     return { ok: false, error: e.message };
@@ -1139,7 +1150,7 @@ app.get("/api/chats", requireLogin, async (req, res) => {
 
       if (!allMembersDoc.exists) {
         const initialAllChat = {
-          type: "all",
+          type: "group",
           name: "🐐 もこり全員グループ",
           description: "もこりに登録している全員が話せる全体グループです",
           isAllMembers: true,
@@ -1182,7 +1193,8 @@ app.get("/api/chats", requireLogin, async (req, res) => {
 
       chats.push({
         id: "all_members",
-        type: "all",
+        type: "group",
+        isAllMembers: true,
         name: "🐐 もこり全員グループ",
         description: "もこりに登録している全員が話せる全体グループです",
         isAllMembers: true,
@@ -1357,13 +1369,14 @@ app.get("/api/chats", requireLogin, async (req, res) => {
       if (!c || !c.id || seenChatIds.has(c.id)) continue;
       seenChatIds.add(c.id);
 
-      const isAll = c.id === "all_members" || c.name === "🐐 もこり全員グループ" || c.type === "all";
+      const isAll = c.id === "all_members" || c.name === "🐐 もこり全員グループ" || c.type === "all" || c.isAllMembers;
       if (isAll) {
         if (hasAllMembersGroup) continue;
         hasAllMembersGroup = true;
         c.id = "all_members";
         c.name = "🐐 もこり全員グループ";
-        c.type = "all";
+        c.type = "group";
+        c.isAllMembers = true;
       }
 
       finalChats.push(c);
@@ -1578,9 +1591,15 @@ app.get("/api/chats/:chatId", requireLogin, async (req, res) => {
     }
 
     const data = chatDoc.data();
-    const isAllMembers = chatId === "all_members";
+    const isAllMembers = chatId === "all_members" || data.isAllMembers === true;
     if (!isAllMembers && (!data.members || !data.members.includes(myUid))) {
       return res.status(403).json({ error: "このチャットへの参加権限がありません。" });
+    }
+    // 全員グループは必ずグループトークとして返す（1対1扱いにならないように）
+    if (isAllMembers) {
+      data.type = "group";
+      data.isAllMembers = true;
+      data.name = data.name || "🐐 もこり全員グループ";
     }
 
     let name = data.name;
@@ -1850,33 +1869,33 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
 
           const authHeader = req.headers.authorization || "";
           let aiText = "";
+          let aiError = "";
+          const AI_ASSISTANT_MODEL = "@cf/meta/llama-3.2-3b-instruct";
+          // 日本語で自然に返すための指示（Workerのプロンプトに前置する）
+          const aiPrompt = `あなたは「もこり」のやさしい日本語AIアシスタントです。相手は日本の子ども〜高校生です。必ず自然な日本語で、短く分かりやすく答えてください。わからないことは正直に「わからない」と言ってください。\n\n${text}`;
           try {
             let aiPayload = {
-              message: text,
-              model: "@cf/meta/llama-3.2-3b-instruct"
+              message: aiPrompt,
+              model: AI_ASSISTANT_MODEL,
+              webSearch: false
             };
             if (chatData.aiConversationId) {
               aiPayload.conversationId = chatData.aiConversationId;
             }
-            let aiResp = await fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
+            const callWorker = async (payload) => fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
                 Authorization: authHeader
               },
-              body: JSON.stringify(aiPayload)
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(25000)
             });
+            let aiResp = await callWorker(aiPayload);
             // 既存の会話IDで失敗した場合は新規会話として即座に自動再試行
             if (!aiResp.ok && aiPayload.conversationId) {
               delete aiPayload.conversationId;
-              aiResp = await fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: authHeader
-                },
-                body: JSON.stringify(aiPayload)
-              });
+              aiResp = await callWorker(aiPayload);
             }
             if (aiResp.ok) {
               const aiData = await aiResp.json();
@@ -1884,22 +1903,30 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
               if (aiData.conversationId && aiData.conversationId !== chatData.aiConversationId) {
                 await chatRef.update({ aiConversationId: aiData.conversationId }).catch(() => {});
               }
+            } else {
+              let errBody = {};
+              try { errBody = await aiResp.json(); } catch (_) {}
+              aiError = `${aiResp.status} ${errBody.error || errBody.message || ""}`.trim();
+              console.warn("[AI] worker responded", aiResp.status, errBody.error || "");
             }
           } catch (e) {
-            console.warn("AI fetch fallback:", e.message);
+            aiError = e && e.name === "TimeoutError" ? "timeout" : (e.message || "network");
+            console.warn("AI fetch fallback:", aiError);
           }
           if (!aiText) {
-            const t = text.trim();
-            if (/^(こんにちは|はじめまして|やあ|hello|hi)/i.test(t)) {
-              aiText = "こんにちは！メッセージありがとうございます！何か調べたいことや学校の課題、雑談など何でも気軽に聞いてくださいね。";
-            } else if (/^(おはよう|おっは)/i.test(t)) {
-              aiText = "おはようございます！今日も一日楽しくいきましょう！何かあればいつでも質問してくださいね。";
-            } else if (/^(おやすみ|寝る)/i.test(t)) {
-              aiText = "今日もお疲れ様でした！ゆっくり休んでくださいね。おやすみなさい🌙";
-            } else if (/\?|？|教えて|どういう|何|なぜ|どうやって|オススメ|おすすめ/.test(t)) {
-              aiText = `「${t.slice(0, 30)}」についてですね！上部の🤖「AIスタジオ」を開くと、最新のLlama 3.2モデルによる長文解説やリアルタイムWeb検索、画像生成機能も使えますよ！`;
+            // ⚠ 「返事をしたふり」をする定型文は廃止。失敗は失敗として伝える
+            // （以前はどんな失敗でも「しっかり届きました」と返していたため、
+            //  壊れているのに正常に見える最大の原因になっていた）。
+            if (/user_daily_limit/i.test(aiError)) {
+              aiText = "ごめんね、今日はAIを使える回数の上限（20回）に達してしまいました。明日また話しかけてね！";
+            } else if (/daily_budget_reached/i.test(aiError)) {
+              aiText = "ごめんね、いまAIの無料枠がいっぱいです。しばらく時間をおいてからもう一度送ってみてね。";
+            } else if (/request_in_progress/i.test(aiError)) {
+              aiText = "前の返事をまだ作っている途中みたい。少し待ってからもう一度送ってね。";
+            } else if (/timeout/i.test(aiError)) {
+              aiText = "ごめんね、AIの返事が時間内に返ってこなかったよ。もう一度送ってみてね。";
             } else {
-              aiText = `「${t.slice(0, 30)}」ですね！しっかり届きました。もっと詳しく聞きたいことや画像を作りたいときは、ぜひAIスタジオも使ってみてくださいね！`;
+              aiText = "ごめんね、いまAIにつながらなかったよ。少し待ってからもう一度送ってみてね。" + (aiError ? `\n（エラー: ${aiError.slice(0, 80)}）` : "");
             }
           }
           const aiNow = admin.firestore.FieldValue.serverTimestamp();
@@ -4631,6 +4658,34 @@ app.all("/api/proxy", async (req, res) => {
       });
 
       const isPokiSite = /(^|\.)poki\.com$|poki-cdn\.com$|turbowarp\.org$|fancade\.com$/i.test(parsedTarget.hostname);
+      // 🎮 Poki: ゲーム本体（games.poki.com）のURLを上流HTMLから確定してクライアントに渡す。
+      //    上流HTMLの gameUri / file.content は \u002F エスケープされたJSONの中にあり、
+      //    クライアント側の文字列処理では壊れやすかった（＝ゲームが起動しない／
+      //    「読み込み中」のままになる直接原因）。ここで正しくほどいておく。
+      let pokiGameUrl = null;
+      if (/^(www\.)?poki\.com$/i.test(parsedTarget.hostname) && /^(\/[a-z]{2})?\/g\//i.test(parsedTarget.pathname)) {
+        try {
+          const decoded = html
+            .replace(/\\u002F/gi, "/")
+            .replace(/\\\//g, "/")
+            .replace(/\\\\/g, "\\");
+          const found = decoded.match(/https?:\/\/games\.poki\.com\/[A-Za-z0-9._~:\/?#\[\]@!$&'()*+,;=%-]+/g) || [];
+          const urls = [];
+          for (const raw of found) {
+            const u = raw.replace(/[\\"'\s<>]+$/g, "");
+            if (/^https?:\/\/games\.poki\.com\/.+/.test(u) && !urls.includes(u)) urls.push(u);
+          }
+          // 埋め込み用の /<site_id>/<game_id> 形式を優先する（公式プレイヤーと同じ形）
+          urls.sort((a, b) => ((b.includes("/458768/") ? 1 : 0) - (a.includes("/458768/") ? 1 : 0)) || (b.length - a.length));
+          pokiGameUrl = urls[0] || null;
+        } catch (_) {
+          pokiGameUrl = null;
+        }
+      }
+      const pokiGameProxyUrl = pokiGameUrl
+        ? "/api/proxy?url=" + encodeURIComponent(pokiGameUrl)
+        : null;
+
       // 🎬 ページのスクリプトより先に広告SDKの互換スタブを読みませる（同期スクリプトなので
       // 後続のゲームコードが google.ima を触る時点では必ず存在する）。本物を読みに行っても
       // 同じスタブが返るので二重にはならない。
@@ -4652,6 +4707,7 @@ app.all("/api/proxy", async (req, res) => {
   window.__proxy_search = baseObj.search || '';
   window.__proxy_hash = baseObj.hash || '';
   window.__proxy_href = baseObj.href || baseUrl;
+  window.__pxPokiGame = ${JSON.stringify(pokiGameProxyUrl)};
 
   var IS_POKI = ${isPokiSite};
 
@@ -4930,6 +4986,66 @@ app.all("/api/proxy", async (req, res) => {
     // ローディングが完了しない（＝ゲームが始まらない）。4秒待っても
     // プレイヤーが出てこないときだけ自前でマウントする。
     var pokiMountAt = Date.now() + 4000;
+
+    // 🚫 Pokiのサイトロック（このゲームは公式サイトの中だけで起動する）を検知して案内する
+    function showPokiLockNotice(gp) {
+      if (!gp || gp.querySelector('#__px_poki_lock')) return;
+      var box = document.createElement('div');
+      box.id = '__px_poki_lock';
+      box.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;background:#0f172a;color:#e2e8f0;text-align:center;z-index:9;';
+      var h = document.createElement('div');
+      h.style.cssText = 'font-size:17px;font-weight:700;color:#fbbf24;';
+      h.textContent = 'このゲームはPoki公式サイトの中だけで起動する仕様です';
+      var p = document.createElement('div');
+      p.style.cssText = 'font-size:13px;line-height:1.8;color:#94a3b8;max-width:540px;';
+      p.textContent = 'Poki側のサイト制限で、プロキシからはこのタイトルを起動できません（ゲーム本体ではなくPokiの制限です）。下のミラー版なら同じゲームをそのまま遊べます。';
+      box.appendChild(h);
+      box.appendChild(p);
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;justify-content:center;';
+      var mirrors = [
+        ['🚗 Drive Mad', 'https://anonymousbirb5100.github.io/drive-mad/drive-mad-new/'],
+        ['😈 Level Devil', 'https://10minutestilldawnonline.github.io/a77/level-devil/'],
+        ['🏃 Subway Surfers', 'https://arcadeclash.github.io/subway-surfers-unblocked/']
+      ];
+      for (var mi = 0; mi < mirrors.length; mi++) {
+        var a = document.createElement('a');
+        a.href = '/api/proxy?url=' + encodeURIComponent(mirrors[mi][1]);
+        a.textContent = mirrors[mi][0];
+        a.style.cssText = 'background:#1e293b;border:1px solid #334155;color:#e2e8f0;text-decoration:none;padding:9px 14px;border-radius:10px;font-size:12.5px;font-weight:600;';
+        row.appendChild(a);
+      }
+      var home = document.createElement('a');
+      home.href = '/tensai-proxy/';
+      home.textContent = '🎮 ゲーム一覧へ戻る';
+      home.style.cssText = 'background:#0284c7;color:#fff;text-decoration:none;padding:9px 16px;border-radius:10px;font-size:12.5px;font-weight:700;';
+      row.appendChild(home);
+      box.appendChild(row);
+      gp.appendChild(box);
+    }
+
+    function watchPokiSitelock(frame, gp) {
+      var tries = 0;
+      var timer = setInterval(function () {
+        tries++;
+        var locked = false;
+        try {
+          var doc = frame.contentDocument;
+          if (doc) {
+            var txt = doc.body ? (doc.body.innerText || '') : '';
+            if (txt.indexOf('not available to play') >= 0) locked = true;
+            var inner = doc.querySelectorAll('iframe');
+            for (var i = 0; i < inner.length; i++) {
+              if ((inner[i].src || '').indexOf('game-not-available') >= 0) locked = true;
+            }
+          }
+          var wLoc = frame.contentWindow && frame.contentWindow.location ? (frame.contentWindow.location.href || '') : '';
+          if (wLoc.indexOf('sitelock') >= 0) locked = true;
+        } catch (e) {}
+        if (locked) { clearInterval(timer); showPokiLockNotice(gp); return; }
+        if (tries > 15) clearInterval(timer);
+      }, 1200);
+    }
     function tryMountPokiGame() {
       if (Date.now() < pokiMountAt) return false;
       if (document.querySelector('iframe#game-element') || document.querySelector('#game-player iframe')) return true;
@@ -4961,9 +5077,9 @@ app.all("/api/proxy", async (req, res) => {
       if (!gp) return false;
       if (gp.querySelector('iframe')) return true;
 
-      var contentUrl = null;
+      var contentUrl = window.__pxPokiGame || null;
       try {
-        if (window.INITIAL_STATE && window.INITIAL_STATE.api && window.INITIAL_STATE.api.queries) {
+        if (!contentUrl && window.INITIAL_STATE && window.INITIAL_STATE.api && window.INITIAL_STATE.api.queries) {
           for (var k in window.INITIAL_STATE.api.queries) {
             if (k.startsWith('getGame(')) {
               var qData = window.INITIAL_STATE.api.queries[k].data;
@@ -4976,19 +5092,17 @@ app.all("/api/proxy", async (req, res) => {
         }
       } catch(e) {}
 
-      if (!contentUrl) {
-        try {
-          var rawHTML = document.documentElement ? document.documentElement.innerHTML : '';
-          var rx = new RegExp('https?:[/\\\\u002F]+games\\\\.poki\\\\.com[/\\\\u002F0-9a-zA-Z_\\\\-]+');
-          var m = rawHTML.match(rx);
-          if (m) {
-            contentUrl = m[0].split('\\\\u002F').join('/').split('\\\\').join('');
-          }
-        } catch(_) {}
-      }
+      // ※以前はここで HTML から games.poki.com のURLを正規表現で拾っていたが、
+      //   上流のJSONは \u002F でエスケープされており、テンプレート文字列の
+      //   エスケープと重なってURLが壊れ、ゲームがマウントされず「真っ白／
+      //   読み込み中のまま」になっていた。URLはサーバー側で確定させて
+      //   window.__pxPokiGame で渡す（上の contentUrl がそれ）。
 
       if (contentUrl) {
-        var proxyUrl = '/api/proxy?url=' + encodeURIComponent(contentUrl) + '&_ts=' + Date.now();
+        var proxyUrl = contentUrl.indexOf('/api/proxy?url=') === 0
+          ? contentUrl
+          : '/api/proxy?url=' + encodeURIComponent(contentUrl);
+        if (proxyUrl.indexOf('_ts=') < 0) proxyUrl += '&_ts=' + Date.now();
         var iframe = document.createElement('iframe');
         iframe.id = 'game-element';
         iframe.name = 'gameFrame';
@@ -5002,6 +5116,7 @@ app.all("/api/proxy", async (req, res) => {
         iframe.setAttribute('sandbox', 'allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-same-origin allow-downloads');
         gp.innerHTML = '';
         gp.appendChild(iframe);
+        watchPokiSitelock(iframe, gp);
         return true;
       }
       return false;
@@ -5412,7 +5527,13 @@ if (window !== window.top) {
       return res.send(css);
     }
 
-    if (contentType.includes("javascript") || (response.url && response.url.includes(".js"))) {
+    // ⚠ 以前は response.url.includes(".js") で判定していたため、Unityの
+    //   「.json」（ビルドデータ）までJS扱いになり、先頭に /*px-shim*/ が
+    //   付いて JSON パースエラー → ゲームが「読み込み中(8MB)」のまま止まる
+    //   原因になっていた。JSONは絶対に加工しない。
+    const isJsonAsset = /\.json(?:[?#]|$)/i.test(response.url || "")
+      || /application\/json|text\/json/i.test(contentType);
+    if (!isJsonAsset && (contentType.includes("javascript") || /\.m?js(?:[?#]|$)/i.test(response.url || ""))) {
       let js = await response.text();
       // Worker内の相対URLを上流基準で解決し直す小さなシム（ページ内では何もしない）
       if (js && !js.startsWith("/*px-shim*/")) {

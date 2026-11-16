@@ -129,6 +129,24 @@
       gap: 12px;
       margin-bottom: 36px;
     }
+
+    /* 📱 スマホ（iPhone 390px幅）: ヘッダーとヒーローの折り返しを整える */
+    @media (max-width: 520px) {
+      header { padding: 10px 12px; gap: 8px; flex-wrap: wrap; row-gap: 8px; }
+      .logo { font-size: 15px; gap: 6px; }
+      header > a { font-size: 11px !important; padding: 5px 8px !important; }
+      header .stealth-btn { font-size: 11px; padding: 6px 10px; }
+      .main-container { padding: 20px 12px 32px; }
+      .hero-title { font-size: 24px; line-height: 1.35; }
+      .hero-sub { font-size: 13px; margin-bottom: 18px; }
+      .search-box { margin-bottom: 24px; }
+      .search-box input { padding: 10px 12px; font-size: 14px; min-width: 0; }
+      .search-box button { padding: 10px 14px; font-size: 13px; white-space: nowrap; }
+      .quick-tiles { grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 24px; }
+      .tile { padding: 12px 8px; }
+      .tile .name { font-size: 12px; }
+      .tile .desc { font-size: 9.5px; }
+    }
     .tile {
       background: #161e2e;
       border: 1px solid #283548;

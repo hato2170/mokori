@@ -4,6 +4,10 @@ body { margin: 0; min-height: 100vh; min-height: 100dvh; }
 button, textarea, select { font: inherit; }
 .app { min-height: 100vh; min-height: 100dvh; max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; background: #fff; position: relative; }
 
+/* 会話エリア（以前はCSS/JSとも非表示のままで、返答が見えなかった） */
+.chat-area { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.chat-area[hidden] { display: none !important; }
+
 /* Topbar */
 .topbar { height: 60px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid #eee; position: sticky; top: 0; background: rgba(255,255,255,.98); z-index: 10; }
 .title-area { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow: hidden; }
@@ -45,6 +49,15 @@ button, textarea, select { font: inherit; }
 
 /* Messages */
 .messages { width: min(100% - 24px, 720px); margin: 0 auto; flex: 1 0 auto; padding: 8px 0 20px; }
+@media (max-width: 480px) {
+  .messages { width: calc(100% - 16px); padding-bottom: 16px; }
+  .bubble { max-width: 92%; font-size: 14.5px; }
+  .welcome { margin: 18px auto 12px; }
+  .welcome h1 { font-size: 20px; }
+  .quick-prompts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+  .topbar { gap: 6px; }
+  .title-area small { display: none; }
+}
 .message { display: flex; margin: 16px 0; gap: 10px; align-items: flex-start; }
 .message.user { justify-content: flex-end; }
 .bubble { max-width: min(88%, 620px); padding: 11px 15px; border-radius: 18px; line-height: 1.65; font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
