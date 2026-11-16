@@ -465,11 +465,121 @@ async function ensureAllMembersGroup() {
   }
 }
 
+// ----------------------------------------------------
+// ⭐ 現在のユーザー名の解決（改名しても古い名前が残らないようにする）
+//    chats.memberInfo の username や、メッセージ/プレビューの senderName は
+//    「その時点のスナップショット」なので、名前を変えても古い名前が出てしまう。
+//    返却時に users の現在の username で上書きする。
+//    全ユーザーを短いTTLでまとめてキャッシュし、改名・登録時は即時破棄する
+//    （チャットを開くたびにユーザー分のFirestore読み取りを増やさないため）。
+// ----------------------------------------------------
+const USER_NAMES_TTL_MS = 60 * 1000;
+let userNamesCache = { map: new Map(), at: 0 };
+
+async function getUserNamesMap(force = false) {
+  if (!db) return new Map();
+  const now = Date.now();
+  if (!force && userNamesCache.at && now - userNamesCache.at < USER_NAMES_TTL_MS) {
+    return userNamesCache.map;
+  }
+  try {
+    const snap = await db.collection("users").get();
+    const map = new Map();
+    snap.forEach((doc) => {
+      const u = doc.data() || {};
+      map.set(doc.id, String(u.username || "ユーザー"));
+    });
+    userNamesCache = { map, at: Date.now() };
+    return map;
+  } catch (err) {
+    console.warn("[UserName] fetch failed:", err.message);
+    return userNamesCache.map || new Map();
+  }
+}
+
+function invalidateUserNamesCache() {
+  userNamesCache = { map: new Map(), at: 0 };
+}
+
+// uid の現在名（退会済みなどで見つからなければ fallback）
+function currentUserName(names, uid, fallback) {
+  if (!names || !uid) return fallback;
+  const n = names.get(uid);
+  return n || fallback;
+}
+
+// memberInfo のうち「ユーザー名」だけを現在名に差し替えたコピーを返す
+//   joinedAt などの他のフィールドはそのまま残す
+function freshMemberInfo(memberInfo, names) {
+  const src = memberInfo || {};
+  if (!names || names.size === 0) return src;
+  const out = {};
+  for (const [uid, info] of Object.entries(src)) {
+    const cur = names.get(uid);
+    if (cur && (!info || info.username !== cur)) {
+      out[uid] = { ...(info || {}), username: cur };
+    } else {
+      out[uid] = info || {};
+    }
+  }
+  return out;
+}
+
+// メッセージ / lastMessage の senderName を現在名に差し替えたコピーを返す
+//   system や ai_assistant など users にいない送信者はそのまま
+function freshSenderName(obj, names) {
+  if (!obj || !obj.senderUid || !names) return obj;
+  const cur = names.get(obj.senderUid);
+  if (!cur || cur === obj.senderName) return obj;
+  return { ...obj, senderName: cur };
+}
+
+// 改名時に、参加している全チャットの memberInfo / lastMessage / announcement を
+// 現在名で書き戻す（読み出し時の上書きと二重で、DB側も古い名前を残さない）
+async function syncRenamedUserInChats(uid, newName) {
+  if (!db || !uid || !newName) return { ok: false };
+  try {
+    const snap = await db.collection("chats").where("members", "array-contains", uid).get();
+    if (snap.empty) return { ok: true, updated: 0 };
+    const batch = db.batch();
+    let updated = 0;
+
+    for (const doc of snap.docs) {
+      const data = doc.data() || {};
+      const updates = {};
+
+      const info = data.memberInfo && data.memberInfo[uid];
+      if (info && info.username !== newName) {
+        updates[`memberInfo.${uid}.username`] = newName;
+      }
+      if (data.lastMessage && data.lastMessage.senderUid === uid && data.lastMessage.senderName !== newName) {
+        updates["lastMessage.senderName"] = newName;
+      }
+      if (data.announcement && data.announcement.senderUid === uid && data.announcement.senderName !== newName) {
+        updates["announcement.senderName"] = newName;
+      }
+
+      if (Object.keys(updates).length > 0) {
+        batch.update(doc.ref, updates);
+        updated++;
+      }
+    }
+
+    if (updated > 0) await batch.commit();
+    console.log(`[Rename] synced ${updated} chats for ${uid} -> ${newName}`);
+    return { ok: true, updated };
+  } catch (err) {
+    console.warn("[Rename] chat sync failed:", err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
 // サーバー起動時に自動実行
 setTimeout(() => {
   if (db) {
     purgeUpdateAndTestMessages().catch(() => {});
     ensureAllMembersGroup().catch(() => {});
+    getUserNamesMap(true).catch(() => {});
   }
 }, 1500);
 
@@ -599,6 +709,7 @@ app.post("/api/register", async (req, res) => {
 
     // 新規登録した人も「もこり全員グループ」に入れる
     await ensureAllMembersGroup().catch(() => {});
+    invalidateUserNamesCache();
 
     const token = await auth.createCustomToken(userRecord.uid);
     res.status(201).json({ token, username });
@@ -1015,6 +1126,9 @@ app.get("/api/chats", requireLogin, async (req, res) => {
       .where("members", "array-contains", myUid)
       .get();
 
+    // 改名後も古い名前が出ないよう、現在のユーザー名をまとめて取得
+    const names = await getUserNamesMap();
+
     const chats = [];
 
     // もこり全員グループ (全ユーザー参加)
@@ -1073,9 +1187,9 @@ app.get("/api/chats", requireLogin, async (req, res) => {
         description: "もこりに登録している全員が話せる全体グループです",
         isAllMembers: true,
         members: allData.members || [],
-        memberInfo: allData.memberInfo || {},
+        memberInfo: freshMemberInfo(allData.memberInfo, names),
         partnerUid: null,
-        lastMessage: allData.lastMessage || null,
+        lastMessage: freshSenderName(allData.lastMessage, names),
         lastMessageAt: allData.lastMessageAt || null,
         unread: hasAllUnread,
         announcement: allData.announcement || null,
@@ -1172,9 +1286,9 @@ app.get("/api/chats", requireLogin, async (req, res) => {
         description: "いつでも質問や相談ができる専用AI",
         isAi: true,
         members: [myUid, "ai_assistant"],
-        memberInfo: aiData.memberInfo || {},
+        memberInfo: freshMemberInfo(aiData.memberInfo, names),
         partnerUid: "ai_assistant",
-        lastMessage: aiData.lastMessage || null,
+        lastMessage: freshSenderName(aiData.lastMessage, names),
         lastMessageAt: aiData.lastMessageAt || null,
         unread: hasAiUnread,
         announcement: null,
@@ -1193,7 +1307,8 @@ app.get("/api/chats", requireLogin, async (req, res) => {
       if (data.type === "direct") {
         partnerUid = (data.members || []).find((u) => u !== myUid) || myUid;
         const partnerInfo = data.memberInfo && data.memberInfo[partnerUid];
-        name = partnerInfo ? partnerInfo.username : "ユーザー";
+        // DMのルーム名は「相手の今の名前」を使う（改名後も古い名前を出さない）
+        name = currentUserName(names, partnerUid, partnerInfo ? partnerInfo.username : "ユーザー");
       }
 
       // 未読判定
@@ -1223,9 +1338,9 @@ app.get("/api/chats", requireLogin, async (req, res) => {
         type: data.type || "direct",
         name: name || "トーク",
         members: data.members || [],
-        memberInfo: data.memberInfo || {},
+        memberInfo: freshMemberInfo(data.memberInfo, names),
         partnerUid,
-        lastMessage: data.lastMessage || null,
+        lastMessage: freshSenderName(data.lastMessage, names),
         lastMessageAt: data.lastMessageAt || null,
         unread: hasUnread,
         announcement: data.announcement || null,
@@ -1300,11 +1415,14 @@ app.post("/api/chats/direct", requireLogin, async (req, res) => {
     if (chatDoc.exists) {
       const data = chatDoc.data();
       const partnerInfo = data.memberInfo && data.memberInfo[friendUid];
+      const names = await getUserNamesMap();
       return res.json({
         chat: {
           id: chatDoc.id,
           ...data,
-          name: partnerInfo ? partnerInfo.username : "ユーザー",
+          name: currentUserName(names, friendUid, partnerInfo ? partnerInfo.username : "ユーザー"),
+          memberInfo: freshMemberInfo(data.memberInfo, names),
+          lastMessage: freshSenderName(data.lastMessage, names),
           partnerUid: friendUid
         }
       });
@@ -1473,11 +1591,20 @@ app.get("/api/chats/:chatId", requireLogin, async (req, res) => {
       name = pInfo ? pInfo.username : (data.name || "ユーザー");
     }
 
+    // DM相手名・メンバー名・プレビュー送信者名を現在の名前で上書き
+    const names = await getUserNamesMap();
+    if (partnerUid && data.type !== "ai") {
+      name = currentUserName(names, partnerUid, name);
+    }
+
     return res.json({
       chat: {
         id: chatDoc.id,
         ...data,
         name: name || "トーク",
+        memberInfo: freshMemberInfo(data.memberInfo, names),
+        lastMessage: freshSenderName(data.lastMessage, names),
+        announcement: freshSenderName(data.announcement, names),
         partnerUid
       }
     });
@@ -1518,6 +1645,13 @@ app.get("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
           }
         }
       } catch (_) {}
+    }
+
+    // 送信者名も保存時点のスナップショットなので、現在のユーザー名で上書きして返す
+    // （名前を変えても昔のメッセージに古い名前が残らない）
+    const names = await getUserNamesMap();
+    if (names && names.size > 0) {
+      messages = messages.map((m) => freshSenderName(m, names));
     }
 
     return res.json({ messages });
@@ -2674,6 +2808,12 @@ app.put("/api/users/profile", requireLogin, async (req, res) => {
     updateData.updatedAt = Date.now();
     await userRef.set(updateData, { merge: true });
 
+    // 名前が変わったら、古い名前が残らないようキャッシュ破棄 + 各チャットの表示用データを書き戻す
+    if (updateData.username && updateData.username !== (currentData.username || "")) {
+      invalidateUserNamesCache();
+      await syncRenamedUserInChats(myUid, updateData.username).catch(() => {});
+    }
+
     return res.json({ ok: true, profile: { ...currentData, ...updateData } });
   } catch (err) {
     if (err.message === "USERNAME_TAKEN") {
@@ -2912,7 +3052,14 @@ app.get("/api/voom/posts", requireLogin, async (req, res) => {
   if (!db) return res.status(503).json({ error: "データベース未接続" });
   try {
     const snap = await db.collection("voom_posts").orderBy("createdAt", "desc").limit(30).get();
-    const posts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // 投稿者名も保存時のスナップショットなので、現在の名前で上書きして返す
+    const names = await getUserNamesMap();
+    const posts = snap.docs.map(d => {
+      const post = { id: d.id, ...d.data() };
+      const cur = post.authorUid && names ? names.get(post.authorUid) : null;
+      if (cur && cur !== post.authorName) post.authorName = cur;
+      return post;
+    });
     return res.json({ posts });
   } catch (err) {
     return res.status(500).json({ error: err.message });
