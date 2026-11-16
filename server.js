@@ -5135,6 +5135,7 @@ app.all("/api/proxy", async (req, res) => {
           if (gp && gp.parentElement) gp.parentElement.removeChild(gp);
         });
         gp.appendChild(closeBtn);
+        gp.__pxOwn = true;
         if (document.body) document.body.appendChild(gp);
       }
 
@@ -5179,7 +5180,13 @@ app.all("/api/proxy", async (req, res) => {
         iframe.setAttribute('allow', 'autoplay; fullscreen; camera; focus-without-user-activation *; monetization; gamepad; keyboard-map *; xr-spatial-tracking; clipboard-write; web-share; accelerometer; magnetometer; gyroscope; microphone *; screen-wake-lock');
         iframe.setAttribute('sandbox', 'allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-same-origin allow-downloads');
         var oldFrames = gp.querySelectorAll('iframe');
-        for (var oi = 0; oi < oldFrames.length; oi++) oldFrames[oi].parentNode.removeChild(oldFrames[oi]);
+        if (gp.__pxOwn) {
+          // 自前の全画面オーバーレイ: 「閉じる」ボタンを残すため iframe だけ外す
+          for (var oi = 0; oi < oldFrames.length; oi++) oldFrames[oi].parentNode.removeChild(oldFrames[oi]);
+        } else {
+          // Poki自身のプレイヤー枠: ポスターや再生ボタンが上に重なるので中身を空にする
+          gp.innerHTML = '';
+        }
         gp.appendChild(iframe);
         watchPokiSitelock(iframe, gp);
         return true;
