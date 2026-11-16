@@ -59,14 +59,46 @@ async function workerFetch(path, options = {}) {
 }
 
 const MODEL_CATALOG = {
-  "@cf/meta/llama-3.2-3b-instruct": { name: "Llama 3.2 3B" },
   "@cf/openai/gpt-oss-20b": { name: "GPT-OSS 20B" },
+  "@cf/meta/llama-3.2-3b-instruct": { name: "Llama 3.2 3B" },
   "@cf/google/gemma-4-26b-a4b-it": { name: "Gemma 4 26B" },
   "@cf/meta/llama-3.3-70b-instruct-fp8-fast": { name: "Llama 3.3 70B" },
   "@cf/qwen/qwen3-30b-a3b-fp8": { name: "Qwen3 30B" },
 };
 
 const $ = (id) => document.getElementById(id);
+
+// AIの返答に混ぎる Markdown / LaTeX を、そのまま読める文字に直して表示する。
+// （\( ... \), \frac{a}{b}, **強調** が生の記号で出ると「壊れて見える」ため）
+function escapeHtmlText(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatAiText(input) {
+  let s = escapeHtmlText(String(input || ""));
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\\\[|\\\]|\\\(|\\\)/g, "");
+  s = s.replace(/\\boxed\{([^{}]*)\}/g, "$1");
+  s = s.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)");
+  s = s.replace(/\\sqrt\{([^{}]*)\}/g, "√($1)");
+  s = s.replace(/\\text\{([^{}]*)\}/g, "$1");
+  s = s.replace(/\\left|\\right/g, "");
+  s = s.replace(/\\times/g, "×").replace(/\\div/g, "÷").replace(/\\pm/g, "±");
+  s = s.replace(/\\leq|\\le(?![a-z])/g, "≤").replace(/\\geq|\\ge(?![a-z])/g, "≥");
+  s = s.replace(/\\neq|\\ne(?![a-z])/g, "≠").replace(/\\cdot/g, "・");
+  s = s.replace(/\\Rightarrow|\\implies/g, "⇒").replace(/\\rightarrow|\\to(?![a-z])/g, "→");
+  s = s.replace(/\\(?:quad|qquad)/g, "  ");
+  s = s.replace(/\\[;,!: ]/g, " ");
+  s = s.replace(/\\\\/g, "\n");
+  s = s.replace(/\\([a-zA-Z]+)/g, "$1");
+  return s;
+}
 let statusEl = $("status");
 let errorEl = $("error");
 let promptEl = $("prompt");
@@ -145,7 +177,7 @@ let currentUser = null;
 let currentUid = null;
 let generating = false;
 let loadingHistory = false;
-let selectedModelId = "@cf/meta/llama-3.2-3b-instruct";
+let selectedModelId = "@cf/openai/gpt-oss-20b";
 let currentAttachment = null; // { name, type, content, isImage }
 let authStateVersion = 0;
 let historyRequestVersion = 0;
@@ -189,7 +221,7 @@ function initModelSelect() {
       modelSelectEl.appendChild(option);
     }
   }
-  if (!MODEL_CATALOG[selectedModelId]) selectedModelId = "@cf/meta/llama-3.2-3b-instruct";
+  if (!MODEL_CATALOG[selectedModelId]) selectedModelId = "@cf/openai/gpt-oss-20b";
   modelSelectEl.value = selectedModelId;
   modelSelectEl.disabled = false;
   if (!modelSelectEl.dataset.bound) {
@@ -608,7 +640,11 @@ function appendMessage(role, text, modelName = null, imageUrl = null) {
 
   const textNode = document.createElement("div");
   textNode.className = "text-content";
-  textNode.textContent = text;
+  if (role === "assistant") {
+    textNode.innerHTML = formatAiText(text);
+  } else {
+    textNode.textContent = text;
+  }
   bubble.appendChild(textNode);
 
   if (imageUrl) {
@@ -888,9 +924,13 @@ async function sendMessage(rawText) {
       currentSessionTitle = [...fullMessageText].slice(0, 80).join("") || "新しいチャット";
       sessionTitleDisplay.textContent = currentSessionTitle;
     }
-    assistantBubble.textContent = replyText;
-    history.push({ role: "assistant", content: replyText, model: data.model });
-    statusEl.textContent = `準備完了（${targetModelInfo.name} で回答）。会話はD1に保存されています。`;
+    const replyTextEl = assistantBubble.querySelector(".text-content");
+    if (replyTextEl) {
+      replyTextEl.innerHTML = formatAiText(replyText);
+    } else {
+      assistantBubble.innerHTML = formatAiText(replyText);
+    }
+    history.push({ role: "assistant", content: replyText, model: data.model });    statusEl.textContent = `準備完了（${targetModelInfo.name} で回答）。会話はD1に保存されています。`;
     void fetchSessionsList(user, sendAuthVersion);
   } catch (error) {
     if (requestVersion !== generationRequestVersion || currentUid !== sendUid ||

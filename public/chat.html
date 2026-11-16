@@ -624,6 +624,54 @@
       object-fit: cover;
     }
 
+    /* カード型メッセージ（ゲーム招待・通話など）
+       吹き出しの white-space: pre-wrap がカード内のHTMLの改行・字下げを
+       そのまま「空行」として描いてしまい、カードが縦長・余白だらけになっていた。
+       カードのときは吹き出しの余白と背景を外し、カード自体を吹き出しとして見せる。 */
+    .bubble.bubble-card {
+      padding: 0;
+      background: transparent !important;
+      border: 0 !important;
+      box-shadow: none;
+      white-space: normal;
+      max-width: 100%;
+      overflow: visible;
+    }
+    .bubble.bubble-card .game-invite-card {
+      white-space: normal;
+    }
+
+    /* AIアシスタントの「入力中」表示 */
+    .ai-typing {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 9px 14px;
+      border-radius: 14px;
+      border-bottom-left-radius: 4px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      color: #6b7280;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .ai-typing .dots { display: inline-flex; align-items: center; }
+    .ai-typing .dots span {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 3px;
+      border-radius: 50%;
+      background: #9ca3af;
+      animation: aiDot 1.2s infinite;
+    }
+    .ai-typing .dots span:nth-child(2) { animation-delay: .2s; }
+    .ai-typing .dots span:nth-child(3) { animation-delay: .4s; }
+    @keyframes aiDot {
+      0%, 60%, 100% { opacity: .25; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-2px); }
+    }
+
     /* スタンプメッセージ */
     .stamp-badge {
       display: inline-flex;
@@ -1425,7 +1473,7 @@
           <div class="icon-circle" style="color:#818cf8; background:rgba(99, 102, 241, 0.15);">🤖</div>
           <div>
             <div class="title" style="color:#a5b4fc;">🤖 AIスタジオ（会話・画像生成・Web検索）</div>
-            <div class="desc">Llama 3.2による最新AI対話、AI画像生成、Web検索、添付機能完備！</div>
+            <div class="desc">GPT-OSS 20Bなどの最新AI対話、AI画像生成、Web検索、添付機能完備！</div>
           </div>
         </div>
         <span style="font-size:18px;color:#818cf8;">▶</span>
@@ -1872,6 +1920,33 @@
   let isPollingMessages = false;
   let isPollingChats = false;
 
+  // AIチャットで返事を待っている間の「AIアシスタントが入力中…」表示。
+  // GPT-OSS 20B は長文だと 20〜40秒かかることがあり、何も出ないと
+  // 「AIが壊れてる / 返ってこない」と見えるため、待機中を明示する。
+  let aiTypingAfterMsgId = "";
+  let aiTypingTimer = null;
+
+  function startAiTyping(afterMsgId) {
+    aiTypingAfterMsgId = afterMsgId || "__pending__";
+    if (aiTypingTimer) clearTimeout(aiTypingTimer);
+    aiTypingTimer = setTimeout(() => {
+      if (!aiTypingAfterMsgId) return;
+      aiTypingAfterMsgId = "";
+      aiTypingTimer = null;
+      lastRenderedMessagesSig = "";
+      if (activeChatId) loadMessages(false);
+    }, 90000);
+    lastRenderedMessagesSig = "";
+  }
+
+  function stopAiTyping() {
+    aiTypingAfterMsgId = "";
+    if (aiTypingTimer) {
+      clearTimeout(aiTypingTimer);
+      aiTypingTimer = null;
+    }
+  }
+
   function startPolling() {
     if (pollTimer) clearInterval(pollTimer);
     let pollTick = 0;
@@ -2126,6 +2201,7 @@
   async function openChat(chatId) {
     activeChatId = chatId;
     window.activeChatId = chatId;
+    stopAiTyping();
     replyingTo = null;
     updateReplyingBar();
     closeMsgMenu();
@@ -2323,7 +2399,13 @@
         const isFriend = Array.isArray(allFriends) && allFriends.some(f => f.uid === sUid || f.username === sName);
         const hintEl = document.createElement("span");
         hintEl.className = "msg-sender-add-hint" + (isFriend ? " is-friend" : "");
-        hintEl.textContent = isFriend ? "🤝友だち" : "➕友達追加";
+        if (sUid === "ai_assistant") {
+          // AIに「友達追加」は意味がないのでAIバッジを出す
+          hintEl.textContent = "🤖 AI";
+          hintEl.style.cursor = "default";
+        } else {
+          hintEl.textContent = isFriend ? "🤝友だち" : "➕友達追加";
+        }
 
         senderHeader.appendChild(nameEl);
         senderHeader.appendChild(hintEl);
@@ -2336,6 +2418,10 @@
       // 吹き出し
       const bubble = document.createElement("div");
       bubble.className = "bubble" + (msg.unsent ? " unsent" : "");
+      // ゲーム招待・通話カードは吹き出しの余白を持たせない（カード自体が吹き出し）
+      if (!msg.unsent && (msg.type === "game_invite" || msg.type === "call_invite")) {
+        bubble.classList.add("bubble-card");
+      }
 
       // クリック/長押しメニュー対応
       bubble.addEventListener("click", (e) => {
@@ -2391,7 +2477,9 @@
           card.className = "game-invite-card";
 
           const gType = inv.gameType || "othello";
-          const gTitle = inv.gameTitle || "ゲーム対戦";
+          // ゲーム名に付いている絵文字（⚫⚪ など）はアイコン側で見せるので、
+          // タイトルからは外して 250px 幅でも省略されないようにする
+          const gTitle = String(inv.gameTitle || "ゲーム対戦").replace(/^[^\p{L}\p{N}]+/u, "").trim() || "ゲーム対戦";
           const rCode = inv.roomCode || "----";
           const inviter = inv.inviterName || msg.senderName || "友だち";
 
@@ -2457,7 +2545,13 @@
         else {
           const txt = document.createElement("span");
           txt.className = "msg-text";
-          txt.textContent = msg.originalText || msg.text || "";
+          const raw = msg.originalText || msg.text || "";
+          if (msg.senderUid === "ai_assistant") {
+            // AIの返答に混ざるMarkdown/LaTeXを読める文字に直して表示する
+            txt.innerHTML = formatAiText(raw);
+          } else {
+            txt.textContent = raw;
+          }
           bubble.appendChild(txt);
         }
       }
@@ -2545,6 +2639,23 @@
 
       container.appendChild(row);
     });
+
+    // AIの返事待ちなら「入力中…」を末尾に出す（返事が来たら自動で消える）
+    if (aiTypingAfterMsgId) {
+      const myIdx = messages.findIndex((m) => m.id === aiTypingAfterMsgId);
+      const replied = myIdx >= 0 && messages.slice(myIdx + 1).some((m) => m.senderUid === "ai_assistant");
+      if (replied) {
+        stopAiTyping();
+      } else {
+        const typing = document.createElement("div");
+        typing.className = "msg-row other";
+        typing.innerHTML = `<div class="ai-typing"><span class="dots"><span></span><span></span><span></span></span><span>AIアシスタントが入力中…</span></div>`;
+        container.appendChild(typing);
+        requestAnimationFrame(() => {
+          container.scrollTop = container.scrollHeight;
+        });
+      }
+    }
   }
 
   // メッセージ送信
@@ -2554,13 +2665,19 @@
     sendBtn.disabled = true;
 
     try {
-      await api(`/api/chats/${activeChatId}/messages`, {
+      const sent = await api(`/api/chats/${activeChatId}/messages`, {
         method: "POST",
         body: JSON.stringify({
           ...payload,
           replyTo: replyingTo
         })
       });
+
+      // AIルームなら返事を待つ間「入力中…」を出す
+      const isAiRoom = activeChatData && (activeChatData.type === "ai" || activeChatData.isAi === true || String(activeChatId).startsWith("ai_"));
+      if (isAiRoom && payload.type !== "stamp") {
+        startAiTyping(sent && sent.messageId);
+      }
 
       replyingTo = null;
       updateReplyingBar();
@@ -3313,6 +3430,33 @@
       .replace(/'/g, "&#39;");
   }
   window.escapeHtml = escapeHtml;
+
+  // AIの返答に混ぎる Markdown / LaTeX を、そのまま読める文字に直す。
+  // （\( ... \), \frac{a}{b}, **強調** が生の記号で出て「壊れて見える」のを防ぐ）
+  function formatAiText(input) {
+    let s = escapeHtml(String(input || ""));
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    // 数式の区切り記号を外す
+    s = s.replace(/\\\[|\\\]|\\\(|\\\)/g, "");
+    s = s.replace(/\\boxed\{([^{}]*)\}/g, "$1");
+    s = s.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)");
+    s = s.replace(/\\sqrt\{([^{}]*)\}/g, "√($1)");
+    s = s.replace(/\\text\{([^{}]*)\}/g, "$1");
+    s = s.replace(/\\left|\\right/g, "");
+    s = s.replace(/\\times/g, "×").replace(/\\div/g, "÷").replace(/\\pm/g, "±");
+    s = s.replace(/\\leq|\\le(?![a-z])/g, "≤").replace(/\\geq|\\ge(?![a-z])/g, "≥");
+    s = s.replace(/\\neq|\\ne(?![a-z])/g, "≠").replace(/\\cdot/g, "・");
+    s = s.replace(/\\Rightarrow|\\implies/g, "⇒").replace(/\\rightarrow|\\to(?![a-z])/g, "→");
+    // 行間・字間命令、改行
+    s = s.replace(/\\(?:quad|qquad)/g, "  ");
+    s = s.replace(/\\[;,!: ]/g, " ");
+    s = s.replace(/\\\\/g, "\n");
+    // 残った \command は中身だけ残す
+    s = s.replace(/\\([a-zA-Z]+)/g, "$1");
+    return s;
+  }
+  window.formatAiText = formatAiText;
 
   // ==========================================
   // プロフィール表示・編集 & 送信者タップ友達追加

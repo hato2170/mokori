@@ -46,6 +46,10 @@
 /* LINE風ゲーム招待カード (ぶるぶるどうぶつ・通話招待風) */
 .game-invite-card {
   width: 250px;
+  max-width: 100%;
+  /* 吹き出し側の white-space: pre-wrap を継ぐと、テンプレートの改行・字下げが
+     そのまま空行として描かれ、カードが縦長・余白だらけになる。必ず戻す。 */
+  white-space: normal;
   background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 14px;
@@ -93,6 +97,8 @@
   align-items: center;
   gap: 12px;
   background: #fff;
+  min-height: 72px;
+  box-sizing: border-box;
 }
 .invite-icon-box {
   width: 48px;
@@ -101,7 +107,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 26px;
+  /* ⚫⚪ などの絵文字は指定サイズより大きく描かれることがあるので、
+     はみ出さないよう文字サイズ・行高・切り抜きを固定する */
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: -1px;
+  overflow: hidden;
   flex-shrink: 0;
   background: #f3f4f6;
   border: 1px solid #e5e7eb;
