@@ -646,6 +646,47 @@ async function checkChatAccess(chatId, uid) {
 // ----------------------------------------------------
 // ヘルスチェック
 // ----------------------------------------------------
+// ====================================================
+// 🧹 一時: 全員グループの lastMessage を実在する最新メッセージで復旧する
+//   （検証アカウントのメッセージ削除でプレビューが残ってしまったための後始末。使用後削除）
+// ====================================================
+app.post("/api/__heal_tmp_5b8d1e", async (req, res) => {
+  const token = req.headers["x-cleanup-token"] || req.query.t;
+  if (token !== "c9f1e2a7b4d8") return res.status(403).json({ error: "forbidden" });
+  if (!db) return res.status(503).json({ error: "no db" });
+  try {
+    const chatRef = db.collection("chats").doc("all_members");
+    const snap = await chatRef.collection("messages").orderBy("createdAt", "desc").limit(1).get();
+    if (snap.empty) return res.json({ ok: true, empty: true });
+    const m = snap.docs[0];
+    const d = m.data() || {};
+    let senderName = d.senderName || "";
+    if (d.senderUid && d.senderUid !== "system") {
+      try {
+        const u = await db.collection("users").doc(d.senderUid).get();
+        if (u.exists) senderName = u.data().username || senderName;
+      } catch (_) {}
+    }
+    await chatRef.update({
+      lastMessage: {
+        id: m.id,
+        senderUid: d.senderUid || "system",
+        senderName,
+        text: d.text || "",
+        type: d.type || "text",
+        unsent: Boolean(d.unsent),
+        createdAt: d.createdAt || admin.firestore.FieldValue.serverTimestamp()
+      },
+      lastMessageAt: d.createdAt || admin.firestore.FieldValue.serverTimestamp()
+    });
+    messageCache.delete("all_members");
+    memoryChatMessages.delete("all_members");
+    return res.json({ ok: true, last: { id: m.id, senderName, text: (d.text || "").slice(0, 40) } });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
