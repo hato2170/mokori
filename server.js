@@ -646,6 +646,83 @@ async function checkChatAccess(chatId, uid) {
 // ----------------------------------------------------
 // ヘルスチェック
 // ----------------------------------------------------
+// ====================================================
+// 🧹 一時: 検証用アカウントの後始末（使用後すぐ削除する）
+//   検証専用の chk16v9* アカウントとその付随データだけを消す。
+//   実ユーザー（ai/きょうか等）のデータには一切触しない。
+// ====================================================
+app.post("/api/__cleanup_tmp_7f3a9c", async (req, res) => {
+  const token = req.headers["x-cleanup-token"] || req.query.t;
+  if (token !== "c9f1e2a7b4d8") return res.status(403).json({ error: "forbidden" });
+  if (!db || !auth) return res.status(503).json({ error: "no db" });
+  const targets = ["chk16v9k", "chk16v9b"];
+  const report = [];
+  try {
+    for (const uname of targets) {
+      const doc = await findUsernameDoc(uname);
+      if (!doc || !doc.exists) { report.push({ uname, found: false }); continue; }
+      const uid = doc.data().uid;
+      const info = { uname, uid, messages: 0, chats: 0, removedFromAll: false };
+
+      // 1) 全員グループのメッセージ（送信者本人のもの）を削除
+      try {
+        const msgs = await db.collection("chats").doc("all_members").collection("messages").where("senderUid", "==", uid).get();
+        for (const m of msgs.docs) { await m.ref.delete(); info.messages++; }
+      } catch (e) { info.msgErr = e.message; }
+
+      // 2) 全員グループのメンバーから外す
+      try {
+        const allRef = db.collection("chats").doc("all_members");
+        const snap = await allRef.get();
+        if (snap.exists) {
+          const d = snap.data() || {};
+          const members = (d.members || []).filter((u) => u !== uid);
+          const memberInfo = { ...(d.memberInfo || {}) };
+          delete memberInfo[uid];
+          await allRef.update({ members, memberInfo });
+          info.removedFromAll = true;
+        }
+      } catch (e) { info.allErr = e.message; }
+
+      // 3) 本人専用チャット（AI / Keep）とDMチャットを削除
+      try {
+        for (const cid of [`ai_${uid}`, `keep_${uid}`]) {
+          const ref = db.collection("chats").doc(cid);
+          const s = await ref.get();
+          if (s.exists) {
+            const ms = await ref.collection("messages").get();
+            for (const m of ms.docs) await m.ref.delete();
+            await ref.delete();
+            info.chats++;
+          }
+        }
+        const others = await db.collection("chats").where("members", "array-contains", uid).get();
+        for (const c of others.docs) {
+          if (c.id === "all_members") continue;
+          const ms = await c.ref.collection("messages").get();
+          for (const m of ms.docs) await m.ref.delete();
+          await c.ref.delete();
+          info.chats++;
+        }
+      } catch (e) { info.chatErr = e.message; }
+
+      // 4) users / usernames / Firebase Auth を削除
+      try { await db.collection("users").doc(uid).delete(); } catch (e) { info.userErr = e.message; }
+      try { await doc.ref.delete(); } catch (e) { info.unameErr = e.message; }
+      try { await auth.deleteUser(uid); } catch (e) { info.authErr = e.message; }
+
+      report.push(info);
+    }
+    invalidateUserNamesCache();
+    messageCache.clear();
+    memoryChatMessages.clear();
+    await ensureAllMembersGroup().catch(() => {});
+    return res.json({ ok: true, report });
+  } catch (err) {
+    return res.status(500).json({ error: err.message, report });
+  }
+});
+
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
