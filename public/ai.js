@@ -14,7 +14,7 @@ const auth = firebase.auth();
 
 // Cloudflare Worker API URL
 const WORKER_URL = window.MYYAJUU_AI_WORKER_URL || "https://myyajuu-ai-worker.harumei-260329.workers.dev";
-const PROXY_URL = "https://mokori00.onrender.com/api/ai";
+const PROXY_URL = "https://mokori01.onrender.com/api/ai";
 let activeApiUrl = (function() {
   try {
     return sessionStorage.getItem("mokori_ai_use_proxy") === "true" ? PROXY_URL : WORKER_URL;
