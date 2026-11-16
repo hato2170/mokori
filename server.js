@@ -5110,6 +5110,7 @@ app.all("/api/proxy", async (req, res) => {
     function tryMountPokiGame() {
       if (Date.now() < pokiMountAt) return false;
       if (document.querySelector('iframe#game-element') || document.querySelector('#game-player iframe')) return true;
+      if (window.__pxPokiClosed) return true;
       var errEl = document.getElementById('pageError');
       if (errEl) {
         errEl.style.display = 'none';
@@ -5117,22 +5118,22 @@ app.all("/api/proxy", async (req, res) => {
       }
       var gp = document.getElementById('game-player');
       if (!gp && baseUrl.includes('/g/')) {
+        // 自前でゲームを出すときは全画面オーバーレイにする。
+        // Pokiのページ内に差し込むと、ヒーロー画像や広告枠が上に重なって
+        // ゲームが見えない・操作できないことがあったため。
         gp = document.createElement('div');
         gp.id = 'game-player';
-        gp.style.width = '100%';
-        gp.style.height = 'calc(100vh - 50px)';
-        gp.style.minHeight = '650px';
-        gp.style.margin = '0 auto';
-        gp.style.maxWidth = '1200px';
-        gp.style.background = '#0f172a';
-        gp.style.borderRadius = '16px';
-        gp.style.overflow = 'hidden';
-        gp.style.position = 'relative';
-        if (errEl && errEl.parentElement) {
-          errEl.parentElement.insertBefore(gp, errEl);
-        } else if (document.body) {
-          document.body.prepend(gp);
-        }
+        gp.style.cssText = 'position:fixed;top:38px;left:0;right:0;bottom:0;z-index:2147483000;background:#0f172a;overflow:hidden;';
+        var closeBtn = document.createElement('button');
+        closeBtn.textContent = '✕ 閉じる';
+        closeBtn.style.cssText = 'position:absolute;top:8px;right:8px;z-index:5;background:rgba(15,23,42,0.85);color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:6px 10px;font:12px -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;';
+        closeBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          window.__pxPokiClosed = true;
+          if (gp && gp.parentElement) gp.parentElement.removeChild(gp);
+        });
+        gp.appendChild(closeBtn);
+        if (document.body) document.body.appendChild(gp);
       }
 
       if (!gp) return false;
@@ -5175,7 +5176,8 @@ app.all("/api/proxy", async (req, res) => {
         iframe.allowFullscreen = true;
         iframe.setAttribute('allow', 'autoplay; fullscreen; camera; focus-without-user-activation *; monetization; gamepad; keyboard-map *; xr-spatial-tracking; clipboard-write; web-share; accelerometer; magnetometer; gyroscope; microphone *; screen-wake-lock');
         iframe.setAttribute('sandbox', 'allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-same-origin allow-downloads');
-        gp.innerHTML = '';
+        var oldFrames = gp.querySelectorAll('iframe');
+        for (var oi = 0; oi < oldFrames.length; oi++) oldFrames[oi].parentNode.removeChild(oldFrames[oi]);
         gp.appendChild(iframe);
         watchPokiSitelock(iframe, gp);
         return true;
