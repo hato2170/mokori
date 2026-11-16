@@ -7171,6 +7171,15 @@ app.post("/api/temp-purge-orphan-chats", async (req, res) => {
   const deleted = [];
   try {
     for (const uid of TEMP_DEAD_UIDS) {
+      for (const id of [`ai_${uid}`, `keep_${uid}`]) {
+        const ref = db.collection("chats").doc(id);
+        const snap = await ref.get();
+        if (snap.exists) {
+          await db.recursiveDelete(ref);
+          deleted.push(id);
+          memoryChatMessages.delete(id);
+        }
+      }
       const snap = await db.collection("chats").where("members", "array-contains", uid).get();
       for (const doc of snap.docs) {
         const d = doc.data() || {};
