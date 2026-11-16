@@ -172,15 +172,19 @@ async function getChatMessagesFast(chatId) {
   }
   if (!db) return [];
   try {
+    // ⚠️ 以前は asc + limit で「古い順に250件」を取っていたため、250件を超えたトークでは
+    //    新しいメッセージ（今日の会話）が画面に出なくなっていた。最新250件を取ってから
+    //    昇順に直す（＝常に直近の会話が見える）。
     const snapshot = await db.collection("chats").doc(chatId)
       .collection("messages")
-      .orderBy("createdAt", "asc")
+      .orderBy("createdAt", "desc")
       .limit(MAX_MEM_MESSAGES)
       .get();
     const msgs = [];
     snapshot.forEach(doc => {
       msgs.push({ id: doc.id, ...doc.data() });
     });
+    msgs.reverse();
     memoryChatMessages.set(chatId, msgs);
     return msgs;
   } catch (err) {
@@ -372,10 +376,64 @@ async function purgeUpdateAndTestMessages(extraWord = "") {
   }
 }
 
+// ----------------------------------------------------
+// ⭐ 「もこり全員グループ」のメンバーを登録済みの全アカウントに揃える
+//    （新規登録者の自動参加 + メンバー一覧から脱落してしまった既存アカウントの復元）
+//    ※ joinedAt は「すでに入っている人」の値を残し、新しく足す人には入れない
+//      （入れると「参加前のメッセージ」として過去ログが隠れてしまうため）
+// ----------------------------------------------------
+async function ensureAllMembersGroup() {
+  if (!db) return null;
+  try {
+    const allRef = db.collection("chats").doc("all_members");
+    const allSnap = await allRef.get();
+    if (!allSnap.exists) return null;
+    const usersSnap = await db.collection("users").get();
+    if (usersSnap.empty) return null;
+
+    const data = allSnap.data() || {};
+    const members = Array.isArray(data.members) ? [...data.members] : [];
+    const memberInfo = { ...(data.memberInfo || {}) };
+    let changed = false;
+
+    for (const uDoc of usersSnap.docs) {
+      const uid = uDoc.id;
+      const uData = uDoc.data() || {};
+      const uname = String(uData.username || "ユーザー");
+      if (!members.includes(uid)) {
+        members.push(uid);
+        changed = true;
+      }
+      const info = memberInfo[uid];
+      if (!info) {
+        memberInfo[uid] = { username: uname };
+        changed = true;
+      } else if (info.username !== uname) {
+        memberInfo[uid] = { ...info, username: uname };
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await allRef.update({
+        members,
+        memberInfo,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      console.log(`[AllMembers] synced: ${members.length} members`);
+    }
+    return { ok: true, members: members.length, changed };
+  } catch (e) {
+    console.warn("[AllMembers] sync failed:", e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
 // サーバー起動時に自動実行
 setTimeout(() => {
   if (db) {
     purgeUpdateAndTestMessages().catch(() => {});
+    ensureAllMembersGroup().catch(() => {});
   }
 }, 1500);
 
@@ -503,6 +561,9 @@ app.post("/api/register", async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
+    // 新規登録した人も「もこり全員グループ」に入れる
+    await ensureAllMembersGroup().catch(() => {});
+
     const token = await auth.createCustomToken(userRecord.uid);
     res.status(201).json({ token, username });
   } catch (error) {
@@ -530,10 +591,19 @@ app.post("/api/login", async (req, res) => {
     });
   }
 
+  // Firestore の予約済みドキュメントID（__xxx__ や . / ..）は読み取り自体が例外になるため、
+  // ログイン失敗（401）として扱う（以前は 500「ログインに失敗しました」になっていた）
+  const usernameKey = username.toLowerCase();
+  if (usernameKey === "." || usernameKey === ".." || /^__.*__$/.test(usernameKey)) {
+    return res.status(401).json({
+      error: "ユーザー名またはパスワードが違います。"
+    });
+  }
+
   try {
     const usernameDoc = await db
       .collection("usernames")
-      .doc(username.toLowerCase())
+      .doc(usernameKey)
       .get();
 
     if (!usernameDoc.exists) {
@@ -947,6 +1017,8 @@ app.get("/api/chats", requireLogin, async (req, res) => {
           readStatus: {}
         };
         await allMembersRef.set(initialAllChat);
+        // 既存の登録者も含めて全員をグループに入れる
+        await ensureAllMembersGroup().catch(() => {});
         allMembersDoc = await allMembersRef.get();
       }
 
@@ -1564,9 +1636,16 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
       createdAt: { _seconds: Math.floor(Date.now() / 1000), _nanoseconds: 0 }
     };
     if (memoryChatMessages.has(chatId)) {
-      memoryChatMessages.get(chatId).push(liveMsg);
+      const cached = memoryChatMessages.get(chatId);
+      cached.push(liveMsg);
+      // 上限を超えたら古いものから捨てる（キャッシュが無限に膨らまないように）
+      if (cached.length > MAX_MEM_MESSAGES) {
+        cached.splice(0, cached.length - MAX_MEM_MESSAGES);
+      }
     } else {
-      memoryChatMessages.set(chatId, [liveMsg]);
+      // キャッシュ未生成のときに1通だけのキャッシュを作ると、以降の読み込みで
+      // 過去ログが全部消えて見えてしまう。ここでは何もせず、次の読み込みで
+      // DBから最新250件を取らせる（クライアントは送信直後に再取得する）。
     }
 
     const now = admin.firestore.FieldValue.serverTimestamp();
