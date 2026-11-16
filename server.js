@@ -1870,48 +1870,49 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
           const authHeader = req.headers.authorization || "";
           let aiText = "";
           let aiError = "";
-          const AI_ASSISTANT_MODEL = "@cf/meta/llama-3.2-3b-instruct";
-          // 日本語で自然に返すための指示（Workerのプロンプトに前置する）
-          const aiPrompt = `あなたは「もこり」のやさしい日本語AIアシスタントです。相手は日本の子ども〜高校生です。必ず自然な日本語で、短く分かりやすく答えてください。わからないことは正直に「わからない」と言ってください。\n\n${text}`;
-          try {
-            let aiPayload = {
-              message: aiPrompt,
-              model: AI_ASSISTANT_MODEL,
-              webSearch: false
-            };
-            if (chatData.aiConversationId) {
-              aiPayload.conversationId = chatData.aiConversationId;
-            }
-            const callWorker = async (payload) => fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: authHeader
-              },
-              body: JSON.stringify(payload),
-              signal: AbortSignal.timeout(25000)
-            });
-            let aiResp = await callWorker(aiPayload);
-            // 既存の会話IDで失敗した場合は新規会話として即座に自動再試行
-            if (!aiResp.ok && aiPayload.conversationId) {
-              delete aiPayload.conversationId;
-              aiResp = await callWorker(aiPayload);
-            }
-            if (aiResp.ok) {
-              const aiData = await aiResp.json();
-              aiText = aiData.reply || aiData.assistantMessage?.content || aiData.response || aiData.message || "";
-              if (aiData.conversationId && aiData.conversationId !== chatData.aiConversationId) {
-                await chatRef.update({ aiConversationId: aiData.conversationId }).catch(() => {});
+          // 日本語の品質が良い GPT-OSS 20B を優先し、使えないとき（回数上限・混雑）は
+          // 軽量な Llama 3.2 3B へ自動フォールバックする。
+          const AI_MODELS = ["@cf/openai/gpt-oss-20b", "@cf/meta/llama-3.2-3b-instruct"];
+          const aiPrompt = text;
+          const callWorker = async (payload) => fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: authHeader
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(25000)
+          });
+          for (const model of AI_MODELS) {
+            if (aiText) break;
+            try {
+              const aiPayload = { message: aiPrompt, model, webSearch: false };
+              if (chatData.aiConversationId) aiPayload.conversationId = chatData.aiConversationId;
+              let aiResp = await callWorker(aiPayload);
+              // 既存の会話IDで失敗した場合は新規会話として即座に自動再試行
+              if (!aiResp.ok && aiPayload.conversationId) {
+                delete aiPayload.conversationId;
+                aiResp = await callWorker(aiPayload);
               }
-            } else {
-              let errBody = {};
-              try { errBody = await aiResp.json(); } catch (_) {}
-              aiError = `${aiResp.status} ${errBody.error || errBody.message || ""}`.trim();
-              console.warn("[AI] worker responded", aiResp.status, errBody.error || "");
+              if (aiResp.ok) {
+                const aiData = await aiResp.json();
+                aiText = aiData.reply || aiData.assistantMessage?.content || aiData.response || aiData.message || "";
+                if (aiData.conversationId && aiData.conversationId !== chatData.aiConversationId) {
+                  await chatRef.update({ aiConversationId: aiData.conversationId }).catch(() => {});
+                }
+                if (!aiText) aiError = "empty_reply";
+              } else {
+                let errBody = {};
+                try { errBody = await aiResp.json(); } catch (_) {}
+                aiError = `${aiResp.status} ${errBody.error || errBody.message || ""}`.trim();
+                console.warn("[AI] worker responded", model, aiResp.status, errBody.error || "");
+                // 回数上限だけは別モデルでも同じなので、そこで打ち切る
+                if (/user_daily_limit|request_in_progress/i.test(errBody.error || "")) break;
+              }
+            } catch (e) {
+              aiError = e && e.name === "TimeoutError" ? "timeout" : (e.message || "network");
+              console.warn("AI fetch fallback:", model, aiError);
             }
-          } catch (e) {
-            aiError = e && e.name === "TimeoutError" ? "timeout" : (e.message || "network");
-            console.warn("AI fetch fallback:", aiError);
           }
           if (!aiText) {
             // ⚠ 「返事をしたふり」をする定型文は廃止。失敗は失敗として伝える
