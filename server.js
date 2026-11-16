@@ -55,161 +55,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// geniusOS Live ISO (x86_64) 実機PC起動ストリーミング配信
-const geniusPatchesDir = path.join(__dirname, "data", "geniusos_patches");
-let geniusPatches = null;
-
-function loadGeniusPatches() {
-  if (geniusPatches) return geniusPatches;
-  try {
-    const manifestPath = path.join(geniusPatchesDir, "manifest.json");
-    if (!fs.existsSync(manifestPath)) return [];
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
-    geniusPatches = manifest.map((item) => ({
-      name: item.name,
-      offset: item.offset,
-      buffer: fs.readFileSync(path.join(geniusPatchesDir, item.file))
-    }));
-    return geniusPatches;
-  } catch (e) {
-    console.error("Failed to load geniusOS patches:", e.message);
-    return [];
-  }
-}
-
-const ISO_LOCAL_PATH = path.join("/tmp", "geniusos-v1.0.0-x86_64.iso");
-const TOTAL_ISO_SIZE = 965738496;
-let isoBuildStatus = "idle"; // "idle" | "building" | "ready" | "error"
-let isoBuildProgress = 0;
-let isoWaiters = [];
-
-function buildLocalGeniusIso() {
-  if (isoBuildStatus === "ready" && fs.existsSync(ISO_LOCAL_PATH) && fs.statSync(ISO_LOCAL_PATH).size === TOTAL_ISO_SIZE) {
-    return;
-  }
-  if (isoBuildStatus === "building") return;
-
-  if (fs.existsSync(ISO_LOCAL_PATH) && fs.statSync(ISO_LOCAL_PATH).size === TOTAL_ISO_SIZE) {
-    isoBuildStatus = "ready";
-    isoBuildProgress = TOTAL_ISO_SIZE;
-    return;
-  }
-
-  isoBuildStatus = "building";
-  isoBuildProgress = 0;
-  console.log("[geniusOS] Starting background ISO preparation in /tmp...");
-  const tempPath = ISO_LOCAL_PATH + ".tmp";
-  const patches = loadGeniusPatches();
-  const upstreamUrl = "https://media.githubusercontent.com/media/ata56789/ata-dosyalar/master/android-x86_64-9.0-r2.iso";
-
-  const fileStream = fs.createWriteStream(tempPath);
-  let curOffset = 0;
-
-  https.get(upstreamUrl, {
-    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
-  }, (upstreamRes) => {
-    if (upstreamRes.statusCode !== 200) {
-      isoBuildStatus = "error";
-      fileStream.destroy();
-      try { fs.unlinkSync(tempPath); } catch(_) {}
-      notifyIsoWaiters(new Error("Upstream HTTP " + upstreamRes.statusCode));
-      return;
-    }
-
-    upstreamRes.on("data", (chunk) => {
-      const chunkStart = curOffset;
-      const chunkEnd = curOffset + chunk.length;
-
-      for (const p of patches) {
-        const pStart = p.offset;
-        const pEnd = p.offset + p.buffer.length;
-        if (Math.max(chunkStart, pStart) < Math.min(chunkEnd, pEnd)) {
-          const chunkOverlapStart = Math.max(0, pStart - chunkStart);
-          const patchOverlapStart = Math.max(0, chunkStart - pStart);
-          const overlapLen = Math.min(chunkEnd, pEnd) - Math.max(chunkStart, pStart);
-          p.buffer.copy(chunk, chunkOverlapStart, patchOverlapStart, patchOverlapStart + overlapLen);
-        }
-      }
-
-      fileStream.write(chunk);
-      curOffset += chunk.length;
-      isoBuildProgress = curOffset;
-    });
-
-    upstreamRes.on("end", () => {
-      fileStream.end(() => {
-        try {
-          if (fs.existsSync(tempPath) && fs.statSync(tempPath).size === TOTAL_ISO_SIZE) {
-            fs.renameSync(tempPath, ISO_LOCAL_PATH);
-            isoBuildStatus = "ready";
-            isoBuildProgress = TOTAL_ISO_SIZE;
-            console.log("[geniusOS] Live ISO ready at:", ISO_LOCAL_PATH);
-            notifyIsoWaiters(null);
-          } else {
-            throw new Error("Size mismatch: " + (fs.existsSync(tempPath) ? fs.statSync(tempPath).size : 0));
-          }
-        } catch(e) {
-          isoBuildStatus = "error";
-          console.error("[geniusOS] ISO finalization error:", e.message);
-          notifyIsoWaiters(e);
-        }
-      });
-    });
-
-    upstreamRes.on("error", (err) => {
-      isoBuildStatus = "error";
-      fileStream.destroy();
-      try { fs.unlinkSync(tempPath); } catch(_) {}
-      notifyIsoWaiters(err);
-    });
-  }).on("error", (err) => {
-    isoBuildStatus = "error";
-    fileStream.destroy();
-    try { fs.unlinkSync(tempPath); } catch(_) {}
-    notifyIsoWaiters(err);
-  });
-}
-
-function notifyIsoWaiters(err) {
-  const cbs = isoWaiters;
-  isoWaiters = [];
-  cbs.forEach(cb => cb(err));
-}
-
-function ensureLocalGeniusIso(cb) {
-  if (isoBuildStatus === "ready" && fs.existsSync(ISO_LOCAL_PATH) && fs.statSync(ISO_LOCAL_PATH).size === TOTAL_ISO_SIZE) {
-    return cb(null);
-  }
-  isoWaiters.push(cb);
-  buildLocalGeniusIso();
-}
-
-setTimeout(buildLocalGeniusIso, 1500);
-
-app.get("/downloads/geniusos-v1.0.0-x86_64.iso", (req, res) => {
-  ensureLocalGeniusIso((err) => {
-    if (err) {
-      console.error("ISO build error:", err);
-      return res.status(503).send("geniusOS ISO is preparing, please retry in 10 seconds.");
-    }
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    res.download(ISO_LOCAL_PATH, "geniusos-v1.0.0-x86_64.iso", (downErr) => {
-      if (downErr && !res.headersSent) {
-        console.error("Download stream error:", downErr.message);
-      }
-    });
-  });
-});
-
-app.get("/api/geniusos/status", (req, res) => {
-  res.json({
-    status: isoBuildStatus,
-    progress: isoBuildProgress,
-    total: TOTAL_ISO_SIZE,
-    percent: Math.min(100, Math.round((isoBuildProgress / TOTAL_ISO_SIZE) * 100))
-  });
-});
-
 // 🏠 プロキシ中の「見た目のホーム（/?__px=1）」だけは、もこりのトップではなく
 // プロキシしていたサイトへ戻す（YouTube のトップを再読み込みしても消えないように）。
 app.use((req, res, next) => {
@@ -3164,7 +3009,7 @@ function renderProxyError(title, detail, retryUrl, extra) {
 app.use(async (req, res, next) => {
   if (req.method === "GET" && req.path.startsWith("/api/")) {
     const filename = req.path.slice(5);
-    const knownApiPrefixes = ["system", "health", "register", "login", "users", "friends", "chats", "games", "calls", "music", "voom", "proxy", "tube", "tiktok", "instagram", "media", "geniusos", "tempmail", "ai"];
+    const knownApiPrefixes = ["system", "health", "register", "login", "users", "friends", "chats", "games", "calls", "music", "voom", "proxy", "tube", "tiktok", "instagram", "media", "tempmail", "ai"];
     const firstPart = filename.split("/")[0].toLowerCase();
     if (!knownApiPrefixes.includes(firstPart)) {
       if (filename.includes("poki-sdk")) {
@@ -7025,7 +6870,7 @@ app.get("/api/tempmail/messages/:id", async (req, res) => {
 const SELF_PATH_PREFIXES = [
   "/api/", "/tensai-proxy", "/tube", "/music", "/instagram", "/tiktok", "/roblox",
   "/mail.html", "/downloads", "/chat", "/sns", "/friends", "/ai", "/games",
-  "/paper", "/line", "/favicon", "/manifest", "/robots.txt", "/geniusos", "/sw.js"
+  "/paper", "/line", "/favicon", "/manifest", "/robots.txt", "/sw.js"
 ];
 
 function proxyOriginFromRequest(req) {
