@@ -7163,6 +7163,33 @@ function proxyOriginFromRequest(req) {
   return null;
 }
 
+// ⚠️ 一時: 検証で削除したアカウントの孤立チャット（ai/keep等）の後始末用。使用後に削除する。
+const TEMP_DEAD_UIDS = ["mlM2q0ybiyZ32wrynUtpnqAeYWe2", "KM2hpm9ol6MJG65ssMWKk4wQOm63"];
+
+app.post("/api/temp-purge-orphan-chats", async (req, res) => {
+  if (!db) return res.status(503).json({ error: "no db" });
+  const deleted = [];
+  try {
+    for (const uid of TEMP_DEAD_UIDS) {
+      const snap = await db.collection("chats").where("members", "array-contains", uid).get();
+      for (const doc of snap.docs) {
+        const d = doc.data() || {};
+        const members = Array.isArray(d.members) ? d.members : [];
+        const real = members.filter((m) => m !== "ai_assistant" && m !== "system");
+        if (real.length <= 1) {
+          await db.recursiveDelete(doc.ref);
+          deleted.push(doc.id);
+          memoryChatMessages.delete(doc.id);
+        }
+      }
+    }
+    invalidateUserNamesCache();
+    return res.json({ ok: true, deleted });
+  } catch (err) {
+    return res.status(500).json({ error: err.message, deleted });
+  }
+});
+
 app.use((req, res, next) => {
   if (!["GET", "HEAD", "POST"].includes(req.method)) return next();
   const p = req.path || "/";
