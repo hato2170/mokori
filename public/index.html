@@ -58,6 +58,18 @@
       cursor: pointer;
     }
     .tabs button.active { background: white; color: #34342f; }
+    .tabs button:disabled { opacity: .5; cursor: not-allowed; }
+    #registerNotice {
+      margin: 14px 0 0;
+      padding: 11px 13px;
+      border: 1px solid #f0dcc4;
+      border-radius: 11px;
+      background: #fdf6ec;
+      color: #8a6a45;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+    #registerNotice[hidden] { display: none; }
     label {
       display: block;
       margin: 18px 0 8px;
@@ -107,6 +119,7 @@
       <button id="loginTab" class="active" type="button">ログイン</button>
       <button id="registerTab" type="button">新規登録</button>
     </div>
+    <p id="registerNotice" role="status" hidden></p>
 
     <form id="authForm">
       <label for="username">ユーザー名</label>
@@ -149,10 +162,19 @@
     const submitButton = document.getElementById("submitButton");
     const message = document.getElementById("message");
     const passwordInput = document.getElementById("password");
+    const registerNotice = document.getElementById("registerNotice");
+
+    const REGISTRATION_CLOSED_TEXT =
+      "現在、新規登録は一時停止しています。既存アカウントでログインしてください。";
 
     let mode = "login";
+    let registrationOpen = true;
 
     function setMode(nextMode) {
+      if (nextMode === "register" && !registrationOpen) {
+        showRegistrationClosed();
+        return;
+      }
       mode = nextMode;
       const registering = mode === "register";
       loginTab.classList.toggle("active", !registering);
@@ -162,11 +184,49 @@
       message.textContent = "";
     }
 
+    function showRegistrationClosed(text) {
+      registrationOpen = false;
+      registerTab.disabled = true;
+      registerTab.setAttribute("aria-disabled", "true");
+      registerNotice.hidden = false;
+      registerNotice.textContent = text || REGISTRATION_CLOSED_TEXT;
+      if (mode === "register") {
+        mode = "login";
+        loginTab.classList.add("active");
+        registerTab.classList.remove("active");
+        submitButton.textContent = "ログイン";
+        passwordInput.autocomplete = "current-password";
+      }
+    }
+
+    // サーバー側の設定（/api/config）で新規登録が止まっているかを確認する
+    (async function loadConfig() {
+      try {
+        const response = await fetch("/api/config", {
+          headers: { Accept: "application/json" },
+          cache: "no-store"
+        });
+        if (!response.ok) return;
+        const config = await response.json();
+        if (config && config.registrationOpen === false) {
+          showRegistrationClosed(config.registrationMessage);
+        }
+      } catch (_) {
+        // 設定が読めないときは通常表示のまま（送信時にサーバーが 403 で断る）
+      }
+    })();
+
     loginTab.addEventListener("click", () => setMode("login"));
     registerTab.addEventListener("click", () => setMode("register"));
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
+
+      if (mode === "register" && !registrationOpen) {
+        showRegistrationClosed();
+        return;
+      }
+
       submitButton.disabled = true;
       submitButton.textContent = "処理中…";
       message.textContent = "";
@@ -187,6 +247,9 @@
         const result = await response.json();
 
         if (!response.ok) {
+          if (result && result.registrationDisabled) {
+            showRegistrationClosed(result.error);
+          }
           throw new Error(result.error || "処理に失敗しました。");
         }
 

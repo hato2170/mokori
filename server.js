@@ -644,13 +644,44 @@ async function checkChatAccess(chatId, uid) {
 }
 
 // ----------------------------------------------------
-// ヘルスチェック
+// ヘルスチェック・新規登録の一時停止（mokori01 用）
+// ・mokori01.onrender.com では新規登録を受け付けない（既存アカウントのログイン・チャットは通常どおり）
+// ・環境変数 DISABLE_REGISTRATION=true でも停止できる（Render 側から切り替え可能）
+// ・ホスト判定は mokori01 だけを見るので、12/1 に復帰する mokori.onrender.com は停止しない
 // ----------------------------------------------------
+const REGISTRATION_DISABLED_HOSTS = ["mokori01.onrender.com"];
+const REGISTRATION_CLOSED_MESSAGE =
+  "現在、新規登録は一時停止しています。既存アカウントでログインしてください。";
+
+function requestHostname(req) {
+  const raw = String(req.headers["x-forwarded-host"] || req.headers.host || "");
+  return raw.split(",")[0].trim().toLowerCase().replace(/:\d+$/, "");
+}
+
+function isRegistrationDisabled(req) {
+  if (String(process.env.DISABLE_REGISTRATION || "").trim().toLowerCase() === "true") {
+    return true;
+  }
+  return REGISTRATION_DISABLED_HOSTS.includes(requestHostname(req));
+}
+
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     app: "mokori",
-    firebaseConfigured: Boolean(db && auth)
+    firebaseConfigured: Boolean(db && auth),
+    registrationOpen: !isRegistrationDisabled(req)
+  });
+});
+
+// フロント側が新規登録の可否を知るための設定（ログイン前でも読める）
+app.get("/api/config", (req, res) => {
+  const registrationDisabled = isRegistrationDisabled(req);
+  res.json({
+    ok: true,
+    app: "mokori",
+    registrationOpen: !registrationDisabled,
+    registrationMessage: registrationDisabled ? REGISTRATION_CLOSED_MESSAGE : ""
   });
 });
 
@@ -658,6 +689,14 @@ app.get("/api/health", (req, res) => {
 // 認証: 登録・ログイン
 // ----------------------------------------------------
 app.post("/api/register", async (req, res) => {
+  // 一時停止中は、レート制限やFirebase設定より先に必ず 403 で断る
+  if (isRegistrationDisabled(req)) {
+    return res.status(403).json({
+      error: REGISTRATION_CLOSED_MESSAGE,
+      registrationDisabled: true
+    });
+  }
+
   if (!checkAuthRateLimit(req, res)) return;
   if (!db || !auth) {
     return res.status(503).json({
