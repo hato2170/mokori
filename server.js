@@ -724,7 +724,7 @@ app.get("/api/__verify_tmp_kz11", async (req, res) => {
   if (!db) return res.status(503).json({ error: "no db" });
   const uname = String(req.query.u || "kakunin1117");
   const doc = await findUsernameDoc(uname).catch(() => null);
-  const uid = doc && doc.exists ? doc.data().uid : null;
+  const uid = (doc && doc.exists ? doc.data().uid : null) || String(req.query.uid || "") || null;
   const out = { uname, uid, usernamesDoc: !!(doc && doc.exists) };
   if (uid) {
     out.usersDoc = (await db.collection("users").doc(uid).get()).exists;
