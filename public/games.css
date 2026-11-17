@@ -107,11 +107,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  /* ⚫⚪ などの絵文字は指定サイズより大きく描かれることがあるので、
-     はみ出さないよう文字サイズ・行高・切り抜きを固定する */
-  font-size: 20px;
+  /* ⚫⚪ などの絵文字は指定サイズより大きく描かれることがあり、48pxの枠で
+     2文字が折り返して斜めに並んでいた。文字サイズ・字間・改行禁止を固定する */
+  font-size: 16px;
   line-height: 1;
-  letter-spacing: -1px;
+  letter-spacing: -2px;
+  white-space: nowrap;
   overflow: hidden;
   flex-shrink: 0;
   background: #f3f4f6;
