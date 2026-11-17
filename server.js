@@ -646,6 +646,25 @@ async function checkChatAccess(chatId, uid) {
 // ----------------------------------------------------
 // ヘルスチェック
 // ----------------------------------------------------
+// 🧹 一時: 検証で作ったゲームルーム(inv_rvkca9)の削除（使用後削除）
+app.post("/api/__cleanup_room_tmp_kz11", async (req, res) => {
+  if ((req.headers["x-cleanup-token"] || req.query.t) !== "k7c2p9v4x1") return res.status(403).json({ error: "forbidden" });
+  if (!db) return res.status(503).json({ error: "no db" });
+  const ids = String(req.query.ids || "inv_rvkca9").split(",").map((s) => s.trim()).filter(Boolean);
+  const out = [];
+  for (const id of ids) {
+    const ref = db.collection("game_rooms").doc(id);
+    const snap = await ref.get().catch(() => null);
+    const existed = !!(snap && snap.exists);
+    const data = existed ? (snap.data() || {}) : {};
+    if (existed) await ref.delete().catch(() => {});
+    memoryGameRooms.delete(id);
+    const after = await ref.get().catch(() => null);
+    out.push({ id, existed, hostUid: data.hostUid || null, remaining: !!(after && after.exists) });
+  }
+  return res.json({ ok: true, out });
+});
+
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
