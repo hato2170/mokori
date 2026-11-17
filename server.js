@@ -653,16 +653,22 @@ const REGISTRATION_DISABLED_HOSTS = ["mokori01.onrender.com"];
 const REGISTRATION_CLOSED_MESSAGE =
   "現在、新規登録は一時停止しています。既存アカウントでログインしてください。";
 
-function requestHostname(req) {
-  const raw = String(req.headers["x-forwarded-host"] || req.headers.host || "");
-  return raw.split(",")[0].trim().toLowerCase().replace(/:\d+$/, "");
+function requestHostnames(req) {
+  // Host と X-Forwarded-Host の両方を見る（どちらか一方を書き換えても停止をすり抜けられないように）
+  return [req.headers["x-forwarded-host"], req.headers.host]
+    .filter(Boolean)
+    .join(",")
+    .toLowerCase()
+    .split(",")
+    .map((host) => host.trim().replace(/:\d+$/, ""))
+    .filter(Boolean);
 }
 
 function isRegistrationDisabled(req) {
   if (String(process.env.DISABLE_REGISTRATION || "").trim().toLowerCase() === "true") {
     return true;
   }
-  return REGISTRATION_DISABLED_HOSTS.includes(requestHostname(req));
+  return requestHostnames(req).some((host) => REGISTRATION_DISABLED_HOSTS.includes(host));
 }
 
 app.get("/api/health", (req, res) => {
