@@ -2080,7 +2080,10 @@
           preview = "メッセージの送信を取り消しました";
           isUnsent = true;
         } else if (chat.lastMessage.text) {
-          preview = (isGroup && chat.lastMessage.senderName ? chat.lastMessage.senderName + ": " : "") + chat.lastMessage.text;
+          // AIの返答はプレビューでも Markdown/LaTeX の記号を出さない
+          const isAiMsg = chat.type === "ai" && chat.lastMessage.senderUid === "ai_assistant";
+          const body = isAiMsg ? aiPlainText(chat.lastMessage.text) : chat.lastMessage.text;
+          preview = (isGroup && chat.lastMessage.senderName ? chat.lastMessage.senderName + ": " : "") + body;
         }
       }
 
@@ -3463,6 +3466,8 @@
     s = s.replace(/\\\\/g, "\n");
     // 残った \command は中身だけ残す
     s = s.replace(/\\([a-zA-Z]+)/g, "$1");
+    // 見出し記号（### 見出し）を外す
+    s = s.replace(/^#{1,6}\s*/gm, "");
     // 罫線だけの行（LaTeXの区切り）は空行に
     s = s.replace(/^[-—]{3,}$/gm, "");
     return s;
@@ -3493,6 +3498,15 @@
     return s;
   }
   window.formatAiText = formatAiText;
+
+  // トーク一覧のプレビュー用（HTMLタグなしの1行テキスト）
+  function aiPlainText(input) {
+    return formatAiText(input)
+      .replace(/<[^>]*>/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  window.aiPlainText = aiPlainText;
 
   // ==========================================
   // プロフィール表示・編集 & 送信者タップ友達追加

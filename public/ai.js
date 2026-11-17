@@ -100,6 +100,7 @@ function formatAiText(input) {
   s = s.replace(/\\[;,!: ]/g, " ");
   s = s.replace(/\\\\/g, "\n");
   s = s.replace(/\\([a-zA-Z]+)/g, "$1");
+  s = s.replace(/^#{1,6}\s*/gm, "");
   s = s.replace(/^[-—]{3,}$/gm, "");
   return s;
 }
