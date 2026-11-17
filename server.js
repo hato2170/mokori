@@ -646,6 +646,100 @@ async function checkChatAccess(chatId, uid) {
 // ----------------------------------------------------
 // ヘルスチェック
 // ----------------------------------------------------
+// ====================================================
+// 🧹 一時: 検証用アカウント(kakunin1117)の後始末（使用後すぐ削除する）
+// ====================================================
+app.post("/api/__cleanup_tmp_kz11", async (req, res) => {
+  const token = req.headers["x-cleanup-token"] || req.query.t;
+  if (token !== "k7c2p9v4x1") return res.status(403).json({ error: "forbidden" });
+  if (!db || !auth) return res.status(503).json({ error: "no db" });
+  const targets = String(req.query.u || "kakunin1117").split(",").map((s) => s.trim()).filter(Boolean);
+  const report = [];
+  try {
+    for (const uname of targets) {
+      const doc = await findUsernameDoc(uname);
+      if (!doc || !doc.exists) { report.push({ uname, found: false }); continue; }
+      const uid = doc.data().uid;
+      const info = { uname, uid, messages: 0, chats: 0, removedFromAll: false };
+
+      try {
+        const msgs = await db.collection("chats").doc("all_members").collection("messages").where("senderUid", "==", uid).get();
+        for (const m of msgs.docs) { await m.ref.delete(); info.messages++; }
+      } catch (e) { info.msgErr = e.message; }
+
+      try {
+        const allRef = db.collection("chats").doc("all_members");
+        const snap = await allRef.get();
+        if (snap.exists) {
+          const d = snap.data() || {};
+          const members = (d.members || []).filter((u) => u !== uid);
+          const memberInfo = { ...(d.memberInfo || {}) };
+          delete memberInfo[uid];
+          await allRef.update({ members, memberInfo });
+          info.removedFromAll = true;
+        }
+      } catch (e) { info.allErr = e.message; }
+
+      try {
+        for (const cid of [`ai_${uid}`, `keep_${uid}`]) {
+          const ref = db.collection("chats").doc(cid);
+          const s = await ref.get();
+          if (s.exists) {
+            const ms = await ref.collection("messages").get();
+            for (const m of ms.docs) await m.ref.delete();
+            await ref.delete();
+            info.chats++;
+          }
+        }
+        const others = await db.collection("chats").where("members", "array-contains", uid).get();
+        for (const c of others.docs) {
+          if (c.id === "all_members") continue;
+          const ms = await c.ref.collection("messages").get();
+          for (const m of ms.docs) await m.ref.delete();
+          await c.ref.delete();
+          info.chats++;
+        }
+      } catch (e) { info.chatErr = e.message; }
+
+      try { await db.collection("users").doc(uid).delete(); } catch (e) { info.userErr = e.message; }
+      try { await doc.ref.delete(); } catch (e) { info.unameErr = e.message; }
+      try { await auth.deleteUser(uid); } catch (e) { info.authErr = e.message; }
+
+      report.push(info);
+    }
+    invalidateUserNamesCache();
+    messageCache.clear();
+    memoryChatMessages.clear();
+    await ensureAllMembersGroup().catch(() => {});
+    return res.json({ ok: true, report });
+  } catch (err) {
+    return res.status(500).json({ error: err.message, report });
+  }
+});
+
+// 後始末の検証用（読み取りのみ）
+app.get("/api/__verify_tmp_kz11", async (req, res) => {
+  const token = req.headers["x-cleanup-token"] || req.query.t;
+  if (token !== "k7c2p9v4x1") return res.status(403).json({ error: "forbidden" });
+  if (!db) return res.status(503).json({ error: "no db" });
+  const uname = String(req.query.u || "kakunin1117");
+  const doc = await findUsernameDoc(uname).catch(() => null);
+  const uid = doc && doc.exists ? doc.data().uid : null;
+  const out = { uname, uid, usernamesDoc: !!(doc && doc.exists) };
+  if (uid) {
+    out.usersDoc = (await db.collection("users").doc(uid).get()).exists;
+    out.chats = (await db.collection("chats").where("members", "array-contains", uid).get()).docs.map((d) => d.id);
+    try { await auth.getUser(uid); out.authUser = true; } catch (_) { out.authUser = false; }
+  }
+  const allSnap = await db.collection("chats").doc("all_members").get();
+  if (allSnap.exists) {
+    const d = allSnap.data() || {};
+    out.allMembersCount = (d.members || []).length;
+    out.hasTestMember = uid ? (d.members || []).includes(uid) || !!(d.memberInfo || {})[uid] : false;
+  }
+  return res.json(out);
+});
+
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,

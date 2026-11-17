@@ -84,10 +84,13 @@ function formatAiText(input) {
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
   s = s.replace(/\\\[|\\\]|\\\(|\\\)/g, "");
-  s = s.replace(/\\boxed\{([^{}]*)\}/g, "$1");
-  s = s.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)");
-  s = s.replace(/\\sqrt\{([^{}]*)\}/g, "√($1)");
-  s = s.replace(/\\text\{([^{}]*)\}/g, "$1");
+  for (const cmd of ["boxed", "text", "textrm", "mathrm", "operatorname", "overline", "underline"]) {
+    s = stripLatexBraced(s, cmd);
+  }
+  for (let i = 0; i < 2; i++) {
+    s = s.replace(/\\(?:d|t)?frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)");
+    s = s.replace(/\\sqrt\{([^{}]*)\}/g, "√($1)");
+  }
   s = s.replace(/\\left|\\right/g, "");
   s = s.replace(/\\times/g, "×").replace(/\\div/g, "÷").replace(/\\pm/g, "±");
   s = s.replace(/\\leq|\\le(?![a-z])/g, "≤").replace(/\\geq|\\ge(?![a-z])/g, "≥");
@@ -97,6 +100,32 @@ function formatAiText(input) {
   s = s.replace(/\\[;,!: ]/g, " ");
   s = s.replace(/\\\\/g, "\n");
   s = s.replace(/\\([a-zA-Z]+)/g, "$1");
+  s = s.replace(/^[-—]{3,}$/gm, "");
+  return s;
+}
+
+// \cmd{...} の中身だけ残す（括弧の入れ子に対応）
+function stripLatexBraced(str, cmd) {
+  const token = "\\" + cmd + "{";
+  let s = str;
+  let idx;
+  while ((idx = s.indexOf(token)) !== -1) {
+    let depth = 0;
+    let end = -1;
+    for (let i = idx + token.length - 1; i < s.length; i++) {
+      if (s[i] === "\\") { i++; continue; }
+      if (s[i] === "{") depth++;
+      else if (s[i] === "}") {
+        depth--;
+        if (depth === 0) { end = i; break; }
+      }
+    }
+    if (end === -1) {
+      s = s.slice(0, idx) + s.slice(idx + token.length);
+      break;
+    }
+    s = s.slice(0, idx) + s.slice(idx + token.length, end) + s.slice(end + 1);
+  }
   return s;
 }
 let statusEl = $("status");

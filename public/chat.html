@@ -2479,7 +2479,11 @@
           const gType = inv.gameType || "othello";
           // ゲーム名に付いている絵文字（⚫⚪ など）はアイコン側で見せるので、
           // タイトルからは外して 250px 幅でも省略されないようにする
-          const gTitle = String(inv.gameTitle || "ゲーム対戦").replace(/^[^\p{L}\p{N}]+/u, "").trim() || "ゲーム対戦";
+          let gTitle = String(inv.gameTitle || "ゲーム対戦").trim();
+          while (gTitle.length > 0 && !/[\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF0-9A-Za-z]/.test(gTitle[0])) {
+            gTitle = gTitle.slice(1);
+          }
+          gTitle = gTitle.trim() || "ゲーム対戦";
           const rCode = inv.roomCode || "----";
           const inviter = inv.inviterName || msg.senderName || "友だち";
 
@@ -3439,10 +3443,15 @@
     s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
     // 数式の区切り記号を外す
     s = s.replace(/\\\[|\\\]|\\\(|\\\)/g, "");
-    s = s.replace(/\\boxed\{([^{}]*)\}/g, "$1");
-    s = s.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)");
-    s = s.replace(/\\sqrt\{([^{}]*)\}/g, "√($1)");
-    s = s.replace(/\\text\{([^{}]*)\}/g, "$1");
+    // 入れ子の括弧があっても中身を残すコマンド（\boxed{x=dfrac{5}{7}} など）
+    for (const cmd of ["boxed", "text", "textrm", "mathrm", "operatorname", "overline", "underline"]) {
+      s = stripLatexBraced(s, cmd);
+    }
+    // 分数・平方根（入れ子は2回まで展開）
+    for (let i = 0; i < 2; i++) {
+      s = s.replace(/\\(?:d|t)?frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)");
+      s = s.replace(/\\sqrt\{([^{}]*)\}/g, "√($1)");
+    }
     s = s.replace(/\\left|\\right/g, "");
     s = s.replace(/\\times/g, "×").replace(/\\div/g, "÷").replace(/\\pm/g, "±");
     s = s.replace(/\\leq|\\le(?![a-z])/g, "≤").replace(/\\geq|\\ge(?![a-z])/g, "≥");
@@ -3454,6 +3463,33 @@
     s = s.replace(/\\\\/g, "\n");
     // 残った \command は中身だけ残す
     s = s.replace(/\\([a-zA-Z]+)/g, "$1");
+    // 罫線だけの行（LaTeXの区切り）は空行に
+    s = s.replace(/^[-—]{3,}$/gm, "");
+    return s;
+  }
+
+  // \cmd{...} の中身だけ残す（括弧の入れ子に対応）
+  function stripLatexBraced(str, cmd) {
+    const token = "\\" + cmd + "{";
+    let s = str;
+    let idx;
+    while ((idx = s.indexOf(token)) !== -1) {
+      let depth = 0;
+      let end = -1;
+      for (let i = idx + token.length - 1; i < s.length; i++) {
+        if (s[i] === "\\") { i++; continue; }
+        if (s[i] === "{") depth++;
+        else if (s[i] === "}") {
+          depth--;
+          if (depth === 0) { end = i; break; }
+        }
+      }
+      if (end === -1) {
+        s = s.slice(0, idx) + s.slice(idx + token.length);
+        break;
+      }
+      s = s.slice(0, idx) + s.slice(idx + token.length, end) + s.slice(end + 1);
+    }
     return s;
   }
   window.formatAiText = formatAiText;
