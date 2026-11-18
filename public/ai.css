@@ -58,11 +58,11 @@ button, textarea, select { font: inherit; }
   .topbar { gap: 6px; }
   .title-area small { display: none; }
 }
-.message { display: flex; margin: 16px 0; gap: 10px; align-items: flex-start; }
+.message { display: flex; margin: 10px 0; gap: 10px; align-items: flex-start; }
 .message.user { justify-content: flex-end; }
 .bubble { max-width: min(88%, 620px); padding: 11px 15px; border-radius: 18px; line-height: 1.65; font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .user .bubble { background: #f4f4f4; border-bottom-right-radius: 5px; }
-.assistant .bubble { padding-left: 2px; }
+.assistant .bubble { background: #f5f6f8; border-bottom-left-radius: 5px; }
 .model-tag { display: block; margin-bottom: 4px; font-size: 11px; color: #6366f1; font-weight: 600; letter-spacing: 0.2px; }
 
 /* Image in message */
