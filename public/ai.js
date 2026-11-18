@@ -17,45 +17,125 @@ const WORKER_URL = window.MYYAJUU_AI_WORKER_URL || "https://myyajuu-ai-worker.ha
 // 同じサイト（mokori01.onrender.com / mokori.onrender.com / ローカル）から配信されるので、
 // プロキシは必ず同一オリジンを使う。固定ホスト名だと別ドメインで開いたときにCORS/接続で詰まる。
 const PROXY_URL = (typeof location !== "undefined" && location.origin ? location.origin : "https://mokori01.onrender.com") + "/api/ai";
+const ENDPOINT_STORAGE_KEY = "mokori_ai_endpoint";
+const CHAT_TIMEOUT_MS = 60000;   // AIの返事待ち（GPT-OSSは長文で40秒近くかかる）
+const REQUEST_TIMEOUT_MS = 20000; // 会話一覧・履歴など
+
+// 既定は同一オリジンの /api/ai（mokoriサーバー）経由。
+// iPhone・学校iPadのフィルターや回線では workers.dev への直接通信が失敗し、
+// 画面にSafariの「Load failed」がそのまま出たまま数十秒固まることがあった。
+// 同一オリジンはその影響を受けず、経路が落ちているときだけ workers.dev へ切り替える。
 let activeApiUrl = (function() {
   try {
-    return sessionStorage.getItem("mokori_ai_use_proxy") === "true" ? PROXY_URL : WORKER_URL;
-  } catch (_) {
-    return WORKER_URL;
-  }
+    if (sessionStorage.getItem(ENDPOINT_STORAGE_KEY) === "worker") return WORKER_URL;
+  } catch (_) {}
+  return PROXY_URL;
 })();
 
-async function workerFetch(path, options = {}) {
-  try {
-    const res = await fetch(`${activeApiUrl}${path}`, options);
-    // 学校iPad等のフィルターでworkers.devが401/403/502等を返した場合の自動フォールバック
-    if (!res.ok && activeApiUrl !== PROXY_URL && (res.status === 401 || res.status === 403 || res.status === 502)) {
-      console.warn(`Direct Workers API returned ${res.status} (filter block), falling back to Render proxy:`, path);
-      activeApiUrl = PROXY_URL;
-      try { sessionStorage.setItem("mokori_ai_use_proxy", "true"); } catch (_) {}
-      return await fetch(`${activeApiUrl}${path}`, options);
-    }
-    // フィルターがHTTP 200のままHTMLのブロックページを返す場合（JSONでない応答）も
-    // そのまま渡すと「Unexpected token <」で壊れるため、Render経由で取り直す
-    if (res.ok && activeApiUrl !== PROXY_URL) {
-      const contentType = res.headers.get("content-type") || "";
-      if (!contentType.toLowerCase().includes("application/json")) {
-        console.warn("Direct Workers API returned a non-JSON response (filter block page), falling back to Render proxy:", path);
-        activeApiUrl = PROXY_URL;
-        try { sessionStorage.setItem("mokori_ai_use_proxy", "true"); } catch (_) {}
-        return await fetch(`${activeApiUrl}${path}`, options);
-      }
-    }
-    return res;
-  } catch (err) {
-    if (activeApiUrl !== PROXY_URL && err?.name !== "AbortError") {
-      console.warn("Direct Workers API failed (school filter detected), falling back to Render proxy:", err);
-      activeApiUrl = PROXY_URL;
-      try { sessionStorage.setItem("mokori_ai_use_proxy", "true"); } catch (_) {}
-      return await fetch(`${activeApiUrl}${path}`, options);
-    }
-    throw err;
+function rememberEndpoint(url) {
+  activeApiUrl = url;
+  try { sessionStorage.setItem(ENDPOINT_STORAGE_KEY, url === WORKER_URL ? "worker" : "proxy"); } catch (_) {}
+}
+
+function endpointLabel(url) {
+  return url === WORKER_URL ? "workers.dev" : "mokoriサーバー";
+}
+
+function makeTimeoutSignal(userSignal, ms) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try { controller.abort(new DOMException("timeout", "TimeoutError")); } catch (_) { controller.abort(); }
+  }, ms);
+  const onAbort = () => {
+    try { controller.abort(userSignal.reason); } catch (_) { controller.abort(); }
+  };
+  if (userSignal) {
+    if (userSignal.aborted) onAbort();
+    else userSignal.addEventListener("abort", onAbort, { once: true });
   }
+  return {
+    signal: controller.signal,
+    cleanup() {
+      clearTimeout(timer);
+      if (userSignal) userSignal.removeEventListener("abort", onAbort);
+    },
+    get timedOut() { return timedOut; }
+  };
+}
+
+// 通信エラーをそのまま「Load failed」と出さず、日本語で伝える
+function networkErrorMessage(err) {
+  if (err && err.name === "TimeoutError") {
+    return "AIの返事が時間内に返ってきませんでした。電波のいい場所でもう一度送ってみてください。";
+  }
+  if (err && err.name === "AbortError") return "送信を中止しました。";
+  return "AIにつながりませんでした。電波の状態を確かめて、もう一度送ってみてください。";
+}
+
+async function workerFetch(path, options = {}) {
+  const isChat = path.startsWith("/v1/chat") || path.startsWith("/v1/image");
+  const timeoutMs = isChat ? CHAT_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+  const order = activeApiUrl === WORKER_URL ? [WORKER_URL, PROXY_URL] : [PROXY_URL, WORKER_URL];
+  let lastError = null;
+
+  for (let i = 0; i < order.length; i += 1) {
+    const base = order[i];
+    const timeout = makeTimeoutSignal(options.signal, timeoutMs);
+    try {
+      const res = await fetch(`${base}${path}`, { ...options, signal: timeout.signal });
+      timeout.cleanup();
+      // フィルターがHTTP 200のままHTMLのブロックページを返す場合（JSONでない応答）も
+      // そのまま渡すと「Unexpected token <」で壊れるため、もう一方の経路で取り直す
+      const contentType = (res.headers.get("content-type") || "").toLowerCase();
+      if (res.ok && !contentType.includes("application/json")) {
+        console.warn(`Non-JSON response from ${endpointLabel(base)}:`, path);
+        lastError = new Error("non-json");
+        continue;
+      }
+      // 経路側の一時障害（ゲートウェイエラー）だけ、もう一方の経路で取り直す
+      if (!res.ok && [502, 504].includes(res.status) && i < order.length - 1) {
+        console.warn(`Upstream ${res.status} from ${endpointLabel(base)}:`, path);
+        lastError = new Error("upstream");
+        continue;
+      }
+      if (base !== activeApiUrl) rememberEndpoint(base);
+      return res;
+    } catch (err) {
+      timeout.cleanup();
+      if (options.signal && options.signal.aborted) throw err; // 利用者が中止した場合はそのまま
+      if (timeout.timedOut) {
+        // 待たせ続けない: タイムアウトはそのまま日本語のエラーにする
+        const timeoutError = new Error(networkErrorMessage({ name: "TimeoutError" }));
+        timeoutError.name = "TimeoutError";
+        throw timeoutError;
+      }
+      lastError = err;
+      console.warn(`Request to ${endpointLabel(base)} failed:`, path, err && err.name);
+    }
+  }
+  throw new Error(networkErrorMessage(lastError));
+}
+
+// Workerが返す英語のエラーを、アプリで読める日本語にする
+function friendlyAiError(status, errData) {
+  const code = (errData && (errData.error || errData.code)) || "";
+  const message = (errData && errData.message) || "";
+  if (code === "user_daily_limit") return "今日AIを使える回数の上限（20回）に達しました。明日の朝9時以降にまた使えます。";
+  if (code === "daily_budget_reached") return "今日のAIの無料枠がいっぱいです。しばらく時間をおいてから試してください。";
+  if (code === "request_in_progress") return "前の返事をまだ作っています。10秒ほど待ってから、もう一度送ってください。";
+  if (code === "conversation_full") return "この会話が長くなりすぎました。上の「➕ 新規」で新しい会話を始めてください。";
+  if (code === "conversation_limit") return "会話の数が上限（50件）に達しました。「📁 会話一覧」から使わない会話を削除してください。";
+  if (code === "empty_model_response" || code === "service_unavailable") {
+    return "AIがいま混み合っていて答えを返せませんでした。少し待って、もう一度送ってください。";
+  }
+  if (status === 401) return "ログインの有効期限が切れたようです。アプリを開き直してから、もう一度送ってください。";
+  if (status === 413) return "メッセージが長すぎます。短くしてから送ってください。";
+  if (message && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(message)) {
+    return `AIの返事を取得できませんでした（${status || "通信エラー"}）。もう一度送ってください。`;
+  }
+  return message || `AIの返事を取得できませんでした（${status || "通信エラー"}）。もう一度送ってください。`;
 }
 
 const MODEL_CATALOG = {
@@ -878,59 +958,72 @@ async function sendMessage(rawText) {
   statusEl.textContent = `${targetModelInfo.name} に送信中…`;
 
   try {
-    const token = await user.getIdToken();
-    let response;
-    try {
-      response = await workerFetch(`/v1/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          message: fullMessageText,
-          model: targetModelId,
-          webSearch: webSearchEnabled,
-          ...(sendSessionId ? { conversationId: sendSessionId } : {}),
-        }),
-        signal: controller.signal,
-      });
-    } catch (netErr) {
-      if (netErr?.name === "AbortError") throw netErr;
-      await new Promise((r) => setTimeout(r, 400));
-      const freshToken = await user.getIdToken(true);
-      response = await workerFetch(`/v1/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${freshToken}`,
-        },
-        body: JSON.stringify({
-          message: fullMessageText,
-          model: targetModelId,
-          webSearch: webSearchEnabled,
-          ...(sendSessionId ? { conversationId: sendSessionId } : {}),
-        }),
-        signal: controller.signal,
-      });
-    }
+    const modelChain = targetModelId === "@cf/meta/llama-3.2-3b-instruct"
+      ? [targetModelId]
+      : [targetModelId, "@cf/meta/llama-3.2-3b-instruct"];
+    let data = null;
+    let lastStatus = 0;
+    let lastErrData = {};
+    let retriedAuth = false;
+    let token = await user.getIdToken();
 
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      let msg = errData.message || `エラーが発生しました (${response.status})`;
-      if (response.status === 429) {
-        if (errData.error === "user_daily_limit") {
-          msg = "本日の利用上限（20回）に達しました。明日またご利用ください。";
-        } else if (errData.error === "daily_budget_reached") {
-          msg = "本日のAI無料枠上限に達しました。時間を置いてお試しください。";
-        } else if (errData.error === "request_in_progress") {
-          msg = "前回の回答を処理中です。少し待ってから送信してください。";
-        }
+    for (let modelIdx = 0; modelIdx < modelChain.length; modelIdx += 1) {
+      const requestModel = modelChain[modelIdx];
+      const buildBody = () => JSON.stringify({
+        message: fullMessageText,
+        model: requestModel,
+        webSearch: webSearchEnabled,
+        ...(sendSessionId ? { conversationId: sendSessionId } : {}),
+      });
+      let response;
+      try {
+        response = await workerFetch(`/v1/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: buildBody(),
+          signal: controller.signal,
+        });
+      } catch (netErr) {
+        if (netErr?.name === "AbortError" || netErr?.name === "TimeoutError") throw netErr;
+        // iOS Safariでセッション復帰直後に失敗することがあるため、トークンを取り直して1回だけ再試行
+        await new Promise((r) => setTimeout(r, 400));
+        token = await user.getIdToken(true);
+        response = await workerFetch(`/v1/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: buildBody(),
+          signal: controller.signal,
+        });
       }
-      throw new Error(msg);
+
+      if (response.ok) {
+        data = await response.json();
+        break;
+      }
+
+      const errData = await response.json().catch(() => ({}));
+      lastStatus = response.status;
+      lastErrData = errData;
+      // トークンの有効期限切れ（iPhoneで復帰直後によくある）は取り直して同じモデルで再試行
+      if (response.status === 401 && !retriedAuth) {
+        retriedAuth = true;
+        token = await user.getIdToken(true);
+        continue;
+      }
+      // 回数上限・認証・入力の問題はモデルを変えても同じなので、そこで打ち切る
+      if ([400, 401, 403, 409, 413, 429].includes(response.status)) break;
+      if (modelIdx < modelChain.length - 1) {
+        statusEl.textContent = `${targetModelInfo.name} が応答しないため、Llama 3.2 3B で再試行しています…`;
+      }
     }
 
-    const data = await response.json();
+    if (!data) throw new Error(friendlyAiError(lastStatus, lastErrData));
     const replyText = typeof data.assistantMessage?.content === "string"
       ? data.assistantMessage.content
       : (typeof data.reply === "string" ? data.reply : "");

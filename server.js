@@ -12,6 +12,7 @@ try { dns.setDefaultResultOrder("ipv4first"); } catch (_) {}
 const express = require("express");
 const admin = require("firebase-admin");
 const bcrypt = require("bcryptjs");
+const { generateAiReply, aiErrorText } = require("./lib/ai-reply");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -1913,71 +1914,19 @@ app.post("/api/chats/:chatId/messages", requireLogin, async (req, res) => {
           }
 
           const authHeader = req.headers.authorization || "";
-          let aiText = "";
-          let aiError = "";
-          // 日本語の品質が良い GPT-OSS 20B を優先し、使えないとき（回数上限・混雑）は
-          // 軽量な Llama 3.2 3B へ自動フォールバックする。
-          const AI_MODELS = ["@cf/openai/gpt-oss-20b", "@cf/meta/llama-3.2-3b-instruct"];
-          const aiPrompt = text;
-          // GPT-OSS 20B は日本語の長文だと 25 秒を超えることがあり、そのたびに
-          // 途中で打ち切られて品質の低い Llama 3.2 3B に落ちていた（→回答が変になる最大の原因）。
-          // 1本目は長め（45秒）、フォールバックは短め（25秒）にしている。
-          const callWorker = async (payload, timeoutMs = 45000) => fetch("https://myyajuu-ai-worker.harumei-260329.workers.dev/v1/chat", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: authHeader
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(timeoutMs)
+          // 返答生成は lib/ai-reply.js に集約:
+          //  - GPT-OSS 20B → Llama 3.2 3B の自動フォールバック
+          //  - 会話がいっぱい(409)なら新しい会話で自動復帰（以前は永久に失敗していた）
+          //  - 失敗理由は日本語でチャットに出す（成功を装う定型文は出さない）
+          const aiResult = await generateAiReply({
+            authHeader,
+            message: text,
+            conversationId: chatData.aiConversationId || null,
           });
-          for (const [modelIdx, model] of AI_MODELS.entries()) {
-            if (aiText) break;
-            try {
-              const aiPayload = { message: aiPrompt, model, webSearch: false };
-              if (chatData.aiConversationId) aiPayload.conversationId = chatData.aiConversationId;
-              let aiResp = await callWorker(aiPayload, modelIdx === 0 ? 45000 : 25000);
-              // 既存の会話IDで失敗した場合は新規会話として即座に自動再試行
-              if (!aiResp.ok && aiPayload.conversationId) {
-                delete aiPayload.conversationId;
-                aiResp = await callWorker(aiPayload, modelIdx === 0 ? 45000 : 25000);
-              }
-              if (aiResp.ok) {
-                const aiData = await aiResp.json();
-                aiText = aiData.reply || aiData.assistantMessage?.content || aiData.response || aiData.message || "";
-                if (aiData.conversationId && aiData.conversationId !== chatData.aiConversationId) {
-                  await chatRef.update({ aiConversationId: aiData.conversationId }).catch(() => {});
-                }
-                if (!aiText) aiError = "empty_reply";
-              } else {
-                let errBody = {};
-                try { errBody = await aiResp.json(); } catch (_) {}
-                aiError = `${aiResp.status} ${errBody.error || errBody.message || ""}`.trim();
-                console.warn("[AI] worker responded", model, aiResp.status, errBody.error || "");
-                // 回数上限だけは別モデルでも同じなので、そこで打ち切る
-                if (/user_daily_limit|request_in_progress/i.test(errBody.error || "")) break;
-              }
-            } catch (e) {
-              aiError = e && e.name === "TimeoutError" ? "timeout" : (e.message || "network");
-              console.warn("AI fetch fallback:", model, aiError);
-            }
+          if (aiResult.conversationId && aiResult.conversationId !== chatData.aiConversationId) {
+            await chatRef.update({ aiConversationId: aiResult.conversationId }).catch(() => {});
           }
-          if (!aiText) {
-            // ⚠ 「返事をしたふり」をする定型文は廃止。失敗は失敗として伝える
-            // （以前はどんな失敗でも「しっかり届きました」と返していたため、
-            //  壊れているのに正常に見える最大の原因になっていた）。
-            if (/user_daily_limit/i.test(aiError)) {
-              aiText = "ごめんね、今日はAIを使える回数の上限（20回）に達してしまいました。明日また話しかけてね！";
-            } else if (/daily_budget_reached/i.test(aiError)) {
-              aiText = "ごめんね、いまAIの無料枠がいっぱいです。しばらく時間をおいてからもう一度送ってみてね。";
-            } else if (/request_in_progress/i.test(aiError)) {
-              aiText = "前の返事をまだ作っている途中みたい。少し待ってからもう一度送ってね。";
-            } else if (/timeout/i.test(aiError)) {
-              aiText = "ごめんね、AIの返事が時間内に返ってこなかったよ。もう一度送ってみてね。";
-            } else {
-              aiText = "ごめんね、いまAIにつながらなかったよ。少し待ってからもう一度送ってみてね。" + (aiError ? `\n（エラー: ${aiError.slice(0, 80)}）` : "");
-            }
-          }
+          const aiText = aiResult.text || aiErrorText(aiResult.error);
           const aiNow = admin.firestore.FieldValue.serverTimestamp();
           const aiMsg = {
             chatId,
